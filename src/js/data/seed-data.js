@@ -13,140 +13,140 @@ const seedData = {
   products: [
     {
       id: "SKU-1001",
-      name: "Golden Grain Rice 25kg",
-      category: "Staples",
-      warehouse: "Abuja DC",
-      region: "North Central",
+      name: "Crunchy Plantain Chips 50g",
+      category: "Finished snacks",
+      warehouse: "Finished Goods Store",
+      region: "Factory",
       stock: 1840,
       reorderPoint: 750,
       dailyVelocity: 122,
-      unitCost: 24000,
-      unitPrice: 29200
+      unitCost: 180,
+      unitPrice: 300
     },
     {
       id: "SKU-1002",
-      name: "Sunrise Tomato Paste 400g",
-      category: "Pantry",
-      warehouse: "Lagos Hub",
-      region: "South West",
+      name: "Cheese Corn Puffs 35g",
+      category: "Finished snacks",
+      warehouse: "Finished Goods Store",
+      region: "Factory",
       stock: 940,
       reorderPoint: 1200,
       dailyVelocity: 188,
-      unitCost: 780,
-      unitPrice: 1050
+      unitCost: 120,
+      unitPrice: 220
     },
     {
       id: "SKU-1003",
-      name: "BlueSeal Detergent 1kg",
-      category: "Household",
-      warehouse: "Kano Depot",
-      region: "North West",
+      name: "Sweet Chin Chin 100g",
+      category: "Finished snacks",
+      warehouse: "Finished Goods Store",
+      region: "Factory",
       stock: 1520,
       reorderPoint: 650,
       dailyVelocity: 84,
-      unitCost: 1850,
-      unitPrice: 2450
+      unitCost: 240,
+      unitPrice: 420
     },
     {
       id: "SKU-1004",
-      name: "Peakline Cooking Oil 5L",
-      category: "Pantry",
-      warehouse: "Port Harcourt DC",
-      region: "South South",
+      name: "Mini Butter Biscuits 75g",
+      category: "Finished snacks",
+      warehouse: "Finished Goods Store",
+      region: "Factory",
       stock: 420,
       reorderPoint: 600,
       dailyVelocity: 73,
-      unitCost: 8200,
-      unitPrice: 9800
+      unitCost: 160,
+      unitPrice: 280
     },
     {
       id: "SKU-1005",
-      name: "FreshDrop Bottled Water 75cl",
-      category: "Beverage",
-      warehouse: "Lagos Hub",
-      region: "South West",
+      name: "Potato Chips Multipack 12ct",
+      category: "Finished snacks",
+      warehouse: "Finished Goods Store",
+      region: "Factory",
       stock: 7200,
       reorderPoint: 2500,
       dailyVelocity: 410,
-      unitCost: 130,
-      unitPrice: 190
+      unitCost: 1850,
+      unitPrice: 2650
     },
     {
       id: "SKU-1006",
-      name: "Cedar Baby Wipes 80ct",
-      category: "Personal Care",
-      warehouse: "Abuja DC",
-      region: "North Central",
+      name: "Printed Snack Wrapper Rolls",
+      category: "Packaging",
+      warehouse: "Packaging Store",
+      region: "Factory",
       stock: 680,
       reorderPoint: 900,
       dailyVelocity: 92,
-      unitCost: 980,
-      unitPrice: 1350
+      unitCost: 780,
+      unitPrice: 0
     }
   ],
   retailers: [
     {
       id: "RTL-101",
-      name: "Mabushi Market Square",
+      name: "Mabushi Supermarket",
       city: "Abuja",
       region: "North Central",
       tier: "Gold",
-      channel: "Open Market",
+      channel: "Supermarket",
       contact: "Aisha Bello",
       fillRate: 96,
-      outstanding: 1580000,
+      outstanding: 158000,
       lastOrder: "2026-07-03",
       lastContact: "2026-07-01"
     },
     {
       id: "RTL-102",
-      name: "Lekki Everyday Mart",
+      name: "Lekki Family Mart",
       city: "Lagos",
       region: "South West",
       tier: "Platinum",
       channel: "Modern Trade",
       contact: "Tunde Cole",
       fillRate: 93,
-      outstanding: 2450000,
+      outstanding: 245000,
       lastOrder: "2026-07-04",
       lastContact: "2026-07-02"
     },
     {
       id: "RTL-103",
-      name: "Kofar Ruwa Wholesale",
+      name: "Kofar Ruwa Snack Wholesale",
       city: "Kano",
       region: "North West",
       tier: "Silver",
       channel: "Wholesale",
       contact: "Musa Garba",
       fillRate: 88,
-      outstanding: 920000,
+      outstanding: 92000,
       lastOrder: "2026-07-02",
       lastContact: "2026-06-30"
     },
     {
       id: "RTL-104",
-      name: "Rumuola Family Store",
+      name: "Rumuola Corner Store",
       city: "Port Harcourt",
       region: "South South",
       tier: "Gold",
       channel: "Neighborhood",
       contact: "Ifeoma Nwosu",
       fillRate: 90,
-      outstanding: 710000,
+      outstanding: 71000,
       lastOrder: "2026-07-01",
       lastContact: "2026-07-03"
     },
     {
       id: "RTL-105",
-      name: "Garki Mini Mart",
+      name: "Garki School Kiosk",
       city: "Abuja",
       region: "North Central",
       tier: "Bronze",
-      channel: "Neighborhood",
+      channel: "Kiosk",
       contact: "Daniel Okafor",
       fillRate: 82,
-      outstanding: 360000,
+      outstanding: 36000,
       lastOrder: "2026-06-29",
       lastContact: "2026-06-28"
     }
@@ -161,8 +161,8 @@ const seedData = {
       createdAt: "2026-07-04",
       dueAt: "2026-07-05",
       items: [
-        { productId: "SKU-1001", quantity: 42 },
-        { productId: "SKU-1006", quantity: 90 }
+        { productId: "SKU-1001", quantity: 420 },
+        { productId: "SKU-1003", quantity: 180 }
       ]
     },
     {
@@ -174,8 +174,8 @@ const seedData = {
       createdAt: "2026-07-04",
       dueAt: "2026-07-04",
       items: [
-        { productId: "SKU-1002", quantity: 320 },
-        { productId: "SKU-1005", quantity: 1200 }
+        { productId: "SKU-1002", quantity: 540 },
+        { productId: "SKU-1005", quantity: 85 }
       ]
     },
     {
@@ -187,8 +187,8 @@ const seedData = {
       createdAt: "2026-07-03",
       dueAt: "2026-07-04",
       items: [
-        { productId: "SKU-1003", quantity: 180 },
-        { productId: "SKU-1001", quantity: 26 }
+        { productId: "SKU-1003", quantity: 260 },
+        { productId: "SKU-1001", quantity: 340 }
       ]
     },
     {
@@ -200,8 +200,8 @@ const seedData = {
       createdAt: "2026-07-02",
       dueAt: "2026-07-03",
       items: [
-        { productId: "SKU-1004", quantity: 58 },
-        { productId: "SKU-1002", quantity: 150 }
+        { productId: "SKU-1004", quantity: 360 },
+        { productId: "SKU-1002", quantity: 240 }
       ]
     },
     {
@@ -213,8 +213,8 @@ const seedData = {
       createdAt: "2026-07-01",
       dueAt: "2026-07-03",
       items: [
-        { productId: "SKU-1005", quantity: 600 },
-        { productId: "SKU-1006", quantity: 50 }
+        { productId: "SKU-1005", quantity: 60 },
+        { productId: "SKU-1003", quantity: 160 }
       ]
     },
     {
@@ -226,17 +226,17 @@ const seedData = {
       createdAt: "2026-07-03",
       dueAt: "2026-07-06",
       items: [
-        { productId: "SKU-1001", quantity: 36 },
-        { productId: "SKU-1004", quantity: 20 }
+        { productId: "SKU-1001", quantity: 300 },
+        { productId: "SKU-1004", quantity: 120 }
       ]
     }
   ],
   routes: [
     {
       id: "RTE-201",
-      name: "Lagos Island Loop",
+      name: "Lagos Rep Run",
       driver: "Chika Eze",
-      vehicle: "LAG-284KD",
+      vehicle: "Snack Van LAG-284KD",
       region: "South West",
       status: "scheduled",
       stops: 9,
@@ -247,9 +247,9 @@ const seedData = {
     },
     {
       id: "RTE-202",
-      name: "Abuja Central Run",
+      name: "Abuja Rep Run",
       driver: "Sani Musa",
-      vehicle: "ABJ-771XR",
+      vehicle: "Snack Van ABJ-771XR",
       region: "North Central",
       status: "in_transit",
       stops: 7,
@@ -260,9 +260,9 @@ const seedData = {
     },
     {
       id: "RTE-203",
-      name: "Port Harcourt East",
+      name: "Port Harcourt Rep Run",
       driver: "Grace Udo",
-      vehicle: "PHC-449QM",
+      vehicle: "Snack Van PHC-449QM",
       region: "South South",
       status: "scheduled",
       stops: 6,
@@ -273,9 +273,9 @@ const seedData = {
     },
     {
       id: "RTE-204",
-      name: "Kano Wholesale Belt",
+      name: "Kano Wholesale Rep Run",
       driver: "Bala Adamu",
-      vehicle: "KAN-092LT",
+      vehicle: "Snack Van KAN-092LT",
       region: "North West",
       status: "delivered",
       stops: 11,
@@ -289,7 +289,7 @@ const seedData = {
     {
       id: "INV-9001",
       retailerId: "RTL-101",
-      amount: 1580000,
+      amount: 158000,
       status: "pending",
       issuedAt: "2026-06-27",
       dueAt: "2026-07-07"
@@ -297,7 +297,7 @@ const seedData = {
     {
       id: "INV-9002",
       retailerId: "RTL-102",
-      amount: 2450000,
+      amount: 245000,
       status: "pending",
       issuedAt: "2026-06-24",
       dueAt: "2026-07-04"
@@ -305,7 +305,7 @@ const seedData = {
     {
       id: "INV-9003",
       retailerId: "RTL-103",
-      amount: 920000,
+      amount: 92000,
       status: "overdue",
       issuedAt: "2026-06-12",
       dueAt: "2026-06-30"
@@ -313,7 +313,7 @@ const seedData = {
     {
       id: "INV-9004",
       retailerId: "RTL-104",
-      amount: 710000,
+      amount: 71000,
       status: "paid",
       issuedAt: "2026-06-20",
       dueAt: "2026-07-01"
@@ -321,7 +321,7 @@ const seedData = {
     {
       id: "INV-9005",
       retailerId: "RTL-105",
-      amount: 360000,
+      amount: 36000,
       status: "pending",
       issuedAt: "2026-06-30",
       dueAt: "2026-07-10"

@@ -1,4 +1,4 @@
-const STORAGE_KEY = "distro-iq-state-v1";
+const STORAGE_KEY = "distro-iq-snack-factory-state-v2";
 
 export function loadStoredState() {
   try {

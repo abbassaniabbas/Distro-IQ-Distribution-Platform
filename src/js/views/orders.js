@@ -1,5 +1,6 @@
 import { buildOrderStatusSummary, getOrdersWithTotals } from "../services/calculations.js";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
+import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, table } from "../ui/components.js";
 
@@ -24,7 +25,9 @@ function renderSummaryTiles(orders) {
   `;
 }
 
-function renderOrderRows(orders) {
+function renderOrderRows(orders, permissions) {
+  const canUpdateSales = permissions.canLogSalesReturns || permissions.canDispatchStock;
+
   return orders.map((order) => {
     const searchIndex = [
       order.id,
@@ -46,7 +49,7 @@ function renderOrderRows(orders) {
           <strong>${escapeHtml(order.id)}</strong>
           <div class="muted">Due ${formatDate(order.dueAt)}</div>
         </td>
-        <td>${escapeHtml(order.retailer?.name || "Unknown retailer")}</td>
+        <td>${escapeHtml(order.retailer?.name || "Unknown customer")}</td>
         <td>${escapeHtml(order.region)}</td>
         <td>${statusPill(order.status)}</td>
         <td>${escapeHtml(order.priority)}</td>
@@ -55,16 +58,16 @@ function renderOrderRows(orders) {
           <div class="row-actions">
             ${iconButton({
               iconName: "arrowRight",
-              label: "Move order forward",
+              label: "Move sales order forward",
               className: "js-advance-order",
-              disabled: order.status === "delivered",
+              disabled: order.status === "delivered" || !canUpdateSales,
               data: { "order-id": order.id }
             })}
             ${iconButton({
               iconName: "clock",
               label: "Mark delayed",
               className: "js-delay-order",
-              disabled: order.status === "delivered" || order.status === "delayed",
+              disabled: order.status === "delivered" || order.status === "delayed" || !canUpdateSales,
               data: { "order-id": order.id }
             })}
           </div>
@@ -77,6 +80,7 @@ function renderOrderRows(orders) {
 export function renderOrders({ state }) {
   const orders = getOrdersWithTotals(state);
   const regions = [...new Set(state.orders.map((order) => order.region))].sort();
+  const permissions = currentUserPermissions(state);
 
   return `
     <section class="view orders-view">
@@ -84,7 +88,7 @@ export function renderOrders({ state }) {
 
       <section class="panel orders-layout">
         <div class="toolbar">
-          ${panelHeader("Order control", "Move orders through processing, packing, dispatch, and delivery")}
+          ${panelHeader("Sales order control", "Move snack orders through processing, packing, rep dispatch, and delivery")}
           <div class="toolbar-group">
             <label class="field">
               <span class="sr-only">Filter by status</span>
@@ -108,9 +112,9 @@ export function renderOrders({ state }) {
         </div>
 
         ${table(
-          ["Order", "Retailer", "Region", "Status", "Priority", "Value", ""],
-          renderOrderRows(orders),
-          "No orders available"
+          ["Sales order", "Customer", "Territory", "Status", "Priority", "Value", ""],
+          renderOrderRows(orders, permissions),
+          "No sales orders available"
         )}
       </section>
     </section>
@@ -140,7 +144,7 @@ export function bindOrders({ root, store }) {
       store.dispatch({
         type: "ADVANCE_ORDER",
         orderId: button.dataset.orderId,
-        message: "Order status updated"
+        message: "Sales order status updated"
       });
     });
   });
@@ -150,7 +154,7 @@ export function bindOrders({ root, store }) {
       store.dispatch({
         type: "DELAY_ORDER",
         orderId: button.dataset.orderId,
-        message: "Order marked delayed"
+        message: "Sales order marked delayed"
       });
     });
   });

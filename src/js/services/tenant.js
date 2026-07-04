@@ -1,30 +1,10 @@
 import { DEFAULT_BRAND_COLOR, isValidHexColor, normalizeBrandColor } from "./branding.js";
+import { ROLE_OPTIONS } from "./rbac.js";
+
+export { ROLE_OPTIONS } from "./rbac.js";
 
 const DEFAULT_CURRENCY = "NGN";
 const DEFAULT_TIMEZONE = "Africa/Lagos";
-
-export const ROLE_OPTIONS = [
-  {
-    value: "owner",
-    label: "Owner"
-  },
-  {
-    value: "admin",
-    label: "Admin"
-  },
-  {
-    value: "operations",
-    label: "Operations"
-  },
-  {
-    value: "finance",
-    label: "Finance"
-  },
-  {
-    value: "viewer",
-    label: "Viewer"
-  }
-];
 
 export const TIMEZONE_OPTIONS = [
   "Africa/Lagos",
@@ -117,7 +97,7 @@ export function createAccountInvite({ client, name, email, role }) {
     clientId: client.id,
     accountId,
     to: normalizedEmail,
-    subject: `You're invited to ${client.companyName} on Distro IQ`,
+    subject: `You're invited to ${client.companyName} on DistroIQ`,
     resetLink,
     temporaryPassword,
     status: "ready",
@@ -144,7 +124,7 @@ export function validateClientForm(values) {
   const errors = {};
 
   if (!values.companyName?.trim()) {
-    errors.companyName = "Company name is required.";
+    errors.companyName = "Factory name is required.";
   }
 
   if (!values.timezone) {
@@ -178,7 +158,7 @@ export function validateAccountForm(values, existingAccounts) {
     errors.email = "This email is already invited for this company.";
   }
 
-  if (!values.role) {
+  if (!values.role || !ROLE_OPTIONS.some((role) => role.value === values.role)) {
     errors.role = "Role is required.";
   }
 

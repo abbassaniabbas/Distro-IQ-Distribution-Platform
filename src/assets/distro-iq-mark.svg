@@ -1,7 +1,7 @@
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Distro IQ">
-  <rect width="128" height="128" rx="24" fill="#0F766E"/>
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="DistroIQ">
+  <rect width="128" height="128" rx="24" fill="#D9A21B"/>
   <path d="M32 35H72C87.464 35 100 47.536 100 63C100 78.464 87.464 91 72 91H32V35Z" fill="#F8FAFC"/>
-  <path d="M48 51H70C76.627 51 82 56.373 82 63C82 69.627 76.627 75 70 75H48V51Z" fill="#0F766E"/>
-  <path d="M88 83L101 96" stroke="#F59E0B" stroke-width="10" stroke-linecap="round"/>
-  <circle cx="68" cy="63" r="6" fill="#F59E0B"/>
+  <path d="M48 51H70C76.627 51 82 56.373 82 63C82 69.627 76.627 75 70 75H48V51Z" fill="#8A5F00"/>
+  <path d="M88 83L101 96" stroke="#B42318" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="68" cy="63" r="6" fill="#B42318"/>
 </svg>

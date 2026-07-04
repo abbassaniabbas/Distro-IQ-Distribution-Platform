@@ -1,10 +1,11 @@
 import { formatNumber, statusText } from "../services/formatters.js";
+import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qsa } from "../ui/dom.js";
 import { panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
 
 function renderRouteMap() {
   return `
-    <div class="route-map" aria-label="Delivery route map">
+    <div class="route-map" aria-label="Sales rep run map">
       <span class="route-line" style="left: 17%; top: 44%; width: 26%; transform: rotate(-18deg);"></span>
       <span class="route-line" style="left: 42%; top: 34%; width: 26%; transform: rotate(24deg);"></span>
       <span class="route-line" style="left: 63%; top: 55%; width: 22%; transform: rotate(-28deg);"></span>
@@ -16,7 +17,8 @@ function renderRouteMap() {
   `;
 }
 
-function renderRouteCard(route) {
+function renderRouteCard(route, permissions) {
+  const canAdvanceRun = permissions.canDispatchStock || permissions.canAssignStock;
   const searchIndex = [
     route.id,
     route.name,
@@ -40,11 +42,11 @@ function renderRouteCard(route) {
 
       <div class="stack">
         <div class="split">
-          <span class="muted">Driver</span>
+          <span class="muted">Sales rep</span>
           <strong>${escapeHtml(route.driver)}</strong>
         </div>
         <div class="split">
-          <span class="muted">Vehicle</span>
+          <span class="muted">Assigned van</span>
           <strong>${escapeHtml(route.vehicle)}</strong>
         </div>
         <div class="split">
@@ -55,7 +57,7 @@ function renderRouteCard(route) {
 
       <div class="stock-line">
         <div class="stock-meta">
-          <span>Capacity</span>
+          <span>Rep stock load</span>
           <span>${formatNumber(route.capacityUsed)}%</span>
         </div>
         ${progressBar(route.capacityUsed, route.capacityUsed > 88 ? "warning" : "good")}
@@ -67,7 +69,7 @@ function renderRouteCard(route) {
           iconName: "arrowRight",
           label: route.status === "delivered" ? "Done" : "Advance",
           className: route.status === "delivered" ? "" : "primary js-advance-route",
-          disabled: route.status === "delivered",
+          disabled: route.status === "delivered" || !canAdvanceRun,
           data: { "route-id": route.id }
         })}
       </footer>
@@ -76,16 +78,18 @@ function renderRouteCard(route) {
 }
 
 export function renderRoutes({ state }) {
+  const permissions = currentUserPermissions(state);
+
   return `
     <section class="view routes-view">
       <div class="dashboard-layout">
         <section class="panel">
-          ${panelHeader("Route board", "Live network view for today's dispatch plan")}
+          ${panelHeader("Rep run board", "Live view of today's snack stock moving with sales reps")}
           ${renderRouteMap()}
         </section>
 
         <section class="panel">
-          ${panelHeader("Dispatch mix", "Route status by operating phase")}
+          ${panelHeader("Rep run mix", "Sales rep stock status by operating phase")}
           <div class="bar-list">
             ${["scheduled", "in_transit", "delivered"]
               .map((status) => {
@@ -106,9 +110,9 @@ export function renderRoutes({ state }) {
       </div>
 
       <section class="panel routes-layout">
-        ${panelHeader("Route assignments", "Drivers, vehicles, stop counts, and route readiness")}
+        ${panelHeader("Sales rep assignments", "Reps, vans, outlet stops, and assigned stock readiness")}
         <div class="route-grid">
-          ${state.routes.map(renderRouteCard).join("")}
+          ${state.routes.map((route) => renderRouteCard(route, permissions)).join("")}
         </div>
       </section>
     </section>
@@ -121,7 +125,7 @@ export function bindRoutes({ root, store }) {
       store.dispatch({
         type: "ADVANCE_ROUTE",
         routeId: button.dataset.routeId,
-        message: "Route status updated"
+        message: "Rep run status updated"
       });
     });
   });

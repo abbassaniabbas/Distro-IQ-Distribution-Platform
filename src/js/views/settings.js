@@ -16,6 +16,7 @@ import {
   getScopedAccounts,
   validateClientForm
 } from "../services/tenant.js";
+import { currentUserPermissions, roleDescription, roleLabel } from "../services/rbac.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { bindBrandColorInputs } from "../ui/brand-controls.js";
@@ -23,24 +24,12 @@ import { renderDeliveryNotePreview } from "../ui/brand-preview.js";
 import { icon } from "../ui/icons.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
 
-function roleLabel(role) {
-  const labels = {
-    owner: "Owner",
-    admin: "Admin",
-    operations: "Operations",
-    finance: "Finance",
-    viewer: "Viewer"
-  };
-
-  return labels[role] || role || "Member";
-}
-
 function getCurrentAccount(state) {
   return getScopedAccounts(state).find((account) => account.userId === state.user?.id);
 }
 
-function canEditCompanySettings(account) {
-  return ["owner", "admin"].includes(account?.role);
+function canEditCompanySettings(state) {
+  return currentUserPermissions(state).canConfigureFactory;
 }
 
 function renderFieldError(name) {
@@ -104,24 +93,24 @@ function readProfileForm(form) {
 
 function renderCompanySettings(state, account) {
   const client = state.client;
-  const canEdit = canEditCompanySettings(account);
+  const canEdit = canEditCompanySettings(state);
   const brandColor = getBrandColor(client);
 
   return `
     <section class="panel">
-      ${panelHeader("Company settings", "Shared settings your team sees across the app")}
+      ${panelHeader("Factory settings", "Shared settings your team sees across the app")}
       <form id="company-settings-form" class="form-grid" novalidate>
         <div class="span-full split settings-logo-row">
-          <div class="logo-preview" id="settings-logo-preview" aria-label="Company logo preview">${renderLogo(client)}</div>
+          <div class="logo-preview" id="settings-logo-preview" aria-label="Factory logo preview">${renderLogo(client)}</div>
           <div class="client-id-box">
-            <span class="eyebrow">Active company</span>
+            <span class="eyebrow">Active factory</span>
             <strong>${escapeHtml(client.companyName)}</strong>
             <span class="muted">Logo, brand colour, timezone, and currency apply for the whole team.</span>
           </div>
         </div>
 
         <label class="field span-full">
-          <span>Company name</span>
+          <span>Factory name</span>
           <input name="companyName" value="${escapeHtml(client.companyName)}" ${canEdit ? "" : "disabled"}>
           ${renderFieldError("companyName")}
         </label>
@@ -152,7 +141,7 @@ function renderCompanySettings(state, account) {
         </label>
 
         <div class="field span-full file-field" id="settings-logo-upload-field">
-          <span>Company logo</span>
+          <span>Factory logo</span>
           <div class="file-upload-row">
             <input class="file-input sr-only" id="settings-logo-input" name="logo" type="file" accept="${LOGO_ACCEPT}" ${canEdit ? "" : "disabled"}>
             <label class="file-dropzone" for="settings-logo-input">
@@ -172,10 +161,10 @@ function renderCompanySettings(state, account) {
 
         <span id="company-settings-message" class="field-error span-full"></span>
         <div class="span-full split">
-          <span class="muted">${canEdit ? "Saved changes apply for everyone in this company." : "Only owners and admins can change company settings."}</span>
+          <span class="muted">${canEdit ? "Saved changes apply for everyone in this factory." : "Only Super Admins can change factory-wide settings."}</span>
           ${textButton({
             iconName: "settings",
-            label: "Save company",
+            label: "Save factory",
             className: "primary",
             type: "submit",
             disabled: !canEdit
@@ -212,10 +201,11 @@ function renderProfileSettings(state, account) {
           <span class="eyebrow">Role</span>
           <strong>${escapeHtml(roleLabel(account?.role))}</strong>
           ${statusPill(account?.status || "active")}
+          <span class="muted">${escapeHtml(roleDescription(account?.role))}</span>
         </div>
         <span id="profile-settings-message" class="field-error span-full"></span>
         <div class="span-full split">
-          <span class="muted">Your name appears across this company workspace.</span>
+          <span class="muted">Your name appears across this factory workspace.</span>
           ${textButton({
             iconName: "userCheck",
             label: "Save profile",
@@ -263,7 +253,7 @@ export function renderSettings({ state }) {
     return `
       <section class="view">
         <section class="panel setup-card">
-          ${panelHeader("Company setup required", "Create or join a company before changing settings")}
+          ${panelHeader("Factory setup required", "Create or join a factory before changing settings")}
           <a class="button primary" href="#/onboarding">Start onboarding</a>
         </section>
       </section>

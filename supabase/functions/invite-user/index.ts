@@ -10,9 +10,18 @@ type InvitePayload = {
   clientId: string;
   name: string;
   email: string;
-  role: "owner" | "admin" | "operations" | "finance" | "viewer";
+  role: "sales_rep" | "manager" | "store_keeper" | "accountant" | "ceo" | "super_admin";
   redirectTo: string;
 };
+
+const validRoles = new Set([
+  "sales_rep",
+  "manager",
+  "store_keeper",
+  "accountant",
+  "ceo",
+  "super_admin"
+]);
 
 function jsonResponse(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -69,12 +78,16 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Missing invite fields" }, 400);
   }
 
+  if (!validRoles.has(payload.role)) {
+    return jsonResponse({ error: "Choose a valid role" }, 400);
+  }
+
   const { data: allowed, error: roleError } = await callerClient.rpc("is_client_admin", {
     p_client_id: payload.clientId
   });
 
   if (roleError || !allowed) {
-    return jsonResponse({ error: "Only client owners and admins can invite users" }, 403);
+    return jsonResponse({ error: "Only Super Admins can invite users" }, 403);
   }
 
   const temporaryPassword = generateTemporaryPassword();
@@ -133,7 +146,7 @@ Deno.serve(async (req) => {
     email: normalizedEmail,
     name: displayName,
     role: payload.role,
-    subject: `You're invited to Distro IQ`,
+    subject: `You're invited to DistroIQ`,
     redirect_to: payload.redirectTo,
     status: "sent",
     invited_by: callerData.user?.id

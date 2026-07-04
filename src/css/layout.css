@@ -171,7 +171,7 @@ body[data-app-view="auth"] .view-root {
 }
 
 body[data-app-view="auth"] .view-root > .view {
-  width: min(100%, 1040px);
+  width: min(100%, 1120px);
 }
 
 @media (max-width: 960px) {

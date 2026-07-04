@@ -87,7 +87,7 @@ export function renderActivityLog({ state }) {
     return `
       <section class="view">
         <section class="panel setup-card">
-          ${panelHeader("Company setup required", "Create or join a company before viewing activity")}
+          ${panelHeader("Factory setup required", "Create or join a factory before viewing activity")}
           <a class="button primary" href="#/onboarding">Start onboarding</a>
         </section>
       </section>

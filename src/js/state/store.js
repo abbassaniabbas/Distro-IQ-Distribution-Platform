@@ -146,7 +146,7 @@ function reducer(currentState, action) {
         actionType: "created",
         recordType: "company",
         recordLabel: client.companyName,
-        summary: "Created company workspace"
+        summary: "Created factory workspace"
       });
 
       return {
@@ -163,7 +163,7 @@ function reducer(currentState, action) {
         actionType: "updated",
         recordType: "company",
         recordLabel: action.payload.companyName || state.client.companyName,
-        summary: "Updated company settings"
+        summary: "Updated factory settings"
       });
 
       return {
@@ -261,7 +261,7 @@ function reducer(currentState, action) {
           actionType: "updated",
           recordType: "order",
           recordLabel: order.id,
-          summary: `${order.id} moved to ${textLabel(order.status)}`
+          summary: `${order.id} sales order moved to ${textLabel(order.status)}`
         });
       }
       return state;
@@ -277,7 +277,7 @@ function reducer(currentState, action) {
           actionType: "delayed",
           recordType: "order",
           recordLabel: order.id,
-          summary: `${order.id} marked delayed`
+          summary: `${order.id} sales order marked delayed`
         });
       }
       return state;
@@ -294,7 +294,7 @@ function reducer(currentState, action) {
           actionType: "restocked",
           recordType: "inventory",
           recordLabel: product.id,
-          summary: `${product.name} restocked`
+          summary: `${product.name} stock replenished`
         });
       }
       return state;
@@ -310,7 +310,7 @@ function reducer(currentState, action) {
           actionType: "updated",
           recordType: "route",
           recordLabel: route.id,
-          summary: `${route.name} moved to ${textLabel(route.status)}`
+          summary: `${route.name} rep run moved to ${textLabel(route.status)}`
         });
       }
       return state;
@@ -325,7 +325,7 @@ function reducer(currentState, action) {
           actionType: "contacted",
           recordType: "retailer",
           recordLabel: retailer.id,
-          summary: `Contact logged for ${retailer.name}`
+          summary: `Customer contact logged for ${retailer.name}`
         });
       }
       return state;

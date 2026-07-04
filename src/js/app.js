@@ -3,6 +3,7 @@ import { createStore } from "./state/store.js";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace } from "./services/backend.js";
 import { setCurrencySettings } from "./services/formatters.js";
+import { canAccessRoute, currentUserPermissions, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { applySearchFilter, qs } from "./ui/dom.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
@@ -127,6 +128,10 @@ const signOutButton = qs("#sign-out");
 const sidebarDispatchCount = qs("#sidebar-dispatch-count");
 const AUTH_ROUTES = ["login", "signup", "reset-password"];
 
+function defaultRouteForState(state) {
+  return currentUserPermissions(state).nav[0] || DEFAULT_ROUTE;
+}
+
 function getHashRouteId() {
   const routeId = window.location.hash.replace(/^#\/?/, "") || DEFAULT_ROUTE;
   return routeId.split("?")[0];
@@ -168,11 +173,20 @@ function getCurrentRouteId(state) {
     return "onboarding-confirmation";
   }
 
+  if (!canAccessRoute(state, routeId)) {
+    return defaultRouteForState(state);
+  }
+
   return routeId;
 }
 
-function renderNav(activeRouteId) {
-  navRoot.innerHTML = NAV_ITEMS.map((item) => {
+function renderNav(activeRouteId, state) {
+  const permissions = currentUserPermissions(state);
+  const visibleItems = state.session && state.client?.id
+    ? NAV_ITEMS.filter((item) => permissions.nav.includes(item.id))
+    : NAV_ITEMS;
+
+  navRoot.innerHTML = visibleItems.map((item) => {
     const isActive = item.id === activeRouteId;
 
     return `
@@ -194,10 +208,11 @@ function render() {
   const routeId = getCurrentRouteId(state);
   const view = routes[routeId];
   const isAuthRoute = AUTH_ROUTES.includes(routeId);
+  const viewState = scopeStateForCurrentRole(state);
 
   document.body.dataset.appView = isAuthRoute ? "auth" : "workspace";
   setCurrencySettings(state.client);
-  renderNav(routeId);
+  renderNav(routeId, state);
   updateSidebar(state);
   viewTitle.textContent = view.title;
   globalSearch.disabled = Boolean(view.isSetup);
@@ -206,7 +221,7 @@ function render() {
   if (view.isSetup) {
     globalSearch.value = "";
   }
-  viewRoot.innerHTML = view.render({ state, store, routeId });
+  viewRoot.innerHTML = view.render({ state: viewState, store, routeId });
   view.bind?.({ root: viewRoot, store, routeId });
   applySearchFilter(viewRoot, globalSearch.value);
 }

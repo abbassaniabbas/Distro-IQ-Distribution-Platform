@@ -14,10 +14,10 @@ export const ACTION_LABELS = {
 export const RECORD_LABELS = {
   company: "Company",
   account: "Account",
-  order: "Order",
-  inventory: "Inventory",
-  route: "Route",
-  retailer: "Retailer",
+  order: "Sales Order",
+  inventory: "Stock",
+  route: "Rep Run",
+  retailer: "Customer",
   invoice: "Invoice"
 };
 

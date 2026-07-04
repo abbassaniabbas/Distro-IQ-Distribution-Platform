@@ -6,16 +6,13 @@ import {
 } from "../services/tenant.js";
 import { inviteAccount } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
-import { formatDate, statusText } from "../services/formatters.js";
+import { formatDate } from "../services/formatters.js";
+import { currentUserPermissions, roleDescription, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
 
-function roleLabel(role) {
-  return ROLE_OPTIONS.find((item) => item.value === role)?.label || statusText(role);
-}
-
 function renderRoleOptions() {
-  return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
+  return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)} - ${escapeHtml(role.description)}</option>`).join("");
 }
 
 function renderFieldError(name, errors = {}) {
@@ -67,6 +64,7 @@ function renderAccountCard(account) {
           <span class="muted">Role</span>
           <strong>${escapeHtml(roleLabel(account.role))}</strong>
         </div>
+        <p>${escapeHtml(roleDescription(account.role))}</p>
       </div>
 
       <footer>
@@ -124,7 +122,7 @@ export function renderTeam({ state }) {
     return `
       <section class="view">
         <section class="panel setup-card">
-          ${panelHeader("Company setup required", "Create the company workspace before adding accounts")}
+          ${panelHeader("Factory setup required", "Create the factory workspace before adding accounts")}
           <a class="button primary" href="#/onboarding">Start onboarding</a>
         </section>
       </section>
@@ -133,12 +131,24 @@ export function renderTeam({ state }) {
 
   const accounts = getScopedAccounts(state);
   const invites = getScopedInvites(state);
+  const permissions = currentUserPermissions(state);
+
+  if (!permissions.canManageUsers) {
+    return `
+      <section class="view team-view">
+        <section class="panel setup-card">
+          ${panelHeader("Team access", "Only Super Admins can create users or reset access")}
+          <p>Your role can view the tools assigned to you, but user management is reserved for Super Admins.</p>
+        </section>
+      </section>
+    `;
+  }
 
   return `
     <section class="view team-view">
       <div class="dashboard-layout">
         <section class="panel">
-          ${panelHeader("Invite team member", "Add a user and choose what they can access")}
+          ${panelHeader("Invite team member", "Add a user and choose their role permissions")}
           <form id="account-form" class="form-grid" novalidate>
             <label class="field">
               <span>Full name</span>
@@ -171,23 +181,23 @@ export function renderTeam({ state }) {
         </section>
 
         <section class="panel setup-card">
-          ${panelHeader("Team access", "People added here can work in this company workspace")}
+          ${panelHeader("Team access", "Managers, store keepers, and sales reps added here can work in this factory")}
           <div class="client-id-box">
-            <span class="eyebrow">Active company</span>
+            <span class="eyebrow">Active factory</span>
             <strong>${escapeHtml(client.companyName)}</strong>
           </div>
           <p>
-            Users only see the company information and tools their role allows.
+            Users only see the factory records and tools their role allows.
           </p>
         </section>
       </div>
 
       <section class="panel team-layout">
-        ${panelHeader("Accounts", "Users created for this company")}
+        ${panelHeader("Accounts", "Users created for this factory")}
         ${
           accounts.length
             ? `<div class="account-grid">${accounts.map(renderAccountCard).join("")}</div>`
-            : '<div class="empty-state">No accounts have been created for this client yet</div>'
+            : '<div class="empty-state">No accounts have been created for this factory yet</div>'
         }
       </section>
 

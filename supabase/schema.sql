@@ -1,11 +1,5 @@
 create extension if not exists pgcrypto;
 
-do $$ begin
-  create type public.app_role as enum ('owner', 'admin', 'operations', 'finance', 'viewer');
-exception
-  when duplicate_object then null;
-end $$;
-
 create table if not exists public.clients (
   id uuid primary key default gen_random_uuid(),
   company_name text not null,
@@ -35,7 +29,7 @@ create table if not exists public.memberships (
   user_id uuid references auth.users(id) on delete cascade,
   email text not null,
   name text not null,
-  role public.app_role not null default 'viewer',
+  role text not null default 'sales_rep',
   status text not null default 'invited' check (status in ('invited', 'active', 'disabled')),
   password_reset_required boolean not null default true,
   created_at timestamptz not null default now(),
@@ -49,7 +43,7 @@ create table if not exists public.invites (
   membership_id uuid references public.memberships(id) on delete set null,
   email text not null,
   name text not null,
-  role public.app_role not null default 'viewer',
+  role text not null default 'sales_rep',
   subject text not null,
   redirect_to text,
   status text not null default 'sent' check (status in ('ready', 'sent', 'accepted', 'revoked')),
@@ -74,6 +68,61 @@ alter table public.clients enable row level security;
 alter table public.memberships enable row level security;
 alter table public.invites enable row level security;
 alter table public.activity_logs enable row level security;
+
+alter table public.memberships drop constraint if exists memberships_role_check;
+alter table public.invites drop constraint if exists invites_role_check;
+
+alter table public.memberships alter column role drop default;
+alter table public.invites alter column role drop default;
+
+alter table public.memberships
+alter column role type text
+using role::text;
+
+alter table public.invites
+alter column role type text
+using role::text;
+
+update public.memberships
+set role = case role
+  when 'owner' then 'super_admin'
+  when 'admin' then 'manager'
+  when 'operations' then 'store_keeper'
+  when 'finance' then 'accountant'
+  when 'viewer' then 'ceo'
+  else role
+end
+where role in ('owner', 'admin', 'operations', 'finance', 'viewer');
+
+update public.invites
+set role = case role
+  when 'owner' then 'super_admin'
+  when 'admin' then 'manager'
+  when 'operations' then 'store_keeper'
+  when 'finance' then 'accountant'
+  when 'viewer' then 'ceo'
+  else role
+end
+where role in ('owner', 'admin', 'operations', 'finance', 'viewer');
+
+update public.memberships
+set role = 'sales_rep'
+where role not in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo', 'super_admin');
+
+update public.invites
+set role = 'sales_rep'
+where role not in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo', 'super_admin');
+
+alter table public.memberships alter column role set default 'sales_rep';
+alter table public.invites alter column role set default 'sales_rep';
+
+alter table public.memberships
+add constraint memberships_role_check
+check (role in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo', 'super_admin'));
+
+alter table public.invites
+add constraint invites_role_check
+check (role in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo', 'super_admin'));
 
 create or replace function public.is_client_member(p_client_id uuid)
 returns boolean
@@ -104,7 +153,7 @@ as $$
     where client_id = p_client_id
       and user_id = auth.uid()
       and status = 'active'
-      and role in ('owner', 'admin')
+      and role = 'super_admin'
   );
 $$;
 
@@ -131,7 +180,7 @@ begin
   end if;
 
   v_email := coalesce(auth.jwt() ->> 'email', '');
-  v_name := coalesce(auth.jwt() -> 'user_metadata' ->> 'full_name', v_email, 'Workspace owner');
+  v_name := coalesce(auth.jwt() -> 'user_metadata' ->> 'full_name', v_email, 'Super Admin');
 
   insert into public.clients (
     company_name,
@@ -167,7 +216,7 @@ begin
     auth.uid(),
     v_email,
     v_name,
-    'owner',
+    'super_admin',
     'active',
     false
   );

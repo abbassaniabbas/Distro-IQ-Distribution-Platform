@@ -50,7 +50,7 @@ function renderSupabaseReset({ state }) {
         ${panelHeader("Set password", "Your invitation is confirmed")}
         <div class="client-id-box">
           <span class="eyebrow">${escapeHtml(state.user?.email || "Signed-in user")}</span>
-          <strong>${escapeHtml(state.client?.companyName || "Company workspace")}</strong>
+          <strong>${escapeHtml(state.client?.companyName || "Factory workspace")}</strong>
         </div>
         <form id="reset-password-form" class="form-grid" novalidate data-mode="supabase">
           <label class="field">

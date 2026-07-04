@@ -1,10 +1,12 @@
 import { getStockHealth } from "../services/calculations.js";
 import { formatCurrency, formatNumber } from "../services/formatters.js";
+import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
 
-function renderProductCard(product) {
+function renderProductCard(product, permissions) {
   const health = getStockHealth(product);
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
   const searchIndex = [
     product.id,
     product.name,
@@ -48,6 +50,7 @@ function renderProductCard(product) {
           iconName: "plus",
           label: "Restock",
           className: "primary js-restock-product",
+          disabled: !canRestock,
           data: { "product-id": product.id }
         })}
       </footer>
@@ -57,12 +60,13 @@ function renderProductCard(product) {
 
 export function renderInventory({ state }) {
   const categories = [...new Set(state.products.map((product) => product.category))].sort();
+  const permissions = currentUserPermissions(state);
 
   return `
     <section class="view inventory-view">
       <section class="panel inventory-layout">
         <div class="toolbar">
-          ${panelHeader("Inventory health", "Stock position, cover days, and replenishment risk")}
+          ${panelHeader("Factory stock health", "Finished snacks, packaging, cover days, and replenishment risk")}
           <div class="toolbar-group">
             <label class="field">
               <span class="sr-only">Filter by category</span>
@@ -75,7 +79,7 @@ export function renderInventory({ state }) {
         </div>
 
         <div class="product-grid">
-          ${state.products.map(renderProductCard).join("")}
+          ${state.products.map((product) => renderProductCard(product, permissions)).join("")}
         </div>
       </section>
     </section>
@@ -96,7 +100,7 @@ export function bindInventory({ root, store }) {
       store.dispatch({
         type: "RESTOCK_PRODUCT",
         productId: button.dataset.productId,
-        message: "Inventory replenished"
+        message: "Snack stock replenished"
       });
     });
   });

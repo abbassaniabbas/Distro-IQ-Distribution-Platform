@@ -22,7 +22,9 @@ const paths = {
   wallet: '<path d="M4 7h15a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H4V7Z"/><path d="M4 7a3 3 0 0 1 3-3h10v3"/><path d="M17 13h.01"/>',
   userCheck: '<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z"/><path d="m16 11 2 2 4-4"/>',
   plus: '<path d="M12 5v14"/><path d="M5 12h14"/>',
-  clock: '<path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="M12 6v6l4 2"/>'
+  clock: '<path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20Z"/><path d="M12 6v6l4 2"/>',
+  eye: '<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z"/><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"/>',
+  eyeOff: '<path d="M3 3l18 18"/><path d="M10.7 5.1A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a18.8 18.8 0 0 1-4.1 5.1"/><path d="M6.1 6.8A18.5 18.5 0 0 0 2 12s3.5 7 10 7c1.5 0 2.9-.4 4.1-1"/><path d="M9.9 9.9A3 3 0 0 0 14.1 14.1"/>'
 };
 
 export function icon(name, className = "") {

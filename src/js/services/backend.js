@@ -40,7 +40,7 @@ function mapInvite(row) {
     clientId: row.client_id,
     accountId: row.membership_id,
     to: row.email,
-    subject: row.subject || "Distro IQ invite",
+    subject: row.subject || "DistroIQ invite",
     resetLink: row.redirect_to || "",
     temporaryPassword: "",
     status: row.status,
@@ -235,7 +235,7 @@ export async function createWorkspace(payload) {
     actionType: "created",
     recordType: "company",
     recordLabel: payload.companyName.trim(),
-    summary: "Created company workspace"
+    summary: "Created factory workspace"
   });
 
   return loadWorkspace();
@@ -282,7 +282,7 @@ export async function updateWorkspaceSettings({ client, payload }) {
     actionType: "updated",
     recordType: "company",
     recordLabel: payload.companyName.trim(),
-    summary: "Updated company settings"
+    summary: "Updated factory settings"
   });
 
   return loadWorkspace();

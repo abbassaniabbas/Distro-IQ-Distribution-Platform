@@ -1,5 +1,6 @@
 import { calculateMetrics, getInvoiceAging, getRetailerMap } from "../services/calculations.js";
 import { formatCurrency, formatDate } from "../services/formatters.js";
+import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 
@@ -17,8 +18,9 @@ function renderAgingRows(invoices) {
     .join("");
 }
 
-function renderInvoiceRows(state) {
+function renderInvoiceRows(state, permissions) {
   const retailerMap = getRetailerMap(state.retailers);
+  const canUpdateCredit = permissions.canSetCreditLimits;
 
   return state.invoices.map((invoice) => {
     const retailer = retailerMap.get(invoice.retailerId);
@@ -37,7 +39,7 @@ function renderInvoiceRows(state) {
           <strong>${escapeHtml(invoice.id)}</strong>
           <div class="muted">Issued ${formatDate(invoice.issuedAt)}</div>
         </td>
-        <td>${escapeHtml(retailer?.name || "Unknown retailer")}</td>
+        <td>${escapeHtml(retailer?.name || "Unknown customer")}</td>
         <td>${statusPill(invoice.status)}</td>
         <td>${formatDate(invoice.dueAt)}</td>
         <td>${formatCurrency(invoice.amount)}</td>
@@ -47,7 +49,7 @@ function renderInvoiceRows(state) {
               iconName: "check",
               label: invoice.status === "paid" ? "Paid" : "Mark paid",
               className: invoice.status === "paid" ? "" : "primary js-mark-paid",
-              disabled: invoice.status === "paid",
+              disabled: invoice.status === "paid" || !canUpdateCredit,
               data: { "invoice-id": invoice.id }
             })}
           </div>
@@ -59,6 +61,7 @@ function renderInvoiceRows(state) {
 
 export function renderFinance({ state }) {
   const metrics = calculateMetrics(state);
+  const permissions = currentUserPermissions(state);
   const paidTotal = state.invoices
     .filter((invoice) => invoice.status === "paid")
     .reduce((total, invoice) => total + invoice.amount, 0);
@@ -70,15 +73,15 @@ export function renderFinance({ state }) {
     <section class="view finance-view">
       <div class="finance-kpis">
         ${metricCard({
-          label: "Receivables",
+          label: "Balances owed",
           value: formatCurrency(metrics.receivables),
-          meta: "Open invoice balance",
+          meta: "Open customer credit",
           iconName: "wallet"
         })}
         ${metricCard({
           label: "Collected",
           value: formatCurrency(paidTotal),
-          meta: "Confirmed payments",
+          meta: "Confirmed customer payments",
           iconName: "check"
         })}
         ${metricCard({
@@ -91,16 +94,16 @@ export function renderFinance({ state }) {
 
       <div class="finance-layout">
         <section class="panel">
-          ${panelHeader("Receivables aging", "Open balances by due-date bucket")}
+          ${panelHeader("Credit aging", "Open balances owed by due-date bucket")}
           <div class="aging-list">${renderAgingRows(state.invoices)}</div>
         </section>
 
         <section class="panel">
-          ${panelHeader("Invoices", "Payment status by retailer")}
+          ${panelHeader("Customer balances", "Payment status by outlet and supermarket")}
           ${table(
-            ["Invoice", "Retailer", "Status", "Due", "Amount", ""],
-            renderInvoiceRows(state),
-            "No invoices available"
+            ["Invoice", "Customer", "Status", "Due", "Amount", ""],
+            renderInvoiceRows(state, permissions),
+            "No balances available"
           )}
         </section>
       </div>
@@ -114,7 +117,7 @@ export function bindFinance({ root, store }) {
       store.dispatch({
         type: "MARK_INVOICE_PAID",
         invoiceId: button.dataset.invoiceId,
-        message: "Invoice marked paid"
+        message: "Balance marked paid"
       });
     });
   });

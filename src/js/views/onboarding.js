@@ -81,7 +81,7 @@ export function renderOnboarding({ state }) {
       <div class="onboarding-layout">
         <section class="panel setup-card">
           ${panelHeader("Create factory workspace", "Set the details your team will see in DistroIQ")}
-          <div class="logo-preview" id="logo-preview" aria-label="Company logo preview">${renderLogo(null)}</div>
+          <div class="logo-preview" id="logo-preview" aria-label="Factory logo preview">${renderLogo(null)}</div>
           <p>
             Add your factory details once, then invite managers, store keepers, and sales reps into one connected system.
           </p>
@@ -256,13 +256,13 @@ export function bindOnboarding({ root, store }) {
         store.dispatch({
           type: "SET_WORKSPACE",
           ...workspace,
-          message: "Company workspace created"
+          message: "Factory workspace created"
         });
       } else {
         store.dispatch({
           type: "CREATE_CLIENT",
           payload: values,
-          message: "Company workspace created"
+          message: "Factory workspace created"
         });
       }
 

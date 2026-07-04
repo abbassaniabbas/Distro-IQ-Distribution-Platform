@@ -22,17 +22,17 @@ function renderPreviewLogo(client) {
 
 export function renderDeliveryNotePreview(client) {
   const brandColor = getBrandColor(client);
-  const companyName = client?.companyName || "Distro IQ";
+  const companyName = client?.companyName || "DistroIQ";
   const sampleRows = [
     {
-      item: "Golden Grain Rice 25kg",
-      quantity: 10,
-      amount: 292000
+      item: "Crunchy Plantain Chips 50g",
+      quantity: 240,
+      amount: 72000
     },
     {
-      item: "Sunrise Tomato Paste 400g",
-      quantity: 48,
-      amount: 50400
+      item: "Cheese Corn Puffs 35g",
+      quantity: 180,
+      amount: 39600
     }
   ];
   const total = sampleRows.reduce((sum, row) => sum + row.amount, 0);
@@ -56,7 +56,7 @@ export function renderDeliveryNotePreview(client) {
 
       <div class="delivery-note-party">
         <span class="eyebrow">Deliver to</span>
-        <strong>Lekki Everyday Mart</strong>
+        <strong>Lekki Family Mart</strong>
         <span class="muted">Lagos, South West</span>
       </div>
 
