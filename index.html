@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DistroIQ Sales, Stock & Distribution</title>
+    <link rel="icon" href="./src/assets/distro-iq-mark.svg">
+    <link rel="stylesheet" href="./src/css/app.css">
+    <script type="module" src="./src/js/app.js"></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Main navigation">
+        <a class="brand" href="#/dashboard" aria-label="Distro IQ dashboard">
+          <img src="./src/assets/distro-iq-mark.svg" alt="" width="36" height="36">
+          <span>
+            <strong>DistroIQ</strong>
+            <small>Sales, Stock & Distribution</small>
+          </span>
+        </a>
+
+        <nav class="nav-list" id="primary-nav"></nav>
+
+        <div class="sidebar-footer">
+          <div>
+            <span class="eyebrow">Today</span>
+            <strong id="sidebar-dispatch-count">0 dispatches</strong>
+          </div>
+          <div class="signal-dot" aria-hidden="true"></div>
+        </div>
+      </aside>
+
+      <div class="main-shell">
+        <header class="topbar">
+          <div>
+            <span class="eyebrow">Command center</span>
+            <h1 id="view-title">Dashboard</h1>
+          </div>
+
+          <div class="topbar-actions">
+            <label class="search-field" for="global-search">
+              <span class="sr-only">Search operations</span>
+              <input id="global-search" type="search" placeholder="Search sales, reps, customers, snacks">
+            </label>
+            <button class="icon-button" id="reset-demo-data" type="button" title="Reset demo data" aria-label="Reset demo data">
+              <span data-icon="refresh"></span>
+            </button>
+            <button class="icon-button" id="sign-out" type="button" title="Sign out" aria-label="Sign out" hidden>
+              <span data-icon="logOut"></span>
+            </button>
+          </div>
+        </header>
+
+        <main id="view-root" class="view-root" tabindex="-1"></main>
+      </div>
+    </div>
+
+    <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

@@ -1,0 +1,11 @@
+{
+  "name": "distro-iq-distribution-platform",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A modular distribution operations dashboard for Distro IQ.",
+  "scripts": {
+    "dev": "node scripts/dev-server.mjs",
+    "start": "node scripts/dev-server.mjs"
+  }
+}
