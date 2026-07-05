@@ -1,5 +1,15 @@
-import { signInWithPassword, signOut, signUpWithPassword } from "../services/auth.js";
-import { loadWorkspace } from "../services/backend.js";
+import {
+  createMfaChallenge,
+  enrollTotpFactor,
+  getAuthContext,
+  getAuthenticatorAssuranceLevel,
+  listAuthenticatorFactors,
+  signInWithPassword,
+  signOut,
+  signUpWithPassword,
+  verifyMfaChallenge
+} from "../services/auth.js";
+import { loadPlatformOverview, loadWorkspace } from "../services/backend.js";
 import { ROLE_OPTIONS, normalizeRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { textButton } from "../ui/components.js";
@@ -7,6 +17,10 @@ import { icon } from "../ui/icons.js";
 
 function isSignupRoute(routeId) {
   return routeId === "signup";
+}
+
+function isPlatformAdminRoute(routeId) {
+  return routeId === "platform-admin";
 }
 
 function readAuthForm(form) {
@@ -61,32 +75,56 @@ function renderAuthTab({ href, label, active }) {
   `;
 }
 
-function renderAuthFeature({ iconName, title, body }) {
+function renderLoginRoleSelector() {
   return `
-    <div class="auth-feature">
-      <span class="auth-feature-icon">${icon(iconName)}</span>
-      <span>
-        <strong>${escapeHtml(title)}</strong>
-        <small>${escapeHtml(body)}</small>
-      </span>
-    </div>
+    <label class="field span-full auth-field">
+      <span>Role</span>
+      <select name="role" aria-label="Role">
+        <option value="">Select your role</option>
+        ${ROLE_OPTIONS.map((role) => `
+          <option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>
+        `).join("")}
+      </select>
+      ${renderFieldError("role")}
+    </label>
   `;
 }
 
-function renderLoginRoleSelector() {
+function renderPlatformMfaPanel() {
   return `
-    <fieldset class="auth-role-choice span-full">
-      <legend>Choose your role first</legend>
-      <div class="auth-role-options">
-        ${ROLE_OPTIONS.map((role) => `
-          <label class="auth-role-option">
-            <input type="radio" name="role" value="${escapeHtml(role.value)}">
-            <span>${escapeHtml(role.label)}</span>
-          </label>
-        `).join("")}
+    <section id="platform-mfa-panel" class="auth-mfa-panel span-full" hidden>
+      <div class="auth-form-heading">
+        <span class="eyebrow">Two-factor authentication</span>
+        <h3>Verify Super Admin access</h3>
+        <p>Use an authenticator app to complete the Bex Lab Super Admin sign-in.</p>
       </div>
-      ${renderFieldError("role")}
-    </fieldset>
+
+      <div class="auth-mfa-enrollment" data-mfa-enrollment hidden>
+        <div class="auth-mfa-qr">
+          <img alt="Authenticator QR code" data-mfa-qr>
+        </div>
+        <div class="client-id-box">
+          <span class="eyebrow">Manual setup key</span>
+          <code data-mfa-secret></code>
+        </div>
+      </div>
+
+      <label class="field span-full auth-field">
+        <span>Authenticator code</span>
+        <input name="mfaCode" inputmode="numeric" autocomplete="one-time-code" maxlength="8" placeholder="123456" data-mfa-code>
+      </label>
+      <span id="platform-mfa-message" class="auth-message span-full" role="status" aria-live="polite"></span>
+      <div class="span-full auth-submit-row">
+        <button class="button" type="button" data-mfa-cancel>
+          ${icon("arrowRight")}
+          <span>Back to sign in</span>
+        </button>
+        <button class="button primary" type="button" data-mfa-verify>
+          ${icon("check")}
+          <span>Verify and open console</span>
+        </button>
+      </div>
+    </section>
   `;
 }
 
@@ -108,11 +146,29 @@ function roleMismatchError(selectedRole, actualRole) {
   return error;
 }
 
+function mfaRequiredError() {
+  const error = new Error("Two-factor authentication is required for Super Admin access.");
+  error.code = "mfa_required";
+  return error;
+}
+
 function friendlyAuthError(error, mode) {
   const message = String(error?.message || "").toLowerCase();
 
   if (error?.code === "role_mismatch") {
     return `This account is set up as ${roleLabel(error.actualRole)}. Please choose ${roleLabel(error.actualRole)} to sign in.`;
+  }
+
+  if (error?.code === "platform_admin_setup_required") {
+    return "Platform console setup is not installed yet. Run the updated Supabase schema first.";
+  }
+
+  if (error?.code === "mfa_required") {
+    return "Two-factor authentication is required for Bex Lab Super Admin access. Complete MFA before opening the console.";
+  }
+
+  if (error?.code === "platform_admin_required" || message.includes("platform admin")) {
+    return "This sign-in is reserved for the platform owner. Use the company sign-in page for factory accounts.";
   }
 
   if (message.includes("invalid login") || message.includes("invalid credentials")) {
@@ -141,20 +197,20 @@ function friendlyAuthError(error, mode) {
 }
 
 export function renderAuth({ routeId }) {
-  const mode = isSignupRoute(routeId) ? "signup" : "login";
+  const isPlatformAdmin = isPlatformAdminRoute(routeId);
+  const mode = isPlatformAdmin ? "platform" : isSignupRoute(routeId) ? "signup" : "login";
   const isSignup = mode === "signup";
-  const title = isSignup ? "Create your DistroIQ account" : "Welcome back";
-  const subtitle = isSignup
-    ? "Start with your user account, then create the factory workspace."
-    : "Sign in to continue managing sales, stock, dispatch, and balances.";
-  const footerCopy = isSignup
-    ? "You will set up company details after your account is ready."
-    : "Team accounts open with the permissions assigned by your company.";
+  const title = isPlatformAdmin ? "Super Admin" : isSignup ? "Create account" : "Sign in";
+  const subtitle = isPlatformAdmin
+    ? "Bex Lab Innovations access"
+    : isSignup
+    ? "Create your DistroIQ account"
+    : "Access your company workspace";
 
   return `
     <section class="view auth-view">
       <div class="auth-shell">
-        <section class="auth-brand-panel" aria-label="DistroIQ overview">
+        <section class="auth-card auth-card-centered" aria-labelledby="auth-title">
           <div class="auth-logo-lockup">
             <span class="auth-logo-mark">
               <img src="./src/assets/distro-iq-mark.svg" alt="">
@@ -164,55 +220,24 @@ export function renderAuth({ routeId }) {
               <small>Sales, Stock & Distribution</small>
             </span>
           </div>
-
-          <div class="auth-hero-copy">
-            <span class="eyebrow">Snack factory workspace</span>
-            <h1>Run sales, stock, dispatch, returns, and customer balances from one place.</h1>
-            <p>Built for confectionery teams moving chips and snack products from store to field to customer.</p>
-          </div>
-
-          <div class="auth-feature-list">
-            ${renderAuthFeature({
-              iconName: "package",
-              title: "Rep stock",
-              body: "See what each sales rep carries and what needs replenishing."
-            })}
-            ${renderAuthFeature({
-              iconName: "orders",
-              title: "Sales and returns",
-              body: "Capture field sales, returned goods, and outlet activity."
-            })}
-            ${renderAuthFeature({
-              iconName: "wallet",
-              title: "Credit balances",
-              body: "Track supermarket balances, payments, and revenue in naira."
-            })}
-          </div>
-
-          <div class="auth-role-strip" aria-label="Supported account roles">
-            <span>Sales Rep</span>
-            <span>Manager</span>
-            <span>Store Keeper</span>
-            <span>Accountant</span>
-            <span>CEO</span>
-            <span>Super Admin</span>
-          </div>
-        </section>
-
-        <section class="auth-card" aria-labelledby="auth-title">
-          <nav class="auth-tabs" aria-label="Account access">
-            ${renderAuthTab({ href: "#/login", label: "Sign in", active: !isSignup })}
-            ${renderAuthTab({ href: "#/signup", label: "Create account", active: isSignup })}
-          </nav>
+          ${
+            isPlatformAdmin
+              ? ""
+              : `
+                <nav class="auth-tabs" aria-label="Account access">
+                  ${renderAuthTab({ href: "#/login", label: "Sign in", active: !isSignup })}
+                  ${renderAuthTab({ href: "#/signup", label: "Create account", active: isSignup })}
+                </nav>
+              `
+          }
 
           <div class="auth-form-heading">
-            <span class="eyebrow">Company access</span>
             <h2 id="auth-title">${escapeHtml(title)}</h2>
             <p>${escapeHtml(subtitle)}</p>
           </div>
 
           <form id="auth-form" class="form-grid auth-form" novalidate data-mode="${mode}">
-            ${!isSignup ? renderLoginRoleSelector() : ""}
+            ${mode === "login" ? renderLoginRoleSelector() : ""}
             ${
               isSignup
                 ? `
@@ -226,23 +251,22 @@ export function renderAuth({ routeId }) {
             }
             <label class="field span-full auth-field">
               <span>Email address</span>
-              <input name="email" type="email" autocomplete="email" placeholder="you@company.com" aria-label="Email address" ${!isSignup ? "disabled" : ""}>
+              <input name="email" type="email" autocomplete="email" placeholder="you@company.com" aria-label="Email address">
               ${renderFieldError("email")}
             </label>
             <label class="field span-full auth-field">
               <span>Password</span>
               <span class="auth-password-control">
-                <input name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" aria-label="Password" ${!isSignup ? "disabled" : ""}>
-                <button class="icon-button auth-password-toggle" type="button" title="Show password" aria-label="Show password" data-password-toggle ${!isSignup ? "disabled" : ""}>
+                <input name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" aria-label="Password">
+                <button class="icon-button auth-password-toggle" type="button" title="Show password" aria-label="Show password" data-password-toggle>
                   ${icon("eye")}
                 </button>
               </span>
               ${renderFieldError("password")}
-              ${isSignup ? '<small class="auth-field-hint">Use at least 8 characters.</small>' : ""}
             </label>
             <span id="auth-message" class="auth-message span-full" role="status" aria-live="polite"></span>
+            ${isPlatformAdmin ? renderPlatformMfaPanel() : ""}
             <div class="span-full auth-submit-row">
-              <span class="auth-form-note">${escapeHtml(footerCopy)}</span>
               ${textButton({
                 iconName: isSignup ? "userCheck" : "arrowRight",
                 label: isSignup ? "Create account" : "Sign in",
@@ -257,32 +281,123 @@ export function renderAuth({ routeId }) {
   `;
 }
 
-export function bindAuth({ root, store }) {
+export function bindAuth({ root, store, beginAuthFormFlow }) {
   const form = qs("#auth-form", root);
   const message = qs("#auth-message", root);
   const passwordInput = qs('input[name="password"]', root);
   const passwordToggle = qs("[data-password-toggle]", root);
-  const credentialInputs = [qs('input[name="email"]', root), passwordInput].filter(Boolean);
-  const roleInputs = [...root.querySelectorAll('input[name="role"]')];
+  const roleControls = [...root.querySelectorAll('[name="role"]')];
+  const mfaPanel = qs("#platform-mfa-panel", root);
+  const mfaEnrollment = qs("[data-mfa-enrollment]", root);
+  const mfaQr = qs("[data-mfa-qr]", root);
+  const mfaSecret = qs("[data-mfa-secret]", root);
+  const mfaCode = qs("[data-mfa-code]", root);
+  const mfaMessage = qs("#platform-mfa-message", root);
+  const mfaVerifyButton = qs("[data-mfa-verify]", root);
+  const mfaCancelButton = qs("[data-mfa-cancel]", root);
+  let pendingMfa = null;
   if (!form) return;
 
-  function setCredentialFieldsEnabled(enabled) {
-    credentialInputs.forEach((input) => {
-      input.disabled = !enabled;
-    });
+  function setMfaMessage(text, type = "") {
+    if (!mfaMessage) return;
 
-    if (passwordToggle) {
-      passwordToggle.disabled = !enabled;
-    }
+    mfaMessage.textContent = text;
+    mfaMessage.className = `auth-message span-full${type ? ` is-${type}` : ""}`;
   }
 
-  setCredentialFieldsEnabled(form.dataset.mode !== "login" || roleInputs.some((input) => input.checked));
+  function showMfaPanel() {
+    form.classList.add("is-verifying-mfa");
+    if (mfaPanel) {
+      mfaPanel.hidden = false;
+    }
+    mfaCode?.focus();
+  }
 
-  roleInputs.forEach((input) => {
-    input.addEventListener("change", () => {
+  function hideMfaPanel() {
+    form.classList.remove("is-verifying-mfa");
+    if (mfaPanel) {
+      mfaPanel.hidden = true;
+    }
+    if (mfaEnrollment) {
+      mfaEnrollment.hidden = true;
+    }
+    if (mfaQr) {
+      mfaQr.removeAttribute("src");
+    }
+    if (mfaSecret) {
+      mfaSecret.textContent = "";
+    }
+    if (mfaCode) {
+      mfaCode.value = "";
+    }
+    setMfaMessage("");
+    pendingMfa = null;
+  }
+
+  async function openPlatformConsole(authData) {
+    const platformOverview = await loadPlatformOverview();
+    const authContext = await getAuthContext();
+
+    store.dispatch({
+      type: "SET_PLATFORM_CONTEXT",
+      session: authContext.session || authData.session,
+      user: authContext.user || authData.user,
+      platformOverview,
+      message: "Platform console opened"
+    });
+
+    window.location.hash = "#/platform-console";
+  }
+
+  async function preparePlatformMfa(authData) {
+    showMfaPanel();
+    setMfaMessage("Preparing two-factor verification...");
+
+    const factors = await listAuthenticatorFactors();
+    const existingFactor = factors.totp.find((factor) => factor.status === "verified") || factors.totp[0];
+    let factorId = existingFactor?.id;
+
+    if (!factorId) {
+      const enrollment = await enrollTotpFactor();
+      factorId = enrollment.factorId;
+
+      if (mfaEnrollment) {
+        mfaEnrollment.hidden = false;
+      }
+      if (mfaQr && enrollment.qrCode) {
+        mfaQr.src = enrollment.qrCode;
+      }
+      if (mfaSecret) {
+        mfaSecret.textContent = enrollment.secret || enrollment.uri || "Scan the QR code with your authenticator app.";
+      }
+
+      setMfaMessage("Scan the QR code, then enter the six-digit code from your authenticator app.");
+    } else {
+      if (mfaEnrollment) {
+        mfaEnrollment.hidden = true;
+      }
+      setMfaMessage(
+        existingFactor.status === "verified"
+          ? "Enter the six-digit code from your authenticator app."
+          : "Enter the code from the authenticator app you started setting up for this account."
+      );
+    }
+
+    const challenge = await createMfaChallenge(factorId);
+    pendingMfa = {
+      authData,
+      factorId,
+      challengeId: challenge.challengeId
+    };
+
+    mfaCode?.focus();
+  }
+
+  roleControls.forEach((control) => {
+    control.addEventListener("change", () => {
       writeErrors(form, { role: "" });
-      setCredentialFieldsEnabled(true);
-      qs('input[name="email"]', root)?.focus();
+      message.textContent = "";
+      message.className = "auth-message span-full";
     });
   });
 
@@ -314,6 +429,8 @@ export function bindAuth({ root, store }) {
     submitButton.disabled = true;
     submitText.textContent = mode === "signup" ? "Creating..." : "Signing in...";
 
+    const finishAuthFormFlow = beginAuthFormFlow?.() || (() => {});
+
     try {
       const authData =
         mode === "signup"
@@ -326,6 +443,18 @@ export function bindAuth({ root, store }) {
         return;
       }
 
+      if (mode === "platform") {
+        const assurance = await getAuthenticatorAssuranceLevel();
+
+        if (assurance.currentLevel !== "aal2") {
+          await preparePlatformMfa(authData);
+          return;
+        }
+
+        await openPlatformConsole(authData);
+        return;
+      }
+
       const workspace = await loadWorkspace();
       if (mode === "login") {
         const actualRole = getWorkspaceRoleForUser(workspace, authData.user);
@@ -334,31 +463,95 @@ export function bindAuth({ root, store }) {
           try {
             await signOut();
           } catch {
-            // Keep the role guidance visible even if the sign-out request has a transient issue.
+            // The visible error should still tell the user which role to choose.
           }
           throw roleMismatchError(values.role, actualRole);
         }
       }
 
       store.dispatch({
-        type: "SET_AUTH_CONTEXT",
+        type: "SET_AUTHENTICATED_WORKSPACE",
         session: authData.session,
         user: authData.user,
+        ...workspace,
         message: mode === "signup" ? "Account created" : "Signed in"
-      });
-
-      store.dispatch({
-        type: "SET_WORKSPACE",
-        ...workspace
       });
 
       window.location.hash = workspace.client ? "#/dashboard" : "#/onboarding";
     } catch (error) {
+      const errorMessage = friendlyAuthError(error, mode);
+
+      if (error?.code === "role_mismatch") {
+        writeErrors(form, {
+          role: "That role does not match this account."
+        });
+      }
+
       message.className = "auth-message span-full is-error";
-      message.textContent = friendlyAuthError(error, mode);
+      message.textContent = errorMessage;
+      if (error?.code === "role_mismatch") {
+        window.location.hash = "#/login";
+      }
     } finally {
+      finishAuthFormFlow();
       submitButton.disabled = false;
       submitText.textContent = idleText;
     }
+  });
+
+  mfaVerifyButton?.addEventListener("click", async () => {
+    if (!pendingMfa) {
+      setMfaMessage("Sign in again to start two-factor verification.", "error");
+      return;
+    }
+
+    const code = String(mfaCode?.value || "").trim();
+    if (!/^\d{6,8}$/.test(code)) {
+      setMfaMessage("Enter the code from your authenticator app.", "error");
+      mfaCode?.focus();
+      return;
+    }
+
+    const label = qs("span", mfaVerifyButton);
+    const idleText = label?.textContent || "Verify and open console";
+    mfaVerifyButton.disabled = true;
+    if (label) label.textContent = "Verifying...";
+    setMfaMessage("");
+
+    try {
+      await verifyMfaChallenge({
+        factorId: pendingMfa.factorId,
+        challengeId: pendingMfa.challengeId,
+        code
+      });
+
+      const assurance = await getAuthenticatorAssuranceLevel();
+      if (assurance.currentLevel !== "aal2") {
+        throw mfaRequiredError();
+      }
+
+      await openPlatformConsole(pendingMfa.authData);
+    } catch (error) {
+      setMfaMessage(friendlyAuthError(error, "platform"), "error");
+    } finally {
+      mfaVerifyButton.disabled = false;
+      if (label) label.textContent = idleText;
+    }
+  });
+
+  mfaCode?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      mfaVerifyButton?.click();
+    }
+  });
+
+  mfaCancelButton?.addEventListener("click", async () => {
+    try {
+      await signOut();
+    } catch {
+      // Returning to the password step should not depend on a perfect sign-out response.
+    }
+    hideMfaPanel();
   });
 }

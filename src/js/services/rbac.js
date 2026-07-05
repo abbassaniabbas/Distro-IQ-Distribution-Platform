@@ -23,20 +23,16 @@ export const ROLE_OPTIONS = [
     value: "ceo",
     label: "CEO",
     description: "Read-only company-wide dashboard across sales, stock, reps, supermarkets, and reports"
-  },
-  {
-    value: "super_admin",
-    label: "Super Admin",
-    description: "Full platform control, users, access resets, modules, and audit records"
   }
 ];
 
 const LEGACY_ROLE_MAP = {
-  owner: "super_admin",
+  owner: "manager",
   admin: "manager",
   operations: "store_keeper",
   finance: "accountant",
-  viewer: "ceo"
+  viewer: "ceo",
+  super_admin: "manager"
 };
 
 const ROLE_PERMISSIONS = {
@@ -59,7 +55,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false
   },
   manager: {
-    nav: ["dashboard", "orders", "inventory", "routes", "retailers", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "routes", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
@@ -72,8 +68,8 @@ const ROLE_PERMISSIONS = {
     canDispatchStock: false,
     canViewFinancialReports: true,
     canExportReports: true,
-    canManageUsers: false,
-    canConfigureFactory: false,
+    canManageUsers: true,
+    canConfigureFactory: true,
     canAuditRecords: true
   },
   store_keeper: {
@@ -129,24 +125,6 @@ const ROLE_PERMISSIONS = {
     canManageUsers: false,
     canConfigureFactory: false,
     canAuditRecords: true
-  },
-  super_admin: {
-    nav: ["dashboard", "orders", "inventory", "routes", "retailers", "team", "finance", "activity-log", "settings"],
-    canViewCompanyWide: true,
-    canLogSalesReturns: true,
-    canManageProducts: true,
-    canAssignStock: true,
-    canReconcileStock: true,
-    canSetCreditLimits: true,
-    canManageCustomers: true,
-    canReviewReports: true,
-    canManageStockMovements: true,
-    canDispatchStock: true,
-    canViewFinancialReports: true,
-    canExportReports: true,
-    canManageUsers: true,
-    canConfigureFactory: true,
-    canAuditRecords: true
   }
 };
 
@@ -181,9 +159,10 @@ export function currentUserPermissions(state) {
 }
 
 export function canAccessRoute(state, routeId) {
-  const setupRoutes = ["loading", "backend-setup", "login", "signup", "onboarding", "onboarding-confirmation", "reset-password"];
+  const setupRoutes = ["loading", "backend-setup", "login", "signup", "onboarding", "onboarding-confirmation", "reset-password", "platform-admin"];
 
   if (setupRoutes.includes(routeId)) return true;
+  if (routeId === "platform-console") return Boolean(state.platformAdmin);
   if (!state.session || !state.client?.id) return true;
 
   return currentUserPermissions(state).nav.includes(routeId);

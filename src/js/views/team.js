@@ -137,8 +137,8 @@ export function renderTeam({ state }) {
     return `
       <section class="view team-view">
         <section class="panel setup-card">
-          ${panelHeader("Team access", "Only Super Admins can create users or reset access")}
-          <p>Your role can view the tools assigned to you, but user management is reserved for Super Admins.</p>
+          ${panelHeader("Team access", "Only Managers can create users or reset access")}
+          <p>Your role can view the tools assigned to you, but user management is reserved for Managers.</p>
         </section>
       </section>
     `;

@@ -10,7 +10,7 @@ type InvitePayload = {
   clientId: string;
   name: string;
   email: string;
-  role: "sales_rep" | "manager" | "store_keeper" | "accountant" | "ceo" | "super_admin";
+  role: "sales_rep" | "manager" | "store_keeper" | "accountant" | "ceo";
   redirectTo: string;
 };
 
@@ -19,8 +19,7 @@ const validRoles = new Set([
   "manager",
   "store_keeper",
   "accountant",
-  "ceo",
-  "super_admin"
+  "ceo"
 ]);
 
 function jsonResponse(body: unknown, status = 200) {
@@ -87,7 +86,7 @@ Deno.serve(async (req) => {
   });
 
   if (roleError || !allowed) {
-    return jsonResponse({ error: "Only Super Admins can invite users" }, 403);
+    return jsonResponse({ error: "Only Managers can invite users" }, 403);
   }
 
   const temporaryPassword = generateTemporaryPassword();

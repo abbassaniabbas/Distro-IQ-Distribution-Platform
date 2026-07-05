@@ -43,7 +43,9 @@ function ensureStateShape(value) {
       ...(state.backend || {})
     },
     session: null,
-    user: null
+    user: null,
+    platformAdmin: false,
+    platformOverview: Array.isArray(state.platformOverview) ? state.platformOverview : []
   };
 }
 
@@ -52,7 +54,9 @@ function getPersistableState(state) {
     ...state,
     backend: clone(seedData.backend),
     session: null,
-    user: null
+    user: null,
+    platformAdmin: false,
+    platformOverview: []
   };
 }
 
@@ -120,7 +124,9 @@ function reducer(currentState, action) {
           configured: true,
           status: action.session ? "authenticated" : "anonymous",
           error: ""
-        }
+        },
+        platformAdmin: false,
+        platformOverview: []
       };
     }
 
@@ -134,6 +140,46 @@ function reducer(currentState, action) {
       };
     }
 
+    case "SET_AUTHENTICATED_WORKSPACE": {
+      return {
+        ...state,
+        session: action.session || null,
+        user: action.user || null,
+        client: action.client || null,
+        accounts: Array.isArray(action.accounts) ? action.accounts : [],
+        invites: Array.isArray(action.invites) ? action.invites : [],
+        activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
+        backend: {
+          ...state.backend,
+          configured: true,
+          status: action.session ? "authenticated" : "anonymous",
+          error: ""
+        },
+        platformAdmin: false,
+        platformOverview: []
+      };
+    }
+
+    case "SET_PLATFORM_CONTEXT": {
+      return {
+        ...state,
+        session: action.session || null,
+        user: action.user || null,
+        client: null,
+        accounts: [],
+        invites: [],
+        activityLogs: [],
+        platformAdmin: Boolean(action.session),
+        platformOverview: Array.isArray(action.platformOverview) ? action.platformOverview : [],
+        backend: {
+          ...state.backend,
+          configured: true,
+          status: action.session ? "platform_authenticated" : "anonymous",
+          error: ""
+        }
+      };
+    }
+
     case "CLEAR_AUTH_CONTEXT": {
       return {
         ...state,
@@ -143,6 +189,8 @@ function reducer(currentState, action) {
         accounts: [],
         invites: [],
         activityLogs: [],
+        platformAdmin: false,
+        platformOverview: [],
         backend: {
           ...state.backend,
           status: "anonymous",

@@ -63,6 +63,56 @@ function mapActivityLog(row) {
   };
 }
 
+function mapPlatformClient(row) {
+  return {
+    id: row.client_id || row.id,
+    companyName: row.company_name || "Unnamed company",
+    documentBusinessName: row.documentBusinessName || row.document_business_name || row.company_name || "Unnamed company",
+    dateFormat: row.dateFormat || row.date_format || "DD/MM/YYYY",
+    brandColor: row.brand_color || row.brandColor || "#0B1F3A",
+    timezone: row.timezone || "Africa/Lagos",
+    currencySymbol: row.currency_symbol || "₦",
+    createdAt: row.created_at,
+    accountCount: Number(row.account_count || 0),
+    activeAccountCount: Number(row.active_account_count || 0),
+    inviteCount: Number(row.invite_count || 0),
+    activityCount: Number(row.activity_count || 0),
+    lastActivityAt: row.last_activity_at || ""
+  };
+}
+
+function normalizePlatformConsole(data) {
+  if (Array.isArray(data)) {
+    const clients = data.map(mapPlatformClient);
+
+    return {
+      stats: {},
+      clients,
+      users: [],
+      featureModules: [],
+      emailTemplates: [],
+      documentSequences: [],
+      auditLogs: [],
+      healthEvents: [],
+      platformAdmins: []
+    };
+  }
+
+  const value = data || {};
+
+  return {
+    stats: value.stats || {},
+    clients: Array.isArray(value.clients) ? value.clients.map(mapPlatformClient) : [],
+    users: Array.isArray(value.users) ? value.users : [],
+    featureModules: Array.isArray(value.featureModules) ? value.featureModules : [],
+    emailTemplates: Array.isArray(value.emailTemplates) ? value.emailTemplates : [],
+    documentSequences: Array.isArray(value.documentSequences) ? value.documentSequences : [],
+    auditLogs: Array.isArray(value.auditLogs) ? value.auditLogs : [],
+    healthEvents: Array.isArray(value.healthEvents) ? value.healthEvents : [],
+    platformAdmins: Array.isArray(value.platformAdmins) ? value.platformAdmins : []
+  };
+}
+
 function throwIfBackendMissing() {
   if (!isBackendConfigured()) {
     throw new Error("Supabase is not configured.");
@@ -197,6 +247,89 @@ export async function loadWorkspace() {
     invites: (inviteRows || []).map(mapInvite),
     activityLogs: activityError ? [] : (activityRows || []).map(mapActivityLog)
   };
+}
+
+export async function loadPlatformOverview() {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  let { data, error } = await supabase.rpc("get_platform_console");
+
+  if (error && isSchemaCacheError(error, "get_platform_console")) {
+    const legacyResult = await supabase.rpc("get_platform_overview");
+    data = legacyResult.data;
+    error = legacyResult.error;
+  }
+
+  if (error) {
+    const message = String(error.message || "");
+    if (message.includes("get_platform") || error.code === "PGRST202") {
+      const setupError = new Error("Platform console setup is not installed. Run the updated Supabase schema.");
+      setupError.code = "platform_admin_setup_required";
+      throw setupError;
+    }
+
+    const platformError = new Error(error.message);
+    platformError.code = "platform_admin_required";
+    throw platformError;
+  }
+
+  return normalizePlatformConsole(data);
+}
+
+export async function tryLoadPlatformOverview() {
+  try {
+    return await loadPlatformOverview();
+  } catch {
+    return null;
+  }
+}
+
+async function invokePlatformAdmin(action, payload = {}) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke("platform-admin", {
+    body: {
+      action,
+      payload
+    }
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  if (data?.error) {
+    throw new Error(data.error);
+  }
+
+  return data;
+}
+
+export async function provisionPlatformClient(payload) {
+  await invokePlatformAdmin("provision-client", payload);
+  return loadPlatformOverview();
+}
+
+export async function updatePlatformAccount(payload) {
+  await invokePlatformAdmin("update-user", payload);
+  return loadPlatformOverview();
+}
+
+export async function updatePlatformConfiguration(payload) {
+  await invokePlatformAdmin("update-config", payload);
+  return loadPlatformOverview();
+}
+
+export async function recordPlatformIntervention(payload) {
+  await invokePlatformAdmin("record-intervention", payload);
+  return loadPlatformOverview();
+}
+
+export async function triggerPlatformJob(payload) {
+  await invokePlatformAdmin("trigger-job", payload);
+  return loadPlatformOverview();
 }
 
 export async function createWorkspace(payload) {

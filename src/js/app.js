@@ -1,7 +1,7 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
 import { createStore } from "./state/store.js";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
-import { loadWorkspace } from "./services/backend.js";
+import { loadWorkspace, tryLoadPlatformOverview } from "./services/backend.js";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
@@ -23,6 +23,7 @@ import {
 } from "./views/onboarding.js";
 import { renderOrders, bindOrders } from "./views/orders.js";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js";
+import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
 import { renderRetailers, bindRetailers } from "./views/retailers.js";
 import { renderRoutes, bindRoutes } from "./views/routes.js";
 import { renderSettings, bindSettings } from "./views/settings.js";
@@ -115,6 +116,19 @@ const routes = {
     render: renderPasswordReset,
     bind: bindPasswordReset,
     isSetup: true
+  },
+  "platform-admin": {
+    title: "Super Admin",
+    render: renderAuth,
+    bind: bindAuth,
+    isSetup: true,
+    isPlatformAuth: true
+  },
+  "platform-console": {
+    title: "Platform Console",
+    render: renderPlatformConsole,
+    bind: bindPlatformConsole,
+    isPlatform: true
   }
 };
 
@@ -130,7 +144,27 @@ const topbarUtilities = qs("#topbar-utility-actions");
 const topbarAvatar = qs("#topbar-avatar");
 const notificationsButton = qs("#topbar-notifications");
 const messagesButton = qs("#topbar-messages");
-const AUTH_ROUTES = ["login", "signup", "reset-password"];
+const AUTH_ROUTES = ["login", "signup", "reset-password", "platform-admin"];
+const PLATFORM_NAV_ITEMS = [
+  {
+    id: "platform-console",
+    label: "Platform Console",
+    icon: "dashboard"
+  }
+];
+let activeAuthFormFlows = 0;
+
+function beginAuthFormFlow() {
+  activeAuthFormFlows += 1;
+
+  return () => {
+    activeAuthFormFlows = Math.max(0, activeAuthFormFlows - 1);
+  };
+}
+
+function isAuthFormFlowActive() {
+  return activeAuthFormFlows > 0;
+}
 
 function defaultRouteForState(state) {
   return currentUserPermissions(state).nav[0] || DEFAULT_ROUTE;
@@ -161,7 +195,19 @@ function getCurrentRouteId(state) {
     return routeId;
   }
 
-  if (!state.session && !["login", "signup"].includes(routeId)) {
+  if (state.platformAdmin) {
+    return routeId === "platform-console" ? routeId : "platform-console";
+  }
+
+  if (routeId === "platform-console") {
+    return "platform-admin";
+  }
+
+  if (state.session && routeId === "platform-admin") {
+    return state.client?.id ? defaultRouteForState(state) : "platform-admin";
+  }
+
+  if (!state.session && !["login", "signup", "platform-admin"].includes(routeId)) {
     return "login";
   }
 
@@ -185,6 +231,20 @@ function getCurrentRouteId(state) {
 }
 
 function renderNav(activeRouteId, state) {
+  if (state.platformAdmin) {
+    navRoot.innerHTML = PLATFORM_NAV_ITEMS.map((item) => {
+      const isActive = item.id === activeRouteId;
+
+      return `
+        <a class="nav-link ${isActive ? "is-active" : ""}" href="#/${item.id}" aria-current="${isActive ? "page" : "false"}">
+          ${icon(item.icon)}
+          <span>${item.label}</span>
+        </a>
+      `;
+    }).join("");
+    return;
+  }
+
   const permissions = currentUserPermissions(state);
   const visibleItems = state.session && state.client?.id
     ? NAV_ITEMS.filter((item) => permissions.nav.includes(item.id))
@@ -203,6 +263,11 @@ function renderNav(activeRouteId, state) {
 }
 
 function updateSidebar(state) {
+  if (state.platformAdmin) {
+    sidebarDispatchCount.textContent = "Platform monitor";
+    return;
+  }
+
   const activeDispatches = state.routes.filter((route) => ["scheduled", "in_transit"].includes(route.status)).length;
   sidebarDispatchCount.textContent = `${activeDispatches} dispatch${activeDispatches === 1 ? "" : "es"}`;
 }
@@ -238,7 +303,7 @@ function updateTopbarUtilities(state, view) {
   const userMeta = state.user?.user_metadata || {};
   const avatarUrl = userMeta.avatar_url || userMeta.picture || "";
   const profileName = account?.name || userMeta.full_name || state.user?.email || "DistroIQ user";
-  const profileRole = account?.role ? roleLabel(account.role) : "Team member";
+  const profileRole = state.platformAdmin ? "Super Admin" : account?.role ? roleLabel(account.role) : "Team member";
 
   topbarAvatar.title = `${profileName} - ${profileRole}`;
 
@@ -270,7 +335,7 @@ function render() {
     globalSearch.value = "";
   }
   viewRoot.innerHTML = view.render({ state: viewState, store, routeId });
-  view.bind?.({ root: viewRoot, store, routeId });
+  view.bind?.({ root: viewRoot, store, routeId, beginAuthFormFlow });
   applySearchFilter(viewRoot, globalSearch.value);
 }
 
@@ -329,33 +394,58 @@ async function bootstrap() {
 
   try {
     const authContext = await getAuthContext();
-    store.dispatch({
-      type: "SET_AUTH_CONTEXT",
-      session: authContext.session,
-      user: authContext.user
-    });
 
     if (authContext.session) {
-      const workspace = await loadWorkspace();
+      const platformOverview = await tryLoadPlatformOverview();
+
+      if (platformOverview) {
+        store.dispatch({
+          type: "SET_PLATFORM_CONTEXT",
+          session: authContext.session,
+          user: authContext.user,
+          platformOverview
+        });
+      } else {
+        const workspace = await loadWorkspace();
+        store.dispatch({
+          type: "SET_AUTHENTICATED_WORKSPACE",
+          session: authContext.session,
+          user: authContext.user,
+          ...workspace
+        });
+      }
+    } else {
       store.dispatch({
-        type: "SET_WORKSPACE",
-        ...workspace
+        type: "SET_AUTH_CONTEXT",
+        session: null,
+        user: null
       });
     }
 
     await onAuthStateChange(async ({ session, user }) => {
-      store.dispatch({
-        type: "SET_AUTH_CONTEXT",
-        session,
-        user
-      });
+      if (isAuthFormFlowActive()) {
+        return;
+      }
 
       if (session) {
-        const workspace = await loadWorkspace();
-        store.dispatch({
-          type: "SET_WORKSPACE",
-          ...workspace
-        });
+        const platformOverview = await tryLoadPlatformOverview();
+
+        if (platformOverview) {
+          store.dispatch({
+            type: "SET_PLATFORM_CONTEXT",
+            session,
+            user,
+            platformOverview
+          });
+        } else {
+          const workspace = await loadWorkspace();
+          store.dispatch({
+            type: "SET_AUTHENTICATED_WORKSPACE",
+            session,
+            user,
+            ...workspace
+          });
+        }
       } else {
         store.dispatch({
           type: "CLEAR_AUTH_CONTEXT"

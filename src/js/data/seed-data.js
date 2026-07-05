@@ -10,6 +10,8 @@ const seedData = {
   },
   session: null,
   user: null,
+  platformAdmin: false,
+  platformOverview: [],
   stockCategories: [
     {
       id: "raw_materials",
