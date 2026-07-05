@@ -34,7 +34,7 @@ The server prints the local URL. By default it starts at `http://127.0.0.1:8080`
    - `url`
    - `anonKey`
 3. Run `supabase/schema.sql` in the Supabase SQL Editor.
-4. Deploy the invite Edge Function:
+4. Deploy the invite Edge Function. This is required for team member creation and temporary password generation:
 
 ```bash
 supabase functions deploy invite-user
@@ -113,7 +113,7 @@ The Edge Function uses Supabase environment variables already available in deplo
 - `src/js/services/` contains reusable calculations, formatting, branding validation, activity logging, and persistence.
 - `src/js/state/store.js` owns state updates so UI files stay lighter.
 - `src/js/ui/` contains shared rendering helpers, brand preview controls, and icons.
-- `src/js/services/tenant.js` owns client IDs, account invitations, temporary passwords, reset links, and tenant-scoped filtering.
+- `src/js/services/tenant.js` owns client IDs, account invitations, temporary passwords, and tenant-scoped filtering.
 - `src/js/services/auth.js` owns Supabase signup, login, logout, and password updates.
 - `src/js/services/backend.js` owns Supabase workspace loading, company creation, account invites, membership activation, and saved activity logs.
 - `supabase/schema.sql` owns the database tables, helper functions, and RLS policies.

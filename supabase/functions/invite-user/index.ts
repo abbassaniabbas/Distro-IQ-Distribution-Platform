@@ -40,6 +40,17 @@ function generateTemporaryPassword() {
   return `Distro-${body}!`;
 }
 
+async function cleanupPartialInvite(adminClient: any, userId?: string, membershipId?: string) {
+  if (membershipId) {
+    await adminClient.from("invites").delete().eq("membership_id", membershipId);
+    await adminClient.from("memberships").delete().eq("id", membershipId);
+  }
+
+  if (userId) {
+    await adminClient.auth.admin.deleteUser(userId);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", {
@@ -69,12 +80,25 @@ Deno.serve(async (req) => {
   });
 
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
-  const payload = (await req.json()) as InvitePayload;
+  let payload: InvitePayload;
+
+  try {
+    payload = (await req.json()) as InvitePayload;
+  } catch {
+    return jsonResponse({ error: "Invite details could not be read" }, 400);
+  }
+
   const normalizedEmail = payload.email?.trim().toLowerCase();
   const displayName = payload.name?.trim();
+  const missingFields = [
+    !payload.clientId && "client ID",
+    !displayName && "full name",
+    !normalizedEmail && "email",
+    !payload.role && "role"
+  ].filter(Boolean);
 
-  if (!payload.clientId || !displayName || !normalizedEmail || !payload.role) {
-    return jsonResponse({ error: "Missing invite fields" }, 400);
+  if (missingFields.length) {
+    return jsonResponse({ error: `Missing invite fields: ${missingFields.join(", ")}` }, 400);
   }
 
   if (!validRoles.has(payload.role)) {
@@ -87,6 +111,21 @@ Deno.serve(async (req) => {
 
   if (roleError || !allowed) {
     return jsonResponse({ error: "Only Managers can invite users" }, 403);
+  }
+
+  const { data: existingMembership, error: existingMembershipError } = await adminClient
+    .from("memberships")
+    .select("id")
+    .eq("client_id", payload.clientId)
+    .eq("email", normalizedEmail)
+    .maybeSingle();
+
+  if (existingMembershipError) {
+    return jsonResponse({ error: existingMembershipError.message }, 400);
+  }
+
+  if (existingMembership) {
+    return jsonResponse({ error: "This email is already invited for this company" }, 409);
   }
 
   const temporaryPassword = generateTemporaryPassword();
@@ -102,32 +141,33 @@ Deno.serve(async (req) => {
   });
 
   if (createUserError) {
-    return jsonResponse({ error: createUserError.message }, 400);
+    const status = createUserError.message.toLowerCase().includes("already") ? 409 : 400;
+    return jsonResponse({ error: createUserError.message }, status);
   }
 
   const { data: callerData } = await callerClient.auth.getUser();
   const invitedUserId = userData.user?.id;
 
+  if (!invitedUserId) {
+    return jsonResponse({ error: "Could not create login access" }, 500);
+  }
+
   const { data: membership, error: membershipError } = await adminClient
     .from("memberships")
-    .upsert(
-      {
-        client_id: payload.clientId,
-        user_id: invitedUserId,
-        email: normalizedEmail,
-        name: displayName,
-        role: payload.role,
-        status: "invited",
-        password_reset_required: true
-      },
-      {
-        onConflict: "client_id,email"
-      }
-    )
+    .insert({
+      client_id: payload.clientId,
+      user_id: invitedUserId,
+      email: normalizedEmail,
+      name: displayName,
+      role: payload.role,
+      status: "invited",
+      password_reset_required: true
+    })
     .select("id")
     .single();
 
   if (membershipError) {
+    await cleanupPartialInvite(adminClient, invitedUserId);
     return jsonResponse({ error: membershipError.message }, 400);
   }
 
@@ -144,6 +184,7 @@ Deno.serve(async (req) => {
   });
 
   if (inviteInsertError) {
+    await cleanupPartialInvite(adminClient, invitedUserId, membership.id);
     return jsonResponse({ error: inviteInsertError.message }, 400);
   }
 

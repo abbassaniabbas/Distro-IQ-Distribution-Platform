@@ -119,6 +119,72 @@ function throwIfBackendMissing() {
   }
 }
 
+async function readEdgeFunctionError(error) {
+  const response = error?.context;
+
+  if (!response) {
+    return "";
+  }
+
+  try {
+    const body = typeof response.clone === "function" ? response.clone() : response;
+    const contentType = response.headers?.get?.("content-type") || "";
+
+    if (contentType.includes("application/json") && typeof body.json === "function") {
+      const data = await body.json();
+      return String(data?.error || data?.message || JSON.stringify(data) || "");
+    }
+
+    if (typeof body.text === "function") {
+      return (await body.text()).trim();
+    }
+  } catch {
+    return "";
+  }
+
+  return "";
+}
+
+function friendlyEdgeFunctionMessage(message, fallback = "The request could not be completed.") {
+  const raw = String(message || "").trim();
+  const lower = raw.toLowerCase();
+
+  if (!raw) {
+    return fallback;
+  }
+
+  if (lower === "missing invite fields" || lower.includes("redirectto")) {
+    return "The invite service on Supabase is outdated. Deploy the updated invite-user function, then try again.";
+  }
+
+  if (lower.includes("only managers can invite users")) {
+    return "Only an active Manager can add team members for this company.";
+  }
+
+  if (lower.includes("supabase function environment")) {
+    return "The invite service is missing its Supabase environment settings.";
+  }
+
+  if (lower.includes("password_reset_required")) {
+    return "Your Supabase database is missing the password-change field. Run the updated schema, then try again.";
+  }
+
+  if (lower.includes("already invited for this company")) {
+    return "This email already has access for this company.";
+  }
+
+  if (lower.includes("user already registered") || lower.includes("already been registered")) {
+    return "This email already exists in Supabase Auth. Use another email or ask the Bex Lab Super Admin to reset it.";
+  }
+
+  return raw;
+}
+
+async function edgeFunctionErrorMessage(error, fallback) {
+  const functionMessage = await readEdgeFunctionError(error);
+  return friendlyEdgeFunctionMessage(functionMessage || error?.message, fallback);
+}
+
 function isSchemaCacheError(error, fieldName) {
   const message = String(error?.message || "").toLowerCase();
   const details = String(error?.details || "").toLowerCase();
@@ -297,11 +363,11 @@ async function invokePlatformAdmin(action, payload = {}) {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(await edgeFunctionErrorMessage(error, "The platform admin request could not be completed."));
   }
 
   if (data?.error) {
-    throw new Error(data.error);
+    throw new Error(friendlyEdgeFunctionMessage(data.error));
   }
 
   return data;
@@ -463,11 +529,11 @@ export async function inviteAccount({ client, name, email, role }) {
   });
 
   if (error) {
-    throw new Error(error.message);
+    throw new Error(await edgeFunctionErrorMessage(error, "The team member could not be created."));
   }
 
   if (data?.error) {
-    throw new Error(data.error);
+    throw new Error(friendlyEdgeFunctionMessage(data.error));
   }
 
   await recordWorkspaceActivity({
@@ -482,7 +548,7 @@ export async function inviteAccount({ client, name, email, role }) {
   const temporaryPassword = data?.temporaryPassword || "";
 
   if (!temporaryPassword) {
-    return workspace;
+    throw new Error("The invite service did not return a temporary password. Deploy the updated invite-user function, then try again.");
   }
 
   return {
