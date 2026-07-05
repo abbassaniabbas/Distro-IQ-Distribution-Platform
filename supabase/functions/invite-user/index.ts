@@ -11,7 +11,7 @@ type InvitePayload = {
   name: string;
   email: string;
   role: "sales_rep" | "manager" | "store_keeper" | "accountant" | "ceo";
-  redirectTo: string;
+  redirectTo?: string;
 };
 
 const validRoles = new Set([
@@ -73,7 +73,7 @@ Deno.serve(async (req) => {
   const normalizedEmail = payload.email?.trim().toLowerCase();
   const displayName = payload.name?.trim();
 
-  if (!payload.clientId || !displayName || !normalizedEmail || !payload.role || !payload.redirectTo) {
+  if (!payload.clientId || !displayName || !normalizedEmail || !payload.role) {
     return jsonResponse({ error: "Missing invite fields" }, 400);
   }
 
@@ -103,14 +103,6 @@ Deno.serve(async (req) => {
 
   if (createUserError) {
     return jsonResponse({ error: createUserError.message }, 400);
-  }
-
-  const { error: resetEmailError } = await adminClient.auth.resetPasswordForEmail(normalizedEmail, {
-    redirectTo: payload.redirectTo
-  });
-
-  if (resetEmailError) {
-    return jsonResponse({ error: resetEmailError.message }, 400);
   }
 
   const { data: callerData } = await callerClient.auth.getUser();
@@ -146,8 +138,8 @@ Deno.serve(async (req) => {
     name: displayName,
     role: payload.role,
     subject: `You're invited to DistroIQ`,
-    redirect_to: payload.redirectTo,
-    status: "sent",
+    redirect_to: "",
+    status: "ready",
     invited_by: callerData.user?.id
   });
 
@@ -159,6 +151,7 @@ Deno.serve(async (req) => {
     ok: true,
     userId: invitedUserId,
     membershipId: membership.id,
+    temporaryPassword,
     temporaryPasswordCreated: true
   });
 });

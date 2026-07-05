@@ -68,15 +68,9 @@ export function generateTemporaryPassword() {
   return `${word}-${number}-${suffix}`;
 }
 
-export function buildPasswordResetLink(clientId, accountId) {
-  const origin = window.location.origin || "http://127.0.0.1:8080";
-  return `${origin}/#/reset-password?client=${encodeURIComponent(clientId)}&account=${encodeURIComponent(accountId)}`;
-}
-
 export function createAccountInvite({ client, name, email, role }) {
   const accountId = createId("USR");
   const temporaryPassword = generateTemporaryPassword();
-  const resetLink = buildPasswordResetLink(client.id, accountId);
   const normalizedEmail = email.trim().toLowerCase();
   const displayName = name.trim();
 
@@ -97,8 +91,8 @@ export function createAccountInvite({ client, name, email, role }) {
     clientId: client.id,
     accountId,
     to: normalizedEmail,
-    subject: `You're invited to ${client.companyName} on DistroIQ`,
-    resetLink,
+    subject: `Temporary access for ${client.companyName}`,
+    resetLink: "",
     temporaryPassword,
     status: "ready",
     createdAt: new Date().toISOString()

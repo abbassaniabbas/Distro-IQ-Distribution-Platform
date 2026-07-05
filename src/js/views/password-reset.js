@@ -36,8 +36,8 @@ function renderSupabaseReset({ state }) {
     return `
       <section class="view">
         <section class="panel setup-card">
-          ${panelHeader("Open your email link", "We need to confirm your invitation first")}
-          <p>Use the link from your invitation email, then set your new password here.</p>
+          ${panelHeader("Sign in first", "Use the temporary password from your manager")}
+          <p>After signing in, you will set your own password here.</p>
           <a class="button primary" href="#/login">Back to sign in</a>
         </section>
       </section>
@@ -47,7 +47,7 @@ function renderSupabaseReset({ state }) {
   return `
     <section class="view">
       <section class="panel setup-card">
-        ${panelHeader("Set password", "Your invitation is confirmed")}
+        ${panelHeader("Create your password", "This is required before using the workspace")}
         <div class="client-id-box">
           <span class="eyebrow">${escapeHtml(state.user?.email || "Signed-in user")}</span>
           <strong>${escapeHtml(state.client?.companyName || "Factory workspace")}</strong>
@@ -61,12 +61,12 @@ function renderSupabaseReset({ state }) {
             <span>Confirm new password</span>
             <input name="confirmPassword" type="password" autocomplete="new-password">
           </label>
-          <span id="reset-password-message" class="muted span-full">Use at least 8 characters.</span>
+          <span id="reset-password-message" class="muted span-full">Enter your new password twice.</span>
           <div class="span-full split">
-            <span class="muted">This completes your account setup.</span>
+            <span class="muted">You only need the temporary password once.</span>
             ${textButton({
               iconName: "check",
-              label: "Set password",
+              label: "Continue",
               className: "primary",
               type: "submit"
             })}
@@ -86,10 +86,10 @@ function renderLocalReset({ state }) {
     return `
       <section class="view">
         <section class="panel setup-card">
-          ${panelHeader("Reset link not recognized", "This link does not match the active company")}
+          ${panelHeader("Setup request not recognized", "This account does not match the active company")}
           <div class="client-id-box">
             <span class="eyebrow">Try again</span>
-            <strong>Use the latest invite email</strong>
+            <strong>Ask a manager for a new temporary password</strong>
           </div>
           <a class="button primary" href="#/team">Back to team</a>
         </section>
@@ -115,7 +115,7 @@ function renderLocalReset({ state }) {
   return `
     <section class="view">
       <section class="panel setup-card">
-        ${panelHeader("Create your password", "Password reset link verified for this company")}
+        ${panelHeader("Create your password", "Temporary access verified for this company")}
         <div class="client-id-box">
           <span class="eyebrow">${escapeHtml(account.email)}</span>
           <strong>Set a secure password</strong>
@@ -198,7 +198,7 @@ export function bindPasswordReset({ root, store }) {
           });
         }
 
-        window.location.hash = "#/team";
+        window.location.hash = "#/dashboard";
         return;
       }
 
@@ -208,7 +208,7 @@ export function bindPasswordReset({ root, store }) {
       const temporaryPassword = formData.get("temporaryPassword") || "";
 
       if (!account) {
-        writeMessage(root, "This reset link no longer matches an account.", true);
+        writeMessage(root, "This setup request no longer matches an account.", true);
         return;
       }
 
@@ -223,7 +223,7 @@ export function bindPasswordReset({ root, store }) {
         accountId,
         message: "Password setup complete"
       });
-      window.location.hash = "#/team";
+      window.location.hash = "#/dashboard";
     } catch (error) {
       writeMessage(root, error.message, true);
     } finally {

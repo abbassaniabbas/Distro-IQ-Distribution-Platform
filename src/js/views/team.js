@@ -7,7 +7,7 @@ import {
 import { inviteAccount } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { formatDate } from "../services/formatters.js";
-import { currentUserPermissions, roleDescription, roleLabel } from "../services/rbac.js";
+import { currentUserPermissions, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
 
@@ -64,14 +64,13 @@ function renderAccountCard(account) {
           <span class="muted">Role</span>
           <strong>${escapeHtml(roleLabel(account.role))}</strong>
         </div>
-        <p>${escapeHtml(roleDescription(account.role))}</p>
       </div>
 
       <footer>
         <span class="muted">Created ${formatDate(account.createdAt?.slice(0, 10))}</span>
         ${
           account.passwordResetRequired
-            ? '<span class="status-pill pending">Reset required</span>'
+            ? '<span class="status-pill pending">Password change required</span>'
             : '<span class="status-pill active">Password set</span>'
         }
       </footer>
@@ -86,30 +85,26 @@ function renderInvitePreview(invite) {
         <strong>${escapeHtml(invite.to)}</strong>
         ${statusPill(invite.status)}
       </div>
-      <span class="muted">${escapeHtml(invite.subject)}</span>
+      <span class="muted">Give this temporary password to the team member. They will change it after signing in.</span>
       <div class="client-id-box">
-        <span class="eyebrow">${invite.resetLink ? "Invite link" : "Delivery"}</span>
-        <strong>${escapeHtml(invite.resetLink ? "Ready to share" : "Email invitation sent")}</strong>
+        <span class="eyebrow">Sign-in email</span>
+        <strong>${escapeHtml(invite.to)}</strong>
       </div>
       ${
         invite.temporaryPassword
           ? `
-            <div class="split">
-              <span class="muted">Temporary password</span>
+            <div class="client-id-box">
+              <span class="eyebrow">Temporary password</span>
               <code>${escapeHtml(invite.temporaryPassword)}</code>
             </div>
-          `
-          : '<span class="muted">The user will set their password from the invitation email.</span>'
-      }
-      ${
-        invite.resetLink
-          ? textButton({
+            ${textButton({
               iconName: "check",
-              label: "Copy reset link",
-              className: "js-copy-reset-link",
-              data: { "reset-link": invite.resetLink }
-            })
-          : ""
+              label: "Copy password",
+              className: "js-copy-temp-password",
+              data: { "temporary-password": invite.temporaryPassword }
+            })}
+          `
+          : '<span class="muted">Temporary password is shown only when the member is created.</span>'
       }
     </article>
   `;
@@ -148,7 +143,7 @@ export function renderTeam({ state }) {
     <section class="view team-view">
       <div class="dashboard-layout">
         <section class="panel">
-          ${panelHeader("Invite team member", "Add a user and choose their role permissions")}
+          ${panelHeader("Add team member", "Create login access with a one-time password")}
           <form id="account-form" class="form-grid" novalidate>
             <label class="field">
               <span>Full name</span>
@@ -168,10 +163,10 @@ export function renderTeam({ state }) {
               ${renderFieldError("role")}
             </label>
             <div class="span-full split">
-              <span class="muted">This invite will be added to ${escapeHtml(client.companyName)}.</span>
+              <span class="muted">They sign in once with a temporary password, then choose a new one.</span>
               ${textButton({
                 iconName: "team",
-                label: "Create invite",
+                label: "Create member",
                 className: "primary",
                 type: "submit"
               })}
@@ -181,14 +176,12 @@ export function renderTeam({ state }) {
         </section>
 
         <section class="panel setup-card">
-          ${panelHeader("Team access", "Managers, store keepers, and sales reps added here can work in this factory")}
+          ${panelHeader("Team access", "Each member gets their own role and password")}
           <div class="client-id-box">
             <span class="eyebrow">Active factory</span>
             <strong>${escapeHtml(client.companyName)}</strong>
           </div>
-          <p>
-            Users only see the factory records and tools their role allows.
-          </p>
+          <p>Users only see the factory records and tools their role allows.</p>
         </section>
       </div>
 
@@ -202,11 +195,11 @@ export function renderTeam({ state }) {
       </section>
 
       <section class="panel team-layout">
-        ${panelHeader("Invitations", "Invite delivery and setup status")}
+        ${panelHeader("Temporary passwords", "Shown after member creation")}
         ${
           invites.length
             ? `<div class="stack">${invites.map(renderInvitePreview).join("")}</div>`
-            : '<div class="empty-state">Invite previews will appear after account creation</div>'
+            : '<div class="empty-state">Temporary passwords will appear after member creation</div>'
         }
       </section>
     </section>
@@ -241,13 +234,13 @@ export function bindTeam({ root, store }) {
         store.dispatch({
           type: "SET_WORKSPACE",
           ...workspace,
-          message: "Account invite sent"
+          message: "Member created"
         });
       } else {
         store.dispatch({
           type: "CREATE_ACCOUNT",
           payload: values,
-          message: "Account invite created"
+          message: "Member created"
         });
       }
     } catch (error) {
@@ -257,10 +250,10 @@ export function bindTeam({ root, store }) {
     }
   });
 
-  qsa(".js-copy-reset-link", root).forEach((button) => {
+  qsa(".js-copy-temp-password", root).forEach((button) => {
     button.addEventListener("click", async () => {
       try {
-        await navigator.clipboard.writeText(button.dataset.resetLink);
+        await navigator.clipboard.writeText(button.dataset.temporaryPassword);
         button.querySelector("span").textContent = "Copied";
       } catch {
         button.querySelector("span").textContent = "Copy failed";

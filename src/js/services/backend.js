@@ -452,13 +452,13 @@ export async function inviteAccount({ client, name, email, role }) {
   throwIfBackendMissing();
 
   const supabase = await getSupabaseClient();
+  const normalizedEmail = email.trim().toLowerCase();
   const { data, error } = await supabase.functions.invoke("invite-user", {
     body: {
       clientId: client.id,
       name: name.trim(),
-      email: email.trim().toLowerCase(),
-      role,
-      redirectTo: `${window.location.origin}/#/reset-password`
+      email: normalizedEmail,
+      role
     }
   });
 
@@ -474,11 +474,30 @@ export async function inviteAccount({ client, name, email, role }) {
     clientId: client.id,
     actionType: "invited",
     recordType: "account",
-    recordLabel: email.trim().toLowerCase(),
-    summary: `Invited ${name.trim()}`
+    recordLabel: normalizedEmail,
+    summary: `Created temporary access for ${name.trim()}`
   });
 
-  return loadWorkspace();
+  const workspace = await loadWorkspace();
+  const temporaryPassword = data?.temporaryPassword || "";
+
+  if (!temporaryPassword) {
+    return workspace;
+  }
+
+  return {
+    ...workspace,
+    accounts: workspace.accounts.map((account) => (
+      account.email === normalizedEmail
+        ? { ...account, temporaryPassword }
+        : account
+    )),
+    invites: workspace.invites.map((invite) => (
+      invite.to === normalizedEmail
+        ? { ...invite, temporaryPassword, status: "ready" }
+        : invite
+    ))
+  };
 }
 
 export async function activateCurrentMembership(clientId) {

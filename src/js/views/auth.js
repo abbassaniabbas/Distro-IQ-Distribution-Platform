@@ -128,13 +128,16 @@ function renderPlatformMfaPanel() {
   `;
 }
 
-function getWorkspaceRoleForUser(workspace, user) {
+function getWorkspaceAccountForUser(workspace, user) {
   const userEmail = String(user?.email || "").trim().toLowerCase();
-  const account = (workspace.accounts || []).find((item) => (
+  return (workspace.accounts || []).find((item) => (
     item.userId === user?.id ||
     (userEmail && String(item.email || "").trim().toLowerCase() === userEmail)
-  ));
+  )) || null;
+}
 
+function getWorkspaceRoleForUser(workspace, user) {
+  const account = getWorkspaceAccountForUser(workspace, user);
   return account?.role || user?.user_metadata?.role || "";
 }
 
@@ -477,7 +480,10 @@ export function bindAuth({ root, store, beginAuthFormFlow }) {
         message: mode === "signup" ? "Account created" : "Signed in"
       });
 
-      window.location.hash = workspace.client ? "#/dashboard" : "#/onboarding";
+      const account = getWorkspaceAccountForUser(workspace, authData.user);
+      window.location.hash = account?.passwordResetRequired
+        ? "#/reset-password"
+        : workspace.client ? "#/dashboard" : "#/onboarding";
     } catch (error) {
       const errorMessage = friendlyAuthError(error, mode);
 

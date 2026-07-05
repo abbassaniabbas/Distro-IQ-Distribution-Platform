@@ -219,6 +219,15 @@ function getCurrentRouteId(state) {
     return "onboarding";
   }
 
+  if (
+    state.session &&
+    state.client?.id &&
+    routeId !== "reset-password" &&
+    accountForCurrentUser(state)?.passwordResetRequired
+  ) {
+    return "reset-password";
+  }
+
   if (state.session && state.client?.id && routeId === "onboarding") {
     return "onboarding-confirmation";
   }
