@@ -1,7 +1,8 @@
-import { formatNumber, statusText } from "../services/formatters.js";
+import { assignmentOutstanding, buildRepLedger, creditUsageTone } from "../services/calculations.js";
+import { formatCurrency, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qsa } from "../ui/dom.js";
-import { panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
+import { panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 
 function renderRouteMap() {
   return `
@@ -17,8 +18,17 @@ function renderRouteMap() {
   `;
 }
 
-function renderRouteCard(route, permissions) {
+function renderRouteCard(route, state, permissions) {
   const canAdvanceRun = permissions.canDispatchStock || permissions.canAssignStock;
+  const routeAssignments = (state.stockAssignments || []).filter((assignment) => assignment.routeId === route.id);
+  const assignedUnits = routeAssignments.reduce((total, assignment) => total + Number(assignment.assigned || 0), 0);
+  const soldUnits = routeAssignments.reduce((total, assignment) => total + Number(assignment.sold || 0), 0);
+  const outstandingUnits = routeAssignments.reduce((total, assignment) => total + assignmentOutstanding(assignment), 0);
+  const sellThroughPercent = assignedUnits ? (soldUnits / assignedUnits) * 100 : 0;
+  const routeOrders = (state.orders || []).filter((order) => (route.orderIds || []).includes(order.id));
+  const notesReady = routeOrders.filter((order) => ["ready", "printed"].includes(order.deliveryNoteStatus)).length;
+  const signedOrders = routeOrders.filter((order) => order.signatureStatus === "signed").length;
+  const paperTrailPercent = routeOrders.length ? (notesReady / routeOrders.length) * 100 : 100;
   const searchIndex = [
     route.id,
     route.name,
@@ -53,14 +63,30 @@ function renderRouteCard(route, permissions) {
           <span class="muted">Stops</span>
           <strong>${formatNumber(route.stops)}</strong>
         </div>
+        <div class="split">
+          <span class="muted">Stock outstanding</span>
+          <strong>${formatNumber(outstandingUnits)}</strong>
+        </div>
+        <div class="split">
+          <span class="muted">Delivery notes</span>
+          <strong>${formatNumber(notesReady)} / ${formatNumber(routeOrders.length)}</strong>
+        </div>
       </div>
 
       <div class="stock-line">
         <div class="stock-meta">
-          <span>Rep stock load</span>
-          <span>${formatNumber(route.capacityUsed)}%</span>
+          <span>Rep sell-through</span>
+          <span>${formatPercent(sellThroughPercent)}</span>
         </div>
-        ${progressBar(route.capacityUsed, route.capacityUsed > 88 ? "warning" : "good")}
+        ${progressBar(sellThroughPercent, sellThroughPercent < 65 ? "warning" : "good")}
+      </div>
+
+      <div class="stock-line">
+        <div class="stock-meta">
+          <span>Paper trail</span>
+          <span>${formatNumber(signedOrders)} signed</span>
+        </div>
+        ${progressBar(paperTrailPercent, paperTrailPercent < 100 ? "warning" : "good")}
       </div>
 
       <footer>
@@ -75,6 +101,36 @@ function renderRouteCard(route, permissions) {
       </footer>
     </article>
   `;
+}
+
+function renderRepLedgerRows(state) {
+  return buildRepLedger(state).map((row) => {
+    const creditStatus = row.creditUsagePercent >= 100 ? "credit_hold" : row.creditUsagePercent >= 85 ? "credit_watch" : "credit_clear";
+
+    return `
+      <tr data-search-index="${escapeHtml(`${row.repName} ${creditStatus}`.toLowerCase())}">
+        <td>
+          <strong>${escapeHtml(row.repName)}</strong>
+          <div class="muted">${formatNumber(row.openAssignments)} open assignment${row.openAssignments === 1 ? "" : "s"}</div>
+        </td>
+        <td>${formatNumber(row.assigned)}</td>
+        <td>
+          <div class="stock-line">
+            <div class="stock-meta">
+              <span>${formatNumber(row.sold)} sold</span>
+              <span>${formatPercent(row.sellThroughPercent)}</span>
+            </div>
+            ${progressBar(row.sellThroughPercent, row.sellThroughPercent < 65 ? "warning" : "good")}
+          </div>
+        </td>
+        <td><strong>${formatNumber(row.outstanding)}</strong></td>
+        <td>
+          ${statusPill(creditStatus)}
+          <div class="muted">${formatCurrency(row.creditBalance)} / ${formatCurrency(row.creditLimit)}</div>
+        </td>
+      </tr>
+    `;
+  });
 }
 
 export function renderRoutes({ state }) {
@@ -112,8 +168,17 @@ export function renderRoutes({ state }) {
       <section class="panel routes-layout">
         ${panelHeader("Sales rep assignments", "Reps, vans, outlet stops, and assigned stock readiness")}
         <div class="route-grid">
-          ${state.routes.map((route) => renderRouteCard(route, permissions)).join("")}
+          ${state.routes.map((route) => renderRouteCard(route, state, permissions)).join("")}
         </div>
+      </section>
+
+      <section class="panel">
+        ${panelHeader("Rep custody ledger", "Assigned, sold, outstanding, and credit exposure per sales rep")}
+        ${table(
+          ["Sales rep", "Assigned", "Sell-through", "Outstanding", "Credit"],
+          renderRepLedgerRows(state),
+          "No rep custody records available"
+        )}
       </section>
     </section>
   `;

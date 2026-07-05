@@ -1,5 +1,11 @@
-import { calculateMetrics, getInvoiceAging, getRetailerMap } from "../services/calculations.js";
-import { formatCurrency, formatDate } from "../services/formatters.js";
+import {
+  calculateMetrics,
+  calculateVisionMetrics,
+  creditUsageTone,
+  getInvoiceAging,
+  getRetailerMap
+} from "../services/calculations.js";
+import { formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -59,8 +65,43 @@ function renderInvoiceRows(state, permissions) {
   });
 }
 
+function renderCreditExposureRows(state) {
+  return state.creditLimits.map((limit) => {
+    const usagePercent = limit.limit ? (Number(limit.balance || 0) / Number(limit.limit || 0)) * 100 : 100;
+    const remaining = Math.max(0, Number(limit.limit || 0) - Number(limit.balance || 0));
+    const status = usagePercent >= 100 ? "credit_hold" : usagePercent >= 85 ? "credit_watch" : "credit_clear";
+    const searchIndex = [
+      limit.partyName,
+      limit.partyType,
+      status
+    ].join(" ").toLowerCase();
+
+    return `
+      <tr data-search-index="${escapeHtml(searchIndex)}">
+        <td>
+          <strong>${escapeHtml(limit.partyName)}</strong>
+          <div class="muted">${escapeHtml(limit.partyType)}</div>
+        </td>
+        <td>${statusPill(status)}</td>
+        <td>
+          <div class="stock-line">
+            <div class="stock-meta">
+              <span>${formatCurrency(limit.balance)}</span>
+              <span>${formatPercent(usagePercent)}</span>
+            </div>
+            ${progressBar(usagePercent, creditUsageTone(usagePercent))}
+          </div>
+        </td>
+        <td>${formatCurrency(limit.limit)}</td>
+        <td>${formatCurrency(remaining)}</td>
+      </tr>
+    `;
+  });
+}
+
 export function renderFinance({ state }) {
   const metrics = calculateMetrics(state);
+  const vision = calculateVisionMetrics(state);
   const permissions = currentUserPermissions(state);
   const paidTotal = state.invoices
     .filter((invoice) => invoice.status === "paid")
@@ -90,6 +131,12 @@ export function renderFinance({ state }) {
           meta: "Needs collection follow-up",
           iconName: "alert"
         })}
+        ${metricCard({
+          label: "Credit limit usage",
+          value: formatPercent(vision.creditExposurePercent),
+          meta: `${formatNumber(vision.creditWatchCount + vision.creditHoldCount)} account${vision.creditWatchCount + vision.creditHoldCount === 1 ? "" : "s"} need attention`,
+          iconName: "wallet"
+        })}
       </div>
 
       <div class="finance-layout">
@@ -107,6 +154,15 @@ export function renderFinance({ state }) {
           )}
         </section>
       </div>
+
+      <section class="panel">
+        ${panelHeader("Credit exposure", "Approved limits, current balances, and remaining headroom by rep or customer")}
+        ${table(
+          ["Account", "Status", "Usage", "Limit", "Headroom"],
+          renderCreditExposureRows(state),
+          "No credit limits available"
+        )}
+      </section>
     </section>
   `;
 }

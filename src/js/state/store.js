@@ -1,5 +1,6 @@
 import seedData from "../data/seed-data.js";
 import { createActivityLog, getCurrentActor } from "../services/activity.js";
+import { getCreditGuardForOrder } from "../services/calculations.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile } from "../services/tenant.js";
 
@@ -13,10 +14,16 @@ function clone(value) {
 
 function mergeSeedRecords(existing, defaults) {
   const existingRecords = Array.isArray(existing) ? clone(existing) : [];
+  const defaultRecords = clone(defaults || []);
+  const defaultsById = new Map(defaultRecords.map((item) => [item.id, item]));
   const existingIds = new Set(existingRecords.map((item) => item.id));
-  const missingDefaults = clone(defaults || []).filter((item) => !existingIds.has(item.id));
+  const mergedExisting = existingRecords.map((item) => {
+    const defaultRecord = defaultsById.get(item.id);
+    return defaultRecord ? { ...defaultRecord, ...item } : item;
+  });
+  const missingDefaults = defaultRecords.filter((item) => !existingIds.has(item.id));
 
-  return [...existingRecords, ...missingDefaults];
+  return [...mergedExisting, ...missingDefaults];
 }
 
 function todayISO() {
@@ -33,11 +40,15 @@ function ensureStateShape(value) {
     accounts: Array.isArray(state.accounts) ? state.accounts : [],
     invites: Array.isArray(state.invites) ? state.invites : [],
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
+    retailers: mergeSeedRecords(state.retailers, seedData.retailers),
+    orders: mergeSeedRecords(state.orders, seedData.orders),
+    routes: mergeSeedRecords(state.routes, seedData.routes),
     products: mergeSeedRecords(state.products, seedData.products),
     stockCategories: mergeSeedRecords(state.stockCategories, seedData.stockCategories),
     stockAssignments: mergeSeedRecords(state.stockAssignments, seedData.stockAssignments),
     stockTransactions: mergeSeedRecords(state.stockTransactions, seedData.stockTransactions),
     creditLimits: mergeSeedRecords(state.creditLimits, seedData.creditLimits),
+    invoices: mergeSeedRecords(state.invoices, seedData.invoices),
     backend: {
       ...clone(seedData.backend),
       ...(state.backend || {})
@@ -315,6 +326,19 @@ function reducer(currentState, action) {
     case "ADVANCE_ORDER": {
       const order = state.orders.find((item) => item.id === action.orderId);
       if (order) {
+        const creditGuard = getCreditGuardForOrder(order, state);
+
+        if (creditGuard.status === "credit_hold" && order.status !== "delivered") {
+          appendActivityLog(state, {
+            clientId: state.client?.id,
+            actionType: "blocked",
+            recordType: "order",
+            recordLabel: order.id,
+            summary: `${order.id} held because projected credit exceeds the limit`
+          });
+          return state;
+        }
+
         order.status = nextOrderStatus(order.status);
         order.updatedAt = todayISO();
         appendActivityLog(state, {

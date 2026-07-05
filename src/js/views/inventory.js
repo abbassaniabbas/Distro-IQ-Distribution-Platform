@@ -1,4 +1,11 @@
-import { getProductMap, getStockHealth } from "../services/calculations.js";
+import {
+  assignmentOutstanding,
+  calculateVisionMetrics,
+  creditUsageTone,
+  getProductMap,
+  getStockHealth,
+  stockCategoryIdForProduct
+} from "../services/calculations.js";
 import {
   formatCurrency,
   formatDate,
@@ -9,11 +16,7 @@ import {
 } from "../services/formatters.js";
 import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
-
-function assignmentOutstanding(assignment) {
-  return Math.max(0, Number(assignment.assigned || 0) - Number(assignment.sold || 0) - Number(assignment.returned || 0));
-}
+import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 
 function lifecycleTotals(state) {
   const factoryStock = state.products.reduce((total, product) => total + Number(product.stock || 0), 0);
@@ -29,16 +32,9 @@ function lifecycleTotals(state) {
   };
 }
 
-function stockCategoryIdForProduct(product) {
-  const category = String(product.stockCategory || product.category || "").toLowerCase();
-
-  if (category.includes("raw") || category.includes("packaging")) return "raw_materials";
-  if (category.includes("equipment")) return "equipment";
-  return "finished_products";
-}
-
 function renderLifecycle(state) {
   const totals = lifecycleTotals(state);
+  const vision = calculateVisionMetrics(state);
   const stages = [
     {
       label: "Factory stock",
@@ -47,19 +43,24 @@ function renderLifecycle(state) {
     },
     {
       label: "Assignment / dispatch",
-      value: `${formatNumber(totals.assignedStock)} units`,
-      body: "Loaded to reps or sent directly to supermarkets as a live ledger."
+      value: `${formatNumber(vision.repOutstandingUnits)} outstanding`,
+      body: `${formatNumber(totals.assignedStock)} units have been loaded to reps or sent directly to customers.`
     },
     {
       label: "Outcome",
       value: `${formatNumber(totals.outcomes)} records`,
       body: "Sold, returned, supplied, moved internally, or written off with traceability."
+    },
+    {
+      label: "Paid / reconciled",
+      value: formatPercent(vision.paymentCoveragePercent),
+      body: `${formatCurrency(vision.receivables)} remains unpaid across open balances.`
     }
   ];
 
   return `
     <section class="panel">
-      ${panelHeader("Stock lifecycle", "Factory Stock -> Assignment / Dispatch -> Outcome")}
+      ${panelHeader("Stock lifecycle", "Produced or received -> assigned or dispatched -> sold or returned -> paid")}
       <div class="stock-lifecycle-grid">
         ${stages.map((stage, index) => `
           <article class="stock-lifecycle-step" data-search-index="${escapeHtml(`${stage.label} ${stage.body}`.toLowerCase())}">
@@ -73,6 +74,37 @@ function renderLifecycle(state) {
         `).join("")}
       </div>
     </section>
+  `;
+}
+
+function renderCustodyMetrics(vision) {
+  return `
+    <div class="metric-grid">
+      ${metricCard({
+        label: "Finished stock",
+        value: formatNumber(vision.finishedStockUnits),
+        meta: `${vision.finishedGoodsRiskCount} finished item${vision.finishedGoodsRiskCount === 1 ? "" : "s"} need action`,
+        iconName: "package"
+      })}
+      ${metricCard({
+        label: "Rep custody",
+        value: formatNumber(vision.repOutstandingUnits),
+        meta: `${formatPercent(vision.repSellThroughPercent)} sold through from open loads`,
+        iconName: "routes"
+      })}
+      ${metricCard({
+        label: "Raw material risks",
+        value: formatNumber(vision.rawMaterialRiskCount),
+        meta: "Reorder before production stalls",
+        iconName: "alert"
+      })}
+      ${metricCard({
+        label: "Equipment available",
+        value: formatNumber(vision.equipmentInStock),
+        meta: "Tracked as in stock, assigned, or sold",
+        iconName: "package"
+      })}
+    </div>
   `;
 }
 
@@ -238,12 +270,6 @@ function renderTransactionRows(state) {
   });
 }
 
-function creditTone(percent) {
-  if (percent >= 85) return "danger";
-  if (percent >= 70) return "warning";
-  return "good";
-}
-
 function renderCreditRows(state) {
   return state.creditLimits.map((limit) => {
     const percent = limit.limit ? (limit.balance / limit.limit) * 100 : 0;
@@ -266,7 +292,7 @@ function renderCreditRows(state) {
               <span>${formatCurrency(limit.balance)}</span>
               <span>${formatPercent(percent)}</span>
             </div>
-            ${progressBar(percent, creditTone(percent))}
+            ${progressBar(percent, creditUsageTone(percent))}
           </div>
         </td>
         <td>${formatCurrency(limit.previousLimit)} -> ${formatCurrency(limit.limit)}</td>
@@ -282,9 +308,11 @@ function renderCreditRows(state) {
 export function renderInventory({ state }) {
   const categories = [...new Set(state.products.map((product) => product.category))].sort();
   const permissions = currentUserPermissions(state);
+  const vision = calculateVisionMetrics(state);
 
   return `
     <section class="view inventory-view">
+      ${renderCustodyMetrics(vision)}
       ${renderLifecycle(state)}
 
       <section class="panel inventory-layout">

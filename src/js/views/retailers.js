@@ -1,16 +1,16 @@
+import { creditUsageTone, getCreditLimitForParty } from "../services/calculations.js";
 import { formatCurrency, formatDate, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
 
-function tierStatus(tier) {
-  if (tier === "Platinum" || tier === "Gold") return "ready";
-  if (tier === "Silver") return "partial";
-  return "pending";
-}
-
-function renderRetailerCard(retailer, permissions) {
+function renderRetailerCard(retailer, state, permissions) {
   const canLogContact = permissions.canManageCustomers || permissions.canLogSalesReturns;
+  const creditLimit = getCreditLimitForParty(state.creditLimits || [], retailer.name);
+  const balance = Number(creditLimit?.balance ?? retailer.outstanding ?? 0);
+  const limit = Number(creditLimit?.limit || 0);
+  const creditUsage = limit ? (balance / limit) * 100 : 100;
+  const creditStatus = creditUsage >= 100 ? "credit_hold" : creditUsage >= 85 ? "credit_watch" : "credit_clear";
   const searchIndex = [
     retailer.id,
     retailer.name,
@@ -18,7 +18,8 @@ function renderRetailerCard(retailer, permissions) {
     retailer.region,
     retailer.tier,
     retailer.channel,
-    retailer.contact
+    retailer.contact,
+    creditStatus
   ]
     .join(" ")
     .toLowerCase();
@@ -34,7 +35,7 @@ function renderRetailerCard(retailer, permissions) {
           <span class="eyebrow">${escapeHtml(retailer.id)}</span>
           <h3>${escapeHtml(retailer.name)}</h3>
         </div>
-        ${statusPill(tierStatus(retailer.tier))}
+        ${statusPill(creditStatus)}
       </header>
 
       <div class="stack">
@@ -47,8 +48,16 @@ function renderRetailerCard(retailer, permissions) {
           <strong>${escapeHtml(retailer.contact)}</strong>
         </div>
         <div class="split">
+          <span class="muted">Customer tier</span>
+          <strong>${escapeHtml(retailer.tier)}</strong>
+        </div>
+        <div class="split">
           <span class="muted">Balance owed</span>
-          <strong>${formatCurrency(retailer.outstanding)}</strong>
+          <strong>${formatCurrency(balance)}</strong>
+        </div>
+        <div class="split">
+          <span class="muted">Credit limit</span>
+          <strong>${limit ? formatCurrency(limit) : "Not set"}</strong>
         </div>
       </div>
 
@@ -58,6 +67,14 @@ function renderRetailerCard(retailer, permissions) {
           <span>${formatPercent(retailer.fillRate)}</span>
         </div>
         ${progressBar(retailer.fillRate, retailer.fillRate < 88 ? "warning" : "good")}
+      </div>
+
+      <div class="stock-line">
+        <div class="stock-meta">
+          <span>Credit usage</span>
+          <span>${limit ? formatPercent(creditUsage) : "No limit"}</span>
+        </div>
+        ${progressBar(creditUsage, creditUsageTone(creditUsage))}
       </div>
 
       <footer>
@@ -95,7 +112,7 @@ export function renderRetailers({ state }) {
         </div>
 
         <div class="retailer-grid">
-          ${state.retailers.map((retailer) => renderRetailerCard(retailer, permissions)).join("")}
+          ${state.retailers.map((retailer) => renderRetailerCard(retailer, state, permissions)).join("")}
         </div>
       </section>
     </section>

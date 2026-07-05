@@ -213,6 +213,10 @@ const seedData = {
       region: "North Central",
       status: "processing",
       priority: "High",
+      paymentType: "credit",
+      paymentStatus: "unpaid",
+      deliveryNoteStatus: "pending",
+      signatureStatus: "pending_signature",
       createdAt: "2026-07-04",
       dueAt: "2026-07-05",
       items: [
@@ -226,6 +230,10 @@ const seedData = {
       region: "South West",
       status: "packed",
       priority: "High",
+      paymentType: "credit",
+      paymentStatus: "unpaid",
+      deliveryNoteStatus: "ready",
+      signatureStatus: "pending_signature",
       createdAt: "2026-07-04",
       dueAt: "2026-07-04",
       items: [
@@ -239,6 +247,10 @@ const seedData = {
       region: "North West",
       status: "in_transit",
       priority: "Normal",
+      paymentType: "credit",
+      paymentStatus: "unpaid",
+      deliveryNoteStatus: "printed",
+      signatureStatus: "pending_signature",
       createdAt: "2026-07-03",
       dueAt: "2026-07-04",
       items: [
@@ -252,6 +264,10 @@ const seedData = {
       region: "South South",
       status: "delayed",
       priority: "Urgent",
+      paymentType: "credit",
+      paymentStatus: "unpaid",
+      deliveryNoteStatus: "pending",
+      signatureStatus: "pending_signature",
       createdAt: "2026-07-02",
       dueAt: "2026-07-03",
       items: [
@@ -265,6 +281,10 @@ const seedData = {
       region: "North Central",
       status: "delivered",
       priority: "Normal",
+      paymentType: "credit",
+      paymentStatus: "unpaid",
+      deliveryNoteStatus: "printed",
+      signatureStatus: "signed",
       createdAt: "2026-07-01",
       dueAt: "2026-07-03",
       items: [
@@ -278,6 +298,10 @@ const seedData = {
       region: "South West",
       status: "processing",
       priority: "Normal",
+      paymentType: "cash",
+      paymentStatus: "paid",
+      deliveryNoteStatus: "pending",
+      signatureStatus: "not_required",
       createdAt: "2026-07-03",
       dueAt: "2026-07-06",
       items: [
@@ -480,6 +504,36 @@ const seedData = {
       previousLimit: 100000,
       changedBy: "Manager",
       changedAt: "2026-06-28T15:30:00"
+    },
+    {
+      id: "CRD-5005",
+      partyType: "Supermarket",
+      partyName: "Mabushi Supermarket",
+      limit: 400000,
+      balance: 158000,
+      previousLimit: 350000,
+      changedBy: "Manager",
+      changedAt: "2026-07-01T11:15:00"
+    },
+    {
+      id: "CRD-5006",
+      partyType: "Supermarket",
+      partyName: "Rumuola Corner Store",
+      limit: 180000,
+      balance: 71000,
+      previousLimit: 160000,
+      changedBy: "Manager",
+      changedAt: "2026-06-29T12:05:00"
+    },
+    {
+      id: "CRD-5007",
+      partyType: "Supermarket",
+      partyName: "Garki School Kiosk",
+      limit: 100000,
+      balance: 36000,
+      previousLimit: 90000,
+      changedBy: "Manager",
+      changedAt: "2026-06-29T09:45:00"
     }
   ],
   invoices: [

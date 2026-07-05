@@ -1,6 +1,7 @@
 import {
   buildRegionalSummary,
   calculateMetrics,
+  calculateVisionMetrics,
   getLowStockProducts,
   getOrdersWithTotals
 } from "../services/calculations.js";
@@ -26,9 +27,27 @@ function renderRegionalSummary(state) {
 function renderAlerts(state, permissions) {
   const lowStockProducts = getLowStockProducts(state.products).slice(0, 4);
   const delayedOrders = state.orders.filter((order) => order.status === "delayed");
+  const vision = calculateVisionMetrics(state);
+  const paperTrailPending = Math.max(0, vision.paperTrailOrders - vision.paperTrailReadyOrders);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
   const canAdvanceSales = permissions.canLogSalesReturns || permissions.canDispatchStock;
   const alerts = [
+    ...(vision.creditHoldOrders
+      ? [{
+          id: "credit-holds",
+          title: `${formatNumber(vision.creditHoldOrders)} sales order${vision.creditHoldOrders === 1 ? "" : "s"} on credit hold`,
+          detail: "Projected customer balance exceeds the approved limit",
+          action: '<a class="button" href="#/orders"><span>Review orders</span></a>'
+        }]
+      : []),
+    ...(paperTrailPending
+      ? [{
+          id: "paper-trail",
+          title: `${formatNumber(paperTrailPending)} delivery note${paperTrailPending === 1 ? "" : "s"} need printing`,
+          detail: "Physical signature trail is not ready for every active delivery",
+          action: '<a class="button" href="#/orders"><span>Open orders</span></a>'
+        }]
+      : []),
     ...lowStockProducts.map((product) => ({
       id: product.id,
       title: `${product.name} needs replenishment`,
@@ -113,35 +132,73 @@ function renderRecentOrders(state, permissions) {
     .join("");
 }
 
+function renderFactoryCashControls(vision) {
+  const controls = [
+    {
+      label: "Traceable records",
+      percent: vision.traceabilityPercent,
+      value: `${formatNumber(vision.traceableRecords)} of ${formatNumber(vision.totalTraceableRecords)}`,
+      tone: vision.traceabilityPercent < 95 ? "warning" : "good"
+    },
+    {
+      label: "Rep sell-through",
+      percent: vision.repSellThroughPercent,
+      value: `${formatNumber(vision.soldUnits)} sold`,
+      tone: vision.repSellThroughPercent < 65 ? "warning" : "good"
+    },
+    {
+      label: "Paper trail ready",
+      percent: vision.paperTrailReadyPercent,
+      value: `${formatNumber(vision.paperTrailReadyOrders)} of ${formatNumber(vision.paperTrailOrders)}`,
+      tone: vision.paperTrailReadyPercent < 100 ? "warning" : "good"
+    },
+    {
+      label: "Signed deliveries",
+      percent: vision.signatureCoveragePercent,
+      value: `${formatNumber(vision.signedOrders)} of ${formatNumber(vision.signatureEligibleOrders)}`,
+      tone: vision.signatureCoveragePercent < 100 ? "warning" : "good"
+    }
+  ];
+
+  return controls.map((control) => `
+    <div class="bar-row" data-search-index="${escapeHtml(control.label.toLowerCase())}">
+      <strong>${escapeHtml(control.label)}</strong>
+      ${progressBar(control.percent, control.tone)}
+      <span class="strong">${escapeHtml(control.value)}</span>
+    </div>
+  `).join("");
+}
+
 export function renderDashboard({ state }) {
   const metrics = calculateMetrics(state);
+  const vision = calculateVisionMetrics(state);
   const permissions = currentUserPermissions(state);
 
   return `
     <section class="view dashboard-view">
       <div class="metric-grid">
         ${metricCard({
-          label: "Pipeline value",
-          value: formatCurrency(metrics.orderRevenue),
-          meta: `${formatNumber(state.orders.length)} sales orders in cycle`,
+          label: "Tracked flow",
+          value: formatPercent(vision.traceabilityPercent),
+          meta: `${formatNumber(vision.traceableRecords)} lifecycle records linked`,
           iconName: "orders"
         })}
         ${metricCard({
-          label: "Open sales",
-          value: formatNumber(metrics.openOrders),
-          meta: `${formatPercent(metrics.fillRate)} delivered`,
+          label: "Rep stock owed",
+          value: formatNumber(vision.repOutstandingUnits),
+          meta: `${formatCurrency(vision.repOutstandingValue)} still with reps`,
           iconName: "package"
         })}
         ${metricCard({
-          label: "Active rep runs",
-          value: formatNumber(metrics.activeRoutes),
-          meta: "Scheduled or in transit",
+          label: "Credit exposure",
+          value: formatCurrency(vision.creditBalanceTotal),
+          meta: `${formatPercent(vision.creditExposurePercent)} of approved limits used`,
           iconName: "truck"
         })}
         ${metricCard({
-          label: "Balances owed",
-          value: formatCurrency(metrics.receivables),
-          meta: `${metrics.lowStockCount} stock items need attention`,
+          label: "Paid coverage",
+          value: formatPercent(vision.paymentCoveragePercent),
+          meta: `${formatCurrency(vision.receivables)} still outstanding`,
           iconName: "wallet"
         })}
       </div>
@@ -159,7 +216,12 @@ export function renderDashboard({ state }) {
       </div>
 
       <section class="panel">
-        ${panelHeader("Recent sales orders", "Latest snack orders moving through reps and dispatch")}
+        ${panelHeader("Factory-to-cash controls", "Produced stock, rep custody, paper trails, signatures, and payment visibility")}
+        <div class="bar-list">${renderFactoryCashControls(vision)}</div>
+      </section>
+
+      <section class="panel">
+        ${panelHeader("Recent sales orders", `${formatCurrency(metrics.orderRevenue)} in cycle - ${formatNumber(metrics.openOrders)} still open - ${formatPercent(metrics.fillRate)} delivered`)}
         <div class="table-wrap">
           <table class="data-table">
             <thead>

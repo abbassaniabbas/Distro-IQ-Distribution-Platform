@@ -404,7 +404,11 @@
 .status-pill.reconciled,
 .status-pill.sale,
 .status-pill.sold,
-.status-pill.in-stock {
+.status-pill.in-stock,
+.status-pill.signed,
+.status-pill.printed,
+.status-pill.cash,
+.status-pill.credit-clear {
   background: rgba(25, 185, 133, 0.12);
   color: var(--green);
 }
@@ -416,14 +420,17 @@
 .status-pill.sent,
 .status-pill.pending,
 .status-pill.open,
-.status-pill.supply {
+.status-pill.supply,
+.status-pill.not-required {
   background: rgba(20, 54, 95, 0.1);
   color: var(--blue);
 }
 
 .status-pill.packed,
 .status-pill.partial,
-.status-pill.internal-movement {
+.status-pill.internal-movement,
+.status-pill.pending-signature,
+.status-pill.credit-watch {
   background: rgba(180, 122, 17, 0.12);
   color: var(--amber);
 }
@@ -432,7 +439,9 @@
 .status-pill.overdue,
 .status-pill.low,
 .status-pill.return,
-.status-pill.write-off {
+.status-pill.write-off,
+.status-pill.credit-hold,
+.status-pill.blocked {
   background: rgba(207, 77, 67, 0.1);
   color: var(--coral);
 }

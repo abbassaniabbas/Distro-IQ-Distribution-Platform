@@ -1,12 +1,35 @@
-import { buildOrderStatusSummary, getOrdersWithTotals } from "../services/calculations.js";
-import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
+import {
+  buildOrderStatusSummary,
+  calculateVisionMetrics,
+  getCreditGuardForOrder,
+  getOrdersWithTotals
+} from "../services/calculations.js";
+import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, table } from "../ui/components.js";
 
-function renderSummaryTiles(orders) {
-  const summary = buildOrderStatusSummary(orders);
+function renderSummaryTiles(state) {
+  const summary = buildOrderStatusSummary(state.orders);
+  const vision = calculateVisionMetrics(state);
   const statuses = ["processing", "packed", "in_transit", "delayed", "delivered"];
+  const customTiles = [
+    {
+      label: "Credit holds",
+      value: formatNumber(vision.creditHoldOrders),
+      status: vision.creditHoldOrders ? "credit_hold" : "ready"
+    },
+    {
+      label: "Notes ready",
+      value: `${formatNumber(vision.paperTrailReadyOrders)} / ${formatNumber(vision.paperTrailOrders)}`,
+      status: vision.paperTrailReadyPercent === 100 ? "ready" : "pending"
+    },
+    {
+      label: "Signed deliveries",
+      value: `${formatNumber(vision.signedOrders)} / ${formatNumber(vision.signatureEligibleOrders)}`,
+      status: vision.signatureCoveragePercent === 100 ? "signed" : "pending_signature"
+    }
+  ];
 
   return `
     <div class="order-summary-grid">
@@ -21,20 +44,35 @@ function renderSummaryTiles(orders) {
           `
         )
         .join("")}
+      ${customTiles.map((tile) => `
+        <article class="summary-tile">
+          <span class="eyebrow">${escapeHtml(tile.label)}</span>
+          <strong>${escapeHtml(tile.value)}</strong>
+          ${statusPill(tile.status)}
+        </article>
+      `).join("")}
     </div>
   `;
 }
 
-function renderOrderRows(orders, permissions) {
+function renderOrderRows(orders, state, permissions) {
   const canUpdateSales = permissions.canLogSalesReturns || permissions.canDispatchStock;
 
   return orders.map((order) => {
+    const creditGuard = getCreditGuardForOrder(order, state);
+    const canAdvanceOrder = order.status !== "delivered" && canUpdateSales && creditGuard.status !== "credit_hold";
+    const creditMeta = creditGuard.limitAmount
+      ? `${formatPercent(creditGuard.usagePercent)} used`
+      : "No limit set";
     const searchIndex = [
       order.id,
       order.retailer?.name,
       order.region,
       order.priority,
-      statusText(order.status)
+      statusText(order.status),
+      statusText(creditGuard.status),
+      statusText(order.deliveryNoteStatus),
+      statusText(order.signatureStatus)
     ]
       .join(" ")
       .toLowerCase();
@@ -47,20 +85,29 @@ function renderOrderRows(orders, permissions) {
       >
         <td>
           <strong>${escapeHtml(order.id)}</strong>
-          <div class="muted">Due ${formatDate(order.dueAt)}</div>
+          <div class="muted">Due ${formatDate(order.dueAt)} - ${escapeHtml(statusText(order.paymentType))}</div>
         </td>
-        <td>${escapeHtml(order.retailer?.name || "Unknown customer")}</td>
-        <td>${escapeHtml(order.region)}</td>
+        <td>
+          ${escapeHtml(order.retailer?.name || "Unknown customer")}
+          <div class="muted">${escapeHtml(order.region)} - ${escapeHtml(order.priority)}</div>
+        </td>
         <td>${statusPill(order.status)}</td>
-        <td>${escapeHtml(order.priority)}</td>
+        <td>
+          ${statusPill(creditGuard.status)}
+          <div class="muted">${escapeHtml(creditMeta)}</div>
+        </td>
+        <td>
+          ${statusPill(order.deliveryNoteStatus)}
+          <div class="muted">${escapeHtml(statusText(order.signatureStatus))}</div>
+        </td>
         <td>${formatCurrency(order.total)}</td>
         <td>
           <div class="row-actions">
             ${iconButton({
               iconName: "arrowRight",
-              label: "Move sales order forward",
+              label: creditGuard.status === "credit_hold" ? "Credit hold: cannot advance" : "Move sales order forward",
               className: "js-advance-order",
-              disabled: order.status === "delivered" || !canUpdateSales,
+              disabled: !canAdvanceOrder,
               data: { "order-id": order.id }
             })}
             ${iconButton({
@@ -84,11 +131,11 @@ export function renderOrders({ state }) {
 
   return `
     <section class="view orders-view">
-      ${renderSummaryTiles(state.orders)}
+      ${renderSummaryTiles(state)}
 
       <section class="panel orders-layout">
         <div class="toolbar">
-          ${panelHeader("Sales order control", "Move snack orders through processing, packing, rep dispatch, and delivery")}
+          ${panelHeader("Sales order control", "Credit guard, delivery note, signature trail, and dispatch status for every snack order")}
           <div class="toolbar-group">
             <label class="field">
               <span class="sr-only">Filter by status</span>
@@ -112,8 +159,8 @@ export function renderOrders({ state }) {
         </div>
 
         ${table(
-          ["Sales order", "Customer", "Territory", "Status", "Priority", "Value", ""],
-          renderOrderRows(orders, permissions),
+          ["Sales order", "Customer", "Status", "Credit guard", "Paper trail", "Value", ""],
+          renderOrderRows(orders, state, permissions),
           "No sales orders available"
         )}
       </section>
