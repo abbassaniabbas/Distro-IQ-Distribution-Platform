@@ -3,9 +3,9 @@ import { createStore } from "./state/store.js";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace } from "./services/backend.js";
 import { setCurrencySettings } from "./services/formatters.js";
-import { canAccessRoute, currentUserPermissions, scopeStateForCurrentRole } from "./services/rbac.js";
+import { canAccessRoute, currentUserPermissions, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
-import { applySearchFilter, qs } from "./ui/dom.js";
+import { applySearchFilter, escapeHtml, qs } from "./ui/dom.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
 import { showToast } from "./ui/toast.js";
 import { renderActivityLog, bindActivityLog } from "./views/activity-log.js";
@@ -126,6 +126,10 @@ const globalSearch = qs("#global-search");
 const resetButton = qs("#reset-demo-data");
 const signOutButton = qs("#sign-out");
 const sidebarDispatchCount = qs("#sidebar-dispatch-count");
+const topbarUtilities = qs("#topbar-utility-actions");
+const topbarAvatar = qs("#topbar-avatar");
+const notificationsButton = qs("#topbar-notifications");
+const messagesButton = qs("#topbar-messages");
 const AUTH_ROUTES = ["login", "signup", "reset-password"];
 
 function defaultRouteForState(state) {
@@ -203,6 +207,49 @@ function updateSidebar(state) {
   sidebarDispatchCount.textContent = `${activeDispatches} dispatch${activeDispatches === 1 ? "" : "es"}`;
 }
 
+function accountForCurrentUser(state) {
+  const userEmail = String(state.user?.email || "").trim().toLowerCase();
+
+  return (state.accounts || []).find((account) => (
+    account.userId === state.user?.id ||
+    (userEmail && String(account.email || "").trim().toLowerCase() === userEmail)
+  )) || null;
+}
+
+function initialsForProfile(account, user) {
+  const displayName = account?.name || user?.user_metadata?.full_name || user?.email || "DistroIQ";
+  const words = String(displayName)
+    .trim()
+    .split(/[\s@.]+/)
+    .filter(Boolean);
+
+  return (words[0]?.[0] || "D") + (words[1]?.[0] || "I");
+}
+
+function updateTopbarUtilities(state, view) {
+  if (!topbarUtilities || !topbarAvatar) return;
+
+  const shouldShow = Boolean(state.session && !view.isSetup);
+  topbarUtilities.hidden = !shouldShow;
+
+  if (!shouldShow) return;
+
+  const account = accountForCurrentUser(state);
+  const userMeta = state.user?.user_metadata || {};
+  const avatarUrl = userMeta.avatar_url || userMeta.picture || "";
+  const profileName = account?.name || userMeta.full_name || state.user?.email || "DistroIQ user";
+  const profileRole = account?.role ? roleLabel(account.role) : "Team member";
+
+  topbarAvatar.title = `${profileName} - ${profileRole}`;
+
+  if (avatarUrl) {
+    topbarAvatar.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="">`;
+    return;
+  }
+
+  topbarAvatar.textContent = initialsForProfile(account, state.user).toUpperCase();
+}
+
 function render() {
   const state = store.getState();
   const routeId = getCurrentRouteId(state);
@@ -214,6 +261,7 @@ function render() {
   setCurrencySettings(state.client);
   renderNav(routeId, state);
   updateSidebar(state);
+  updateTopbarUtilities(state, view);
   viewTitle.textContent = view.title;
   globalSearch.disabled = Boolean(view.isSetup);
   resetButton.hidden = Boolean(state.backend.configured) || Boolean(view.isSetup);
@@ -232,6 +280,14 @@ globalSearch.addEventListener("input", () => {
 
 resetButton.addEventListener("click", () => {
   store.reset();
+});
+
+notificationsButton?.addEventListener("click", () => {
+  showToast("No new notifications right now");
+});
+
+messagesButton?.addEventListener("click", () => {
+  showToast("No unread messages right now");
 });
 
 signOutButton.addEventListener("click", async () => {

@@ -213,11 +213,87 @@
   gap: 15px;
 }
 
+.auth-role-choice {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.auth-role-choice legend {
+  padding: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 850;
+}
+
+.auth-role-options {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.auth-role-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 42px;
+  padding: 0 12px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 900;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.auth-role-option input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.auth-role-option span {
+  position: relative;
+  z-index: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-role-option:has(input:checked) {
+  border-color: rgba(217, 162, 27, 0.62);
+  background: #fff7df;
+  color: var(--mustard-dark);
+  box-shadow: 0 8px 20px rgba(217, 162, 27, 0.12);
+}
+
+.auth-role-option:has(input:focus-visible) {
+  outline: 3px solid rgba(217, 162, 27, 0.18);
+  outline-offset: 2px;
+}
+
 .auth-field input {
   min-height: 48px;
   padding-inline: 14px;
   border-color: var(--line-strong);
   background: #ffffff;
+}
+
+.auth-field input:disabled {
+  border-color: var(--line);
+  background: #fbfaf7;
+  color: var(--soft);
 }
 
 .auth-field input:focus {
@@ -835,5 +911,9 @@
 
   .auth-submit-row .button {
     width: 100%;
+  }
+
+  .auth-role-options {
+    grid-template-columns: 1fr;
   }
 }

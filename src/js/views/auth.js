@@ -1,5 +1,6 @@
-import { signInWithPassword, signUpWithPassword } from "../services/auth.js";
+import { signInWithPassword, signOut, signUpWithPassword } from "../services/auth.js";
 import { loadWorkspace } from "../services/backend.js";
+import { ROLE_OPTIONS, normalizeRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -14,12 +15,18 @@ function readAuthForm(form) {
   return {
     name: formData.get("name") || "",
     email: formData.get("email") || "",
-    password: formData.get("password") || ""
+    password: formData.get("password") || "",
+    role: formData.get("role") || ""
   };
 }
 
 function validate(values, mode) {
   const errors = {};
+
+  if (mode === "login" && !ROLE_OPTIONS.some((role) => role.value === values.role)) {
+    errors.role = "Choose your role first.";
+    return errors;
+  }
 
   if (mode === "signup" && !values.name.trim()) {
     errors.name = "Name is required.";
@@ -66,8 +73,47 @@ function renderAuthFeature({ iconName, title, body }) {
   `;
 }
 
+function renderLoginRoleSelector() {
+  return `
+    <fieldset class="auth-role-choice span-full">
+      <legend>Choose your role first</legend>
+      <div class="auth-role-options">
+        ${ROLE_OPTIONS.map((role) => `
+          <label class="auth-role-option">
+            <input type="radio" name="role" value="${escapeHtml(role.value)}">
+            <span>${escapeHtml(role.label)}</span>
+          </label>
+        `).join("")}
+      </div>
+      ${renderFieldError("role")}
+    </fieldset>
+  `;
+}
+
+function getWorkspaceRoleForUser(workspace, user) {
+  const userEmail = String(user?.email || "").trim().toLowerCase();
+  const account = (workspace.accounts || []).find((item) => (
+    item.userId === user?.id ||
+    (userEmail && String(item.email || "").trim().toLowerCase() === userEmail)
+  ));
+
+  return account?.role || user?.user_metadata?.role || "";
+}
+
+function roleMismatchError(selectedRole, actualRole) {
+  const error = new Error("Role selection does not match this account.");
+  error.code = "role_mismatch";
+  error.selectedRole = selectedRole;
+  error.actualRole = actualRole;
+  return error;
+}
+
 function friendlyAuthError(error, mode) {
   const message = String(error?.message || "").toLowerCase();
+
+  if (error?.code === "role_mismatch") {
+    return `This account is set up as ${roleLabel(error.actualRole)}. Please choose ${roleLabel(error.actualRole)} to sign in.`;
+  }
 
   if (message.includes("invalid login") || message.includes("invalid credentials")) {
     return "The email or password does not match. Please check both and try again.";
@@ -166,6 +212,7 @@ export function renderAuth({ routeId }) {
           </div>
 
           <form id="auth-form" class="form-grid auth-form" novalidate data-mode="${mode}">
+            ${!isSignup ? renderLoginRoleSelector() : ""}
             ${
               isSignup
                 ? `
@@ -179,14 +226,14 @@ export function renderAuth({ routeId }) {
             }
             <label class="field span-full auth-field">
               <span>Email address</span>
-              <input name="email" type="email" autocomplete="email" placeholder="you@company.com" aria-label="Email address">
+              <input name="email" type="email" autocomplete="email" placeholder="you@company.com" aria-label="Email address" ${!isSignup ? "disabled" : ""}>
               ${renderFieldError("email")}
             </label>
             <label class="field span-full auth-field">
               <span>Password</span>
               <span class="auth-password-control">
-                <input name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" aria-label="Password">
-                <button class="icon-button auth-password-toggle" type="button" title="Show password" aria-label="Show password" data-password-toggle>
+                <input name="password" type="password" autocomplete="${isSignup ? "new-password" : "current-password"}" aria-label="Password" ${!isSignup ? "disabled" : ""}>
+                <button class="icon-button auth-password-toggle" type="button" title="Show password" aria-label="Show password" data-password-toggle ${!isSignup ? "disabled" : ""}>
                   ${icon("eye")}
                 </button>
               </span>
@@ -215,7 +262,29 @@ export function bindAuth({ root, store }) {
   const message = qs("#auth-message", root);
   const passwordInput = qs('input[name="password"]', root);
   const passwordToggle = qs("[data-password-toggle]", root);
+  const credentialInputs = [qs('input[name="email"]', root), passwordInput].filter(Boolean);
+  const roleInputs = [...root.querySelectorAll('input[name="role"]')];
   if (!form) return;
+
+  function setCredentialFieldsEnabled(enabled) {
+    credentialInputs.forEach((input) => {
+      input.disabled = !enabled;
+    });
+
+    if (passwordToggle) {
+      passwordToggle.disabled = !enabled;
+    }
+  }
+
+  setCredentialFieldsEnabled(form.dataset.mode !== "login" || roleInputs.some((input) => input.checked));
+
+  roleInputs.forEach((input) => {
+    input.addEventListener("change", () => {
+      writeErrors(form, { role: "" });
+      setCredentialFieldsEnabled(true);
+      qs('input[name="email"]', root)?.focus();
+    });
+  });
 
   passwordToggle?.addEventListener("click", () => {
     const isVisible = passwordInput.type === "text";
@@ -257,6 +326,20 @@ export function bindAuth({ root, store }) {
         return;
       }
 
+      const workspace = await loadWorkspace();
+      if (mode === "login") {
+        const actualRole = getWorkspaceRoleForUser(workspace, authData.user);
+
+        if (actualRole && normalizeRole(actualRole) !== normalizeRole(values.role)) {
+          try {
+            await signOut();
+          } catch {
+            // Keep the role guidance visible even if the sign-out request has a transient issue.
+          }
+          throw roleMismatchError(values.role, actualRole);
+        }
+      }
+
       store.dispatch({
         type: "SET_AUTH_CONTEXT",
         session: authData.session,
@@ -264,7 +347,6 @@ export function bindAuth({ root, store }) {
         message: mode === "signup" ? "Account created" : "Signed in"
       });
 
-      const workspace = await loadWorkspace();
       store.dispatch({
         type: "SET_WORKSPACE",
         ...workspace

@@ -12,7 +12,7 @@ import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
 
 function renderRoleOptions() {
-  return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)} - ${escapeHtml(role.description)}</option>`).join("");
+  return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
 }
 
 function renderFieldError(name, errors = {}) {
