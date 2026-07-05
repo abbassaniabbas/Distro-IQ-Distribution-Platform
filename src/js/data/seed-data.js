@@ -3,6 +3,7 @@ const seedData = {
   accounts: [],
   invites: [],
   activityLogs: [],
+  salesReports: [],
   backend: {
     configured: false,
     status: "idle",

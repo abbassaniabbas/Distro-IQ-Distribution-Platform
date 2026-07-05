@@ -8,7 +8,11 @@ export const ACTION_LABELS = {
   delayed: "Delayed",
   restocked: "Restocked",
   contacted: "Contacted",
-  paid: "Paid"
+  paid: "Paid",
+  sold: "Sold",
+  returned: "Returned",
+  submitted: "Submitted",
+  blocked: "Blocked"
 };
 
 export const RECORD_LABELS = {
@@ -18,7 +22,9 @@ export const RECORD_LABELS = {
   inventory: "Stock",
   route: "Rep Run",
   retailer: "Customer",
-  invoice: "Invoice"
+  invoice: "Invoice",
+  sale: "Sale",
+  report: "Sales Report"
 };
 
 export function actionTypeLabel(actionType) {

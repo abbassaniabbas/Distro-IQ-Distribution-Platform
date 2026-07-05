@@ -2,7 +2,7 @@ import seedData from "../data/seed-data.js";
 import { createActivityLog, getCurrentActor } from "../services/activity.js";
 import { getCreditGuardForOrder } from "../services/calculations.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
-import { createAccountInvite, createClientProfile } from "../services/tenant.js";
+import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
 
 function clone(value) {
   if (typeof structuredClone === "function") {
@@ -30,6 +30,23 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function currentActorName(state) {
+  return getCurrentActor(state).name || "Sales Rep";
+}
+
+function updateCreditBalance(state, partyName, creditImpact) {
+  if (!partyName || !creditImpact) return;
+
+  const normalizedPartyName = String(partyName).trim().toLowerCase();
+  const limit = state.creditLimits.find((item) => (
+    String(item.partyName || "").trim().toLowerCase() === normalizedPartyName
+  ));
+
+  if (limit) {
+    limit.balance = Math.max(0, Number(limit.balance || 0) + Number(creditImpact || 0));
+  }
+}
+
 function ensureStateShape(value) {
   const state = clone(value || seedData);
 
@@ -40,6 +57,7 @@ function ensureStateShape(value) {
     accounts: Array.isArray(state.accounts) ? state.accounts : [],
     invites: Array.isArray(state.invites) ? state.invites : [],
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
+    salesReports: Array.isArray(state.salesReports) ? state.salesReports : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
     orders: mergeSeedRecords(state.orders, seedData.orders),
     routes: mergeSeedRecords(state.routes, seedData.routes),
@@ -365,6 +383,97 @@ function reducer(currentState, action) {
           summary: `${order.id} sales order marked delayed`
         });
       }
+      return state;
+    }
+
+    case "LOG_REP_TRANSACTION": {
+      const assignment = state.stockAssignments.find((item) => item.id === action.assignmentId);
+      const product = state.products.find((item) => item.id === assignment?.productId);
+      const customer = state.retailers.find((item) => item.id === action.customerId);
+      const quantity = Math.max(0, Number(action.quantity || 0));
+      const transactionType = action.transactionType === "return" ? "return" : "sale";
+      const amount = quantity * Number(product?.unitPrice || 0);
+      const paymentType = action.paymentType || (transactionType === "return" ? "credit adjustment" : "cash");
+      const isCreditImpact = String(paymentType).toLowerCase().includes("credit");
+      const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
+      const repName = action.repName || assignment?.repName || currentActorName(state);
+
+      if (!assignment || !product || !quantity) return state;
+
+      if (transactionType === "sale") {
+        assignment.sold = Number(assignment.sold || 0) + quantity;
+      } else {
+        assignment.returned = Number(assignment.returned || 0) + quantity;
+      }
+
+      assignment.updatedAt = todayISO();
+      state.stockTransactions = [
+        {
+          id: createId("TXN"),
+          type: transactionType,
+          productId: assignment.productId,
+          quantity,
+          amount,
+          paymentType,
+          partyType: customer?.channel || "Customer",
+          partyName: customer?.name || action.customerName || "Walk-in customer",
+          date: todayISO(),
+          recordedBy: repName,
+          creditImpact,
+          repUserId: state.user?.id || ""
+        },
+        ...(state.stockTransactions || [])
+      ];
+
+      updateCreditBalance(state, repName, creditImpact);
+      updateCreditBalance(state, customer?.name, creditImpact);
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: transactionType === "sale" ? "sold" : "returned",
+        recordType: "sale",
+        recordLabel: product.name,
+        summary: `${repName} recorded ${quantity} ${transactionType === "sale" ? "sold" : "returned"}`
+      });
+
+      return state;
+    }
+
+    case "SUBMIT_REP_REPORT": {
+      const report = {
+        id: action.reportId || createId("RPT"),
+        clientId: state.client?.id || "",
+        repName: action.repName || currentActorName(state),
+        reportDate: action.reportDate || todayISO(),
+        tripLabel: action.tripLabel || "Today",
+        salesAmount: Number(action.salesAmount || 0),
+        cashAmount: Number(action.cashAmount || 0),
+        creditAmount: Number(action.creditAmount || 0),
+        returnAmount: Number(action.returnAmount || 0),
+        unitsSold: Number(action.unitsSold || 0),
+        unitsReturned: Number(action.unitsReturned || 0),
+        transactionIds: Array.isArray(action.transactionIds) ? action.transactionIds : [],
+        status: "submitted",
+        submittedAt: new Date().toISOString()
+      };
+      const sameReport = (item) => (
+        String(item.repName || "").toLowerCase() === String(report.repName || "").toLowerCase() &&
+        item.reportDate === report.reportDate
+      );
+
+      state.salesReports = [
+        report,
+        ...(state.salesReports || []).filter((item) => !sameReport(item))
+      ];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "submitted",
+        recordType: "report",
+        recordLabel: `${report.repName} - ${report.reportDate}`,
+        summary: `${report.repName} submitted a sales report`
+      });
+
       return state;
     }
 

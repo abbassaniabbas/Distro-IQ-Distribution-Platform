@@ -37,7 +37,7 @@ const LEGACY_ROLE_MAP = {
 
 const ROLE_PERMISSIONS = {
   sales_rep: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "finance", "settings"],
+    nav: ["dashboard", "retailers", "settings"],
     canViewCompanyWide: false,
     canLogSalesReturns: true,
     canManageProducts: false,
@@ -206,6 +206,10 @@ export function scopeStateForCurrentRole(state) {
     creditLimits: (state.creditLimits || []).filter((limit) => {
       const partyName = String(limit.partyName || "").trim().toLowerCase();
       return limit.repUserId === userId || (actorName && partyName === actorName);
+    }),
+    salesReports: (state.salesReports || []).filter((report) => {
+      const repName = String(report.repName || "").trim().toLowerCase();
+      return report.repUserId === userId || (actorName && repName === actorName);
     })
   };
 }

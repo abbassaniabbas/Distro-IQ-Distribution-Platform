@@ -3,7 +3,7 @@ import { createStore } from "./state/store.js";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace, tryLoadPlatformOverview } from "./services/backend.js";
 import { setCurrencySettings } from "./services/formatters.js";
-import { canAccessRoute, currentUserPermissions, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
+import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { applySearchFilter, escapeHtml, qs } from "./ui/dom.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
@@ -246,6 +246,7 @@ function renderNav(activeRouteId, state) {
   }
 
   const permissions = currentUserPermissions(state);
+  const role = currentUserRole(state);
   const visibleItems = state.session && state.client?.id
     ? NAV_ITEMS.filter((item) => permissions.nav.includes(item.id))
     : NAV_ITEMS;
@@ -256,7 +257,7 @@ function renderNav(activeRouteId, state) {
     return `
       <a class="nav-link ${isActive ? "is-active" : ""}" href="#/${item.id}" aria-current="${isActive ? "page" : "false"}">
         ${icon(item.icon)}
-        <span>${item.label}</span>
+        <span>${escapeHtml(role === "sales_rep" && item.id === "dashboard" ? "My Day" : item.label)}</span>
       </a>
     `;
   }).join("");
@@ -265,6 +266,17 @@ function renderNav(activeRouteId, state) {
 function updateSidebar(state) {
   if (state.platformAdmin) {
     sidebarDispatchCount.textContent = "Platform monitor";
+    return;
+  }
+
+  if (currentUserRole(state) === "sales_rep") {
+    const outstanding = (state.stockAssignments || []).reduce((total, assignment) => {
+      const assigned = Number(assignment.assigned || 0);
+      const sold = Number(assignment.sold || 0);
+      const returned = Number(assignment.returned || 0);
+      return total + Math.max(0, assigned - sold - returned);
+    }, 0);
+    sidebarDispatchCount.textContent = `${outstanding} units in hand`;
     return;
   }
 
@@ -327,7 +339,7 @@ function render() {
   renderNav(routeId, state);
   updateSidebar(state);
   updateTopbarUtilities(state, view);
-  viewTitle.textContent = view.title;
+  viewTitle.textContent = currentUserRole(state) === "sales_rep" && routeId === "dashboard" ? "My Day" : view.title;
   globalSearch.disabled = Boolean(view.isSetup);
   resetButton.hidden = Boolean(state.backend.configured) || Boolean(view.isSetup);
   signOutButton.hidden = !state.session;
