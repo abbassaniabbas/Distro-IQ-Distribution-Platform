@@ -135,7 +135,7 @@ function renderCompanySettings(state, account) {
           <span>Brand colour</span>
           <div class="color-field">
             <input class="color-swatch-input" name="brandColorPicker" type="color" value="${escapeHtml(brandColor)}" data-brand-color-picker ${canEdit ? "" : "disabled"}>
-            <input name="brandColor" value="${escapeHtml(brandColor)}" maxlength="7" placeholder="#D9A21B" data-brand-color-input ${canEdit ? "" : "disabled"}>
+            <input name="brandColor" value="${escapeHtml(brandColor)}" maxlength="7" placeholder="#0B1F3A" data-brand-color-input ${canEdit ? "" : "disabled"}>
           </div>
           ${renderFieldError("brandColor")}
         </label>

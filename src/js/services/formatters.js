@@ -63,5 +63,5 @@ export function statusText(status) {
 }
 
 export function statusClass(status) {
-  return String(status || "").replace(/_/g, "-").toLowerCase();
+  return String(status || "").replace(/[\s_]+/g, "-").toLowerCase();
 }

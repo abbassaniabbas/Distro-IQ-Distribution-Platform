@@ -10,11 +10,32 @@ const seedData = {
   },
   session: null,
   user: null,
+  stockCategories: [
+    {
+      id: "raw_materials",
+      name: "Raw Materials",
+      timeframe: "Factory-internal",
+      behavior: "Supplier intake, production consumption, and reorder alerts before production is blocked."
+    },
+    {
+      id: "finished_products",
+      name: "Finished Products",
+      timeframe: "Production to sale",
+      behavior: "Produced from raw materials, held as available stock, issued to reps, or dispatched to customers."
+    },
+    {
+      id: "equipment",
+      name: "Equipment",
+      timeframe: "Owned or for sale",
+      behavior: "Tracked by status across in stock, assigned to a team member, or sold."
+    }
+  ],
   products: [
     {
       id: "SKU-1001",
       name: "Crunchy Plantain Chips 50g",
-      category: "Finished snacks",
+      category: "Finished Products",
+      stockCategory: "finished_products",
       warehouse: "Finished Goods Store",
       region: "Factory",
       stock: 1840,
@@ -26,7 +47,8 @@ const seedData = {
     {
       id: "SKU-1002",
       name: "Cheese Corn Puffs 35g",
-      category: "Finished snacks",
+      category: "Finished Products",
+      stockCategory: "finished_products",
       warehouse: "Finished Goods Store",
       region: "Factory",
       stock: 940,
@@ -38,7 +60,8 @@ const seedData = {
     {
       id: "SKU-1003",
       name: "Sweet Chin Chin 100g",
-      category: "Finished snacks",
+      category: "Finished Products",
+      stockCategory: "finished_products",
       warehouse: "Finished Goods Store",
       region: "Factory",
       stock: 1520,
@@ -50,7 +73,8 @@ const seedData = {
     {
       id: "SKU-1004",
       name: "Mini Butter Biscuits 75g",
-      category: "Finished snacks",
+      category: "Finished Products",
+      stockCategory: "finished_products",
       warehouse: "Finished Goods Store",
       region: "Factory",
       stock: 420,
@@ -62,7 +86,8 @@ const seedData = {
     {
       id: "SKU-1005",
       name: "Potato Chips Multipack 12ct",
-      category: "Finished snacks",
+      category: "Finished Products",
+      stockCategory: "finished_products",
       warehouse: "Finished Goods Store",
       region: "Factory",
       stock: 7200,
@@ -74,7 +99,8 @@ const seedData = {
     {
       id: "SKU-1006",
       name: "Printed Snack Wrapper Rolls",
-      category: "Packaging",
+      category: "Raw Materials",
+      stockCategory: "raw_materials",
       warehouse: "Packaging Store",
       region: "Factory",
       stock: 680,
@@ -82,6 +108,33 @@ const seedData = {
       dailyVelocity: 92,
       unitCost: 780,
       unitPrice: 0
+    },
+    {
+      id: "SKU-1007",
+      name: "Seasoning Premix 25kg",
+      category: "Raw Materials",
+      stockCategory: "raw_materials",
+      warehouse: "Raw Materials Store",
+      region: "Factory",
+      stock: 126,
+      reorderPoint: 80,
+      dailyVelocity: 9,
+      unitCost: 18500,
+      unitPrice: 0
+    },
+    {
+      id: "EQP-2001",
+      name: "Digital Weighing Scale",
+      category: "Equipment",
+      stockCategory: "equipment",
+      warehouse: "Equipment Cage",
+      region: "Factory",
+      stock: 14,
+      reorderPoint: 5,
+      dailyVelocity: 1,
+      unitCost: 32000,
+      unitPrice: 55000,
+      equipmentStatus: "in_stock"
     }
   ],
   retailers: [
@@ -283,6 +336,148 @@ const seedData = {
       departure: "07:20",
       eta: "13:05",
       orderIds: ["ORD-1003"]
+    }
+  ],
+  stockAssignments: [
+    {
+      id: "ASN-3001",
+      routeId: "RTE-201",
+      repName: "Chika Eze",
+      productId: "SKU-1002",
+      assignedAt: "2026-07-05",
+      assigned: 600,
+      sold: 340,
+      returned: 40,
+      status: "open"
+    },
+    {
+      id: "ASN-3002",
+      routeId: "RTE-202",
+      repName: "Sani Musa",
+      productId: "SKU-1001",
+      assignedAt: "2026-07-05",
+      assigned: 520,
+      sold: 410,
+      returned: 0,
+      status: "open"
+    },
+    {
+      id: "ASN-3003",
+      routeId: "RTE-203",
+      repName: "Grace Udo",
+      productId: "SKU-1004",
+      assignedAt: "2026-07-05",
+      assigned: 360,
+      sold: 260,
+      returned: 24,
+      status: "open"
+    },
+    {
+      id: "ASN-3004",
+      routeId: "RTE-204",
+      repName: "Bala Adamu",
+      productId: "SKU-1003",
+      assignedAt: "2026-07-04",
+      assigned: 420,
+      sold: 390,
+      returned: 30,
+      status: "reconciled"
+    }
+  ],
+  stockTransactions: [
+    {
+      id: "TXN-7001",
+      type: "sale",
+      productId: "SKU-1001",
+      quantity: 420,
+      amount: 126000,
+      paymentType: "credit",
+      partyType: "Supermarket",
+      partyName: "Mabushi Supermarket",
+      date: "2026-07-04",
+      recordedBy: "Sani Musa",
+      creditImpact: 126000
+    },
+    {
+      id: "TXN-7002",
+      type: "return",
+      productId: "SKU-1004",
+      quantity: 24,
+      amount: 6720,
+      paymentType: "credit adjustment",
+      partyType: "Sales rep",
+      partyName: "Grace Udo",
+      date: "2026-07-04",
+      recordedBy: "Grace Udo",
+      creditImpact: -6720
+    },
+    {
+      id: "TXN-7003",
+      type: "supply",
+      productId: "SKU-1005",
+      quantity: 85,
+      amount: 225250,
+      paymentType: "cash",
+      partyType: "Supermarket",
+      partyName: "Lekki Family Mart",
+      date: "2026-07-04",
+      recordedBy: "Chika Eze",
+      creditImpact: 0
+    },
+    {
+      id: "TXN-7004",
+      type: "internal movement",
+      productId: "SKU-1006",
+      quantity: 160,
+      amount: 0,
+      paymentType: "none",
+      partyType: "Internal location",
+      partyName: "Packaging Store to Production Line 2",
+      date: "2026-07-05",
+      recordedBy: "Store Keeper",
+      creditImpact: 0
+    }
+  ],
+  creditLimits: [
+    {
+      id: "CRD-5001",
+      partyType: "Sales rep",
+      partyName: "Chika Eze",
+      limit: 350000,
+      balance: 218000,
+      previousLimit: 300000,
+      changedBy: "Manager",
+      changedAt: "2026-07-01T09:20:00"
+    },
+    {
+      id: "CRD-5002",
+      partyType: "Sales rep",
+      partyName: "Sani Musa",
+      limit: 300000,
+      balance: 246000,
+      previousLimit: 250000,
+      changedBy: "Manager",
+      changedAt: "2026-07-02T10:05:00"
+    },
+    {
+      id: "CRD-5003",
+      partyType: "Supermarket",
+      partyName: "Lekki Family Mart",
+      limit: 500000,
+      balance: 245000,
+      previousLimit: 450000,
+      changedBy: "Manager",
+      changedAt: "2026-06-30T13:40:00"
+    },
+    {
+      id: "CRD-5004",
+      partyType: "Supermarket",
+      partyName: "Kofar Ruwa Snack Wholesale",
+      limit: 120000,
+      balance: 92000,
+      previousLimit: 100000,
+      changedBy: "Manager",
+      changedAt: "2026-06-28T15:30:00"
     }
   ],
   invoices: [

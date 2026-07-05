@@ -214,6 +214,19 @@ export function scopeStateForCurrentRole(state) {
     retailers: (state.retailers || []).filter((retailer) => customerIds.has(retailer.id) || retailer.assignedRepUserId === userId),
     orders,
     routes: assignedRoutes,
-    invoices: (state.invoices || []).filter((invoice) => customerIds.has(invoice.retailerId) || invoice.repUserId === userId)
+    invoices: (state.invoices || []).filter((invoice) => customerIds.has(invoice.retailerId) || invoice.repUserId === userId),
+    stockAssignments: (state.stockAssignments || []).filter((assignment) => {
+      const repName = String(assignment.repName || "").trim().toLowerCase();
+      return assignment.repUserId === userId || (actorName && repName === actorName);
+    }),
+    stockTransactions: (state.stockTransactions || []).filter((transaction) => {
+      const partyName = String(transaction.partyName || "").trim().toLowerCase();
+      const recordedBy = String(transaction.recordedBy || "").trim().toLowerCase();
+      return transaction.repUserId === userId || (actorName && (partyName === actorName || recordedBy === actorName));
+    }),
+    creditLimits: (state.creditLimits || []).filter((limit) => {
+      const partyName = String(limit.partyName || "").trim().toLowerCase();
+      return limit.repUserId === userId || (actorName && partyName === actorName);
+    })
   };
 }

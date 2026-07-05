@@ -121,7 +121,7 @@ export function renderOnboarding({ state }) {
               <span>Brand colour</span>
               <div class="color-field">
                 <input class="color-swatch-input" name="brandColorPicker" type="color" value="${escapeHtml(DEFAULT_BRAND_COLOR)}" data-brand-color-picker>
-                <input name="brandColor" value="${escapeHtml(DEFAULT_BRAND_COLOR)}" maxlength="7" placeholder="#D9A21B" data-brand-color-input>
+                <input name="brandColor" value="${escapeHtml(DEFAULT_BRAND_COLOR)}" maxlength="7" placeholder="#0B1F3A" data-brand-color-input>
               </div>
               ${renderFieldError("brandColor")}
             </label>

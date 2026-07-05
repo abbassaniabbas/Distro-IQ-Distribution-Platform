@@ -4,7 +4,7 @@ create table if not exists public.clients (
   id uuid primary key default gen_random_uuid(),
   company_name text not null,
   logo_data_url text default '',
-  brand_color text not null default '#D9A21B',
+  brand_color text not null default '#0B1F3A',
   timezone text not null default 'Africa/Lagos',
   currency text not null default 'NGN',
   currency_symbol text not null default '₦',
@@ -13,7 +13,7 @@ create table if not exists public.clients (
 );
 
 alter table public.clients
-add column if not exists brand_color text not null default '#D9A21B';
+add column if not exists brand_color text not null default '#0B1F3A';
 
 do $$ begin
   alter table public.clients
@@ -64,10 +64,93 @@ create table if not exists public.activity_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.stock_categories (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  code text not null check (code in ('raw_materials', 'finished_products', 'equipment')),
+  name text not null,
+  timeframe text not null default '',
+  behavior text not null default '',
+  created_at timestamptz not null default now(),
+  unique (client_id, code)
+);
+
+create table if not exists public.stock_products (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  category_id uuid references public.stock_categories(id) on delete set null,
+  sku text not null,
+  name text not null,
+  warehouse text not null default '',
+  region text not null default 'Factory',
+  stock numeric(14, 2) not null default 0 check (stock >= 0),
+  reorder_point numeric(14, 2) not null default 0 check (reorder_point >= 0),
+  daily_velocity numeric(14, 2) not null default 0 check (daily_velocity >= 0),
+  unit_cost numeric(14, 2) not null default 0 check (unit_cost >= 0),
+  unit_price numeric(14, 2) not null default 0 check (unit_price >= 0),
+  equipment_status text check (equipment_status is null or equipment_status in ('in_stock', 'assigned', 'sold')),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (client_id, sku)
+);
+
+create table if not exists public.stock_assignments (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  product_id uuid not null references public.stock_products(id) on delete restrict,
+  rep_membership_id uuid references public.memberships(id) on delete set null,
+  route_label text not null default '',
+  rep_name text not null,
+  assigned_at date not null default current_date,
+  quantity_assigned numeric(14, 2) not null default 0 check (quantity_assigned >= 0),
+  quantity_sold numeric(14, 2) not null default 0 check (quantity_sold >= 0),
+  quantity_returned numeric(14, 2) not null default 0 check (quantity_returned >= 0),
+  status text not null default 'open' check (status in ('open', 'reconciled')),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.stock_transactions (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  product_id uuid references public.stock_products(id) on delete set null,
+  assignment_id uuid references public.stock_assignments(id) on delete set null,
+  transaction_type text not null check (transaction_type in ('sale', 'return', 'supply', 'internal_movement', 'write_off')),
+  quantity numeric(14, 2) not null default 0 check (quantity >= 0),
+  amount numeric(14, 2) not null default 0,
+  payment_type text not null default 'none',
+  party_type text not null default '',
+  party_name text not null default '',
+  recorded_by_user_id uuid references auth.users(id) on delete set null,
+  recorded_by_name text not null default 'Team member',
+  occurred_at date not null default current_date,
+  credit_impact numeric(14, 2) not null default 0,
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.credit_limits (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  party_type text not null check (party_type in ('sales_rep', 'supermarket')),
+  party_name text not null,
+  membership_id uuid references public.memberships(id) on delete set null,
+  limit_amount numeric(14, 2) not null default 0 check (limit_amount >= 0),
+  balance_amount numeric(14, 2) not null default 0 check (balance_amount >= 0),
+  previous_limit_amount numeric(14, 2) not null default 0 check (previous_limit_amount >= 0),
+  changed_by_user_id uuid references auth.users(id) on delete set null,
+  changed_by_name text not null default 'Manager',
+  changed_at timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+
 alter table public.clients enable row level security;
 alter table public.memberships enable row level security;
 alter table public.invites enable row level security;
 alter table public.activity_logs enable row level security;
+alter table public.stock_categories enable row level security;
+alter table public.stock_products enable row level security;
+alter table public.stock_assignments enable row level security;
+alter table public.stock_transactions enable row level security;
+alter table public.credit_limits enable row level security;
 
 alter table public.memberships drop constraint if exists memberships_role_check;
 alter table public.invites drop constraint if exists invites_role_check;
@@ -157,6 +240,23 @@ as $$
   );
 $$;
 
+create or replace function public.has_client_role(p_client_id uuid, p_roles text[])
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.memberships
+    where client_id = p_client_id
+      and user_id = auth.uid()
+      and status = 'active'
+      and role = any(p_roles)
+  );
+$$;
+
 create or replace function public.create_client_workspace(
   p_company_name text,
   p_logo_data_url text,
@@ -194,7 +294,7 @@ begin
   values (
     nullif(trim(p_company_name), ''),
     coalesce(p_logo_data_url, ''),
-    coalesce(nullif(trim(p_brand_color), ''), '#D9A21B'),
+    coalesce(nullif(trim(p_brand_color), ''), '#0B1F3A'),
     coalesce(nullif(trim(p_timezone), ''), 'Africa/Lagos'),
     coalesce(nullif(trim(p_currency), ''), 'NGN'),
     coalesce(nullif(trim(p_currency_symbol), ''), '₦'),
@@ -321,6 +421,13 @@ grant execute on function public.record_activity(uuid, text, text, text, text) t
 grant execute on function public.activate_my_membership(uuid) to authenticated;
 grant execute on function public.is_client_member(uuid) to authenticated;
 grant execute on function public.is_client_admin(uuid) to authenticated;
+grant execute on function public.has_client_role(uuid, text[]) to authenticated;
+
+grant select, insert, update on public.stock_categories to authenticated;
+grant select, insert, update on public.stock_products to authenticated;
+grant select, insert, update on public.stock_assignments to authenticated;
+grant select, insert, update on public.stock_transactions to authenticated;
+grant select, insert, update on public.credit_limits to authenticated;
 
 drop policy if exists "clients_select_by_membership" on public.clients;
 create policy "clients_select_by_membership"
@@ -380,3 +487,78 @@ on public.activity_logs
 for select
 to authenticated
 using (public.is_client_member(client_id));
+
+drop policy if exists "stock_categories_select_by_client" on public.stock_categories;
+create policy "stock_categories_select_by_client"
+on public.stock_categories
+for select
+to authenticated
+using (public.is_client_member(client_id));
+
+drop policy if exists "stock_categories_write_by_stock_roles" on public.stock_categories;
+create policy "stock_categories_write_by_stock_roles"
+on public.stock_categories
+for all
+to authenticated
+using (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper']))
+with check (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper']));
+
+drop policy if exists "stock_products_select_by_client" on public.stock_products;
+create policy "stock_products_select_by_client"
+on public.stock_products
+for select
+to authenticated
+using (public.is_client_member(client_id));
+
+drop policy if exists "stock_products_write_by_stock_roles" on public.stock_products;
+create policy "stock_products_write_by_stock_roles"
+on public.stock_products
+for all
+to authenticated
+using (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper']))
+with check (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper']));
+
+drop policy if exists "stock_assignments_select_by_client" on public.stock_assignments;
+create policy "stock_assignments_select_by_client"
+on public.stock_assignments
+for select
+to authenticated
+using (public.is_client_member(client_id));
+
+drop policy if exists "stock_assignments_write_by_stock_roles" on public.stock_assignments;
+create policy "stock_assignments_write_by_stock_roles"
+on public.stock_assignments
+for all
+to authenticated
+using (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper']))
+with check (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper']));
+
+drop policy if exists "stock_transactions_select_by_client" on public.stock_transactions;
+create policy "stock_transactions_select_by_client"
+on public.stock_transactions
+for select
+to authenticated
+using (public.is_client_member(client_id));
+
+drop policy if exists "stock_transactions_write_by_stock_roles" on public.stock_transactions;
+create policy "stock_transactions_write_by_stock_roles"
+on public.stock_transactions
+for all
+to authenticated
+using (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper', 'sales_rep']))
+with check (public.has_client_role(client_id, array['super_admin', 'manager', 'store_keeper', 'sales_rep']));
+
+drop policy if exists "credit_limits_select_by_client" on public.credit_limits;
+create policy "credit_limits_select_by_client"
+on public.credit_limits
+for select
+to authenticated
+using (public.is_client_member(client_id));
+
+drop policy if exists "credit_limits_write_by_manager_roles" on public.credit_limits;
+create policy "credit_limits_write_by_manager_roles"
+on public.credit_limits
+for all
+to authenticated
+using (public.has_client_role(client_id, array['super_admin', 'manager']))
+with check (public.has_client_role(client_id, array['super_admin', 'manager']));

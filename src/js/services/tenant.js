@@ -136,7 +136,7 @@ export function validateClientForm(values) {
   }
 
   if (!isValidHexColor(values.brandColor)) {
-    errors.brandColor = "Enter a valid hex colour, like #D9A21B.";
+    errors.brandColor = "Enter a valid hex colour, like #0B1F3A.";
   }
 
   return errors;

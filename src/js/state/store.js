@@ -11,6 +11,14 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function mergeSeedRecords(existing, defaults) {
+  const existingRecords = Array.isArray(existing) ? clone(existing) : [];
+  const existingIds = new Set(existingRecords.map((item) => item.id));
+  const missingDefaults = clone(defaults || []).filter((item) => !existingIds.has(item.id));
+
+  return [...existingRecords, ...missingDefaults];
+}
+
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
@@ -25,6 +33,11 @@ function ensureStateShape(value) {
     accounts: Array.isArray(state.accounts) ? state.accounts : [],
     invites: Array.isArray(state.invites) ? state.invites : [],
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
+    products: mergeSeedRecords(state.products, seedData.products),
+    stockCategories: mergeSeedRecords(state.stockCategories, seedData.stockCategories),
+    stockAssignments: mergeSeedRecords(state.stockAssignments, seedData.stockAssignments),
+    stockTransactions: mergeSeedRecords(state.stockTransactions, seedData.stockTransactions),
+    creditLimits: mergeSeedRecords(state.creditLimits, seedData.creditLimits),
     backend: {
       ...clone(seedData.backend),
       ...(state.backend || {})

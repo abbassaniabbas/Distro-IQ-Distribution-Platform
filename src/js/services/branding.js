@@ -1,4 +1,4 @@
-export const DEFAULT_BRAND_COLOR = "#D9A21B";
+export const DEFAULT_BRAND_COLOR = "#0B1F3A";
 export const LOGO_ACCEPT = "image/png,image/jpeg";
 export const MAX_LOGO_BYTES = 2 * 1024 * 1024;
 export const LOGO_HELP_TEXT = "PNG or JPG up to 2 MB";

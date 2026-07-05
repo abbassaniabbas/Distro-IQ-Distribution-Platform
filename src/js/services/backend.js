@@ -11,7 +11,7 @@ function mapClient(row) {
     id: row.id,
     companyName: row.company_name,
     logoDataUrl: row.logo_data_url || "",
-    brandColor: row.brand_color || "#D9A21B",
+    brandColor: row.brand_color || "#0B1F3A",
     timezone: row.timezone,
     currency: row.currency,
     currencySymbol: row.currency_symbol || "₦",
@@ -207,7 +207,7 @@ export async function createWorkspace(payload) {
   let { data, error } = await supabase.rpc("create_client_workspace", {
     p_company_name: payload.companyName.trim(),
     p_logo_data_url: payload.logoDataUrl || "",
-    p_brand_color: payload.brandColor || "#D9A21B",
+    p_brand_color: payload.brandColor || "#0B1F3A",
     p_timezone: payload.timezone,
     p_currency: currency.value,
     p_currency_symbol: currency.symbol
@@ -251,7 +251,7 @@ export async function updateWorkspaceSettings({ client, payload }) {
     .update({
       company_name: payload.companyName.trim(),
       logo_data_url: payload.logoDataUrl || "",
-      brand_color: payload.brandColor || "#D9A21B",
+      brand_color: payload.brandColor || "#0B1F3A",
       timezone: payload.timezone,
       currency: currency.value,
       currency_symbol: currency.symbol
