@@ -96,11 +96,15 @@ export function renderActivityLog({ state }) {
   }
 
   const logs = getScopedActivityLogs(state);
-  const isStoreKeeper = currentUserRole(state) === "store_keeper";
-  const title = isStoreKeeper ? "Store activity log" : "Activity log";
+  const role = currentUserRole(state);
+  const isStoreKeeper = role === "store_keeper";
+  const isAccountant = role === "accountant";
+  const title = isStoreKeeper ? "Store activity log" : isAccountant ? "Finance activity log" : "Activity log";
   const subtitle = isStoreKeeper
     ? "Stock movements, representative assignments, and in-transit run updates"
-    : "Review what changed, who changed it, and when";
+    : isAccountant
+      ? "Sales, payments, credit balances, and submitted reports"
+      : "Review what changed, who changed it, and when";
 
   return `
     <section class="view activity-log-view">

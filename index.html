@@ -23,20 +23,23 @@
 
         <div class="sidebar-footer">
           <div>
-            <span class="eyebrow">Today</span>
-            <strong id="sidebar-dispatch-count">0 dispatches</strong>
+            <span class="eyebrow">Current role</span>
+            <strong id="sidebar-role-label">Team member</strong>
+            <small id="sidebar-role-context">Signed in</small>
           </div>
-          <div class="signal-dot" aria-hidden="true"></div>
         </div>
       </aside>
 
       <div class="main-shell">
         <header class="topbar">
-          <div>
+          <div class="topbar-heading">
             <span class="eyebrow">Command center</span>
             <div class="topbar-title-row">
               <h1 id="view-title">Dashboard</h1>
-              <span class="role-badge" id="topbar-role-badge" hidden>Team member</span>
+              <div class="dashboard-status-summary" aria-live="polite">
+                <span class="eyebrow">Today</span>
+                <strong id="dashboard-dispatch-count">0 dispatches</strong>
+              </div>
             </div>
           </div>
 

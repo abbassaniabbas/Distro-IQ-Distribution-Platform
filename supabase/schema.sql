@@ -100,6 +100,23 @@ create table if not exists public.stock_products (
   unique (client_id, sku)
 );
 
+alter table public.stock_products
+add column if not exists unit text not null default 'unit';
+
+alter table public.stock_products
+add column if not exists image_url text not null default '';
+
+alter table public.stock_products
+add column if not exists status text not null default 'active';
+
+do $$ begin
+  alter table public.stock_products
+  add constraint stock_products_status_check
+  check (status in ('active', 'inactive'));
+exception
+  when duplicate_object then null;
+end $$;
+
 create table if not exists public.stock_assignments (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -167,6 +184,15 @@ create table if not exists public.credit_limits (
   changed_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
+
+alter table public.credit_limits
+add column if not exists discount_percent numeric(6, 2) not null default 0 check (discount_percent >= 0 and discount_percent <= 100);
+
+alter table public.credit_limits
+add column if not exists payment_period_days integer not null default 14 check (payment_period_days >= 0);
+
+alter table public.credit_limits
+add column if not exists late_penalty_percent numeric(6, 2) not null default 0 check (late_penalty_percent >= 0 and late_penalty_percent <= 100);
 
 create table if not exists public.platform_admins (
   user_id uuid primary key references auth.users(id) on delete cascade,
@@ -818,6 +844,7 @@ grant execute on function public.has_client_role(uuid, text[]) to authenticated;
 grant execute on function public.get_platform_overview() to authenticated;
 grant execute on function public.get_platform_console() to authenticated;
 
+grant select, update, delete on public.clients to authenticated;
 grant select, insert, update on public.stock_categories to authenticated;
 grant select, insert, update on public.stock_products to authenticated;
 grant select, insert, update on public.stock_assignments to authenticated;
@@ -844,6 +871,13 @@ for update
 to authenticated
 using (public.is_client_admin(id))
 with check (public.is_client_admin(id));
+
+drop policy if exists "clients_delete_by_ceo" on public.clients;
+create policy "clients_delete_by_ceo"
+on public.clients
+for delete
+to authenticated
+using (public.has_client_role(id, array['ceo']));
 
 drop policy if exists "memberships_select_by_client" on public.memberships;
 create policy "memberships_select_by_client"
@@ -889,7 +923,11 @@ for select
 to authenticated
 using (
   public.is_platform_admin()
-  or public.has_client_role(client_id, array['ceo', 'manager', 'accountant'])
+  or public.has_client_role(client_id, array['ceo', 'manager'])
+  or (
+    public.has_client_role(client_id, array['accountant'])
+    and record_type in ('sale', 'invoice', 'credit_limit', 'report')
+  )
   or (
     public.has_client_role(client_id, array['store_keeper'])
     and record_type in ('inventory', 'stock_movement', 'route')

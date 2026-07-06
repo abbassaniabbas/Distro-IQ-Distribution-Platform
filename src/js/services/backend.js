@@ -488,6 +488,20 @@ export async function updateWorkspaceSettings({ client, payload }) {
   return loadWorkspace();
 }
 
+export async function deleteWorkspace({ clientId }) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase
+    .from("clients")
+    .delete()
+    .eq("id", clientId);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function updateMyMembershipProfile({ clientId, userId, name }) {
   throwIfBackendMissing();
 

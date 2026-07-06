@@ -47,6 +47,15 @@ function updateCreditBalance(state, partyName, creditImpact) {
   }
 }
 
+function boundedPercent(value) {
+  return Math.max(0, Math.min(100, Number(value || 0)));
+}
+
+function normalizedPaymentPeriod(value, fallback = 14) {
+  const nextValue = Number(value ?? fallback);
+  return Math.max(0, Number.isFinite(nextValue) ? Math.round(nextValue) : fallback);
+}
+
 function ensureStateShape(value) {
   const state = clone(value || seedData);
 
@@ -301,6 +310,27 @@ function reducer(currentState, action) {
       };
     }
 
+    case "DELETE_CLIENT_ACCOUNT": {
+      return {
+        ...state,
+        client: null,
+        accounts: [],
+        invites: [],
+        activityLogs: [],
+        salesReports: [],
+        creditLimitHistory: [],
+        retailers: [],
+        orders: [],
+        routes: [],
+        products: [],
+        stockCategories: [],
+        stockAssignments: [],
+        stockTransactions: [],
+        creditLimits: [],
+        invoices: []
+      };
+    }
+
     case "UPDATE_MY_PROFILE": {
       if (state.client?.id) {
         appendActivityLog(state, {
@@ -518,6 +548,7 @@ function reducer(currentState, action) {
       const productId = String(action.productId || "").trim();
       const existingProduct = state.products.find((item) => item.id === productId);
       const stockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
+      const status = ["active", "inactive"].includes(String(action.status || "")) ? action.status : existingProduct?.status || "active";
       const product = {
         id: productId || createId(stockCategory === "equipment" ? "EQP" : "SKU"),
         name: String(action.name || existingProduct?.name || "New product").trim(),
@@ -532,7 +563,7 @@ function reducer(currentState, action) {
         unitCost: Math.max(0, Number(action.unitCost ?? existingProduct?.unitCost ?? 0)),
         unitPrice: Math.max(0, Number(action.unitPrice ?? existingProduct?.unitPrice ?? 0)),
         imageUrl: String(action.imageUrl || existingProduct?.imageUrl || "").trim(),
-        status: existingProduct?.status || "active",
+        status,
         equipmentStatus: stockCategory === "equipment" ? (existingProduct?.equipmentStatus || "in_stock") : undefined,
         updatedAt: todayISO()
       };
@@ -738,10 +769,16 @@ function reducer(currentState, action) {
       if (!limit || !nextLimit) return state;
 
       const previousLimit = Number(limit.limit || 0);
+      const discountPercent = boundedPercent(action.discountPercent ?? limit.discountPercent ?? 0);
+      const paymentPeriodDays = normalizedPaymentPeriod(action.paymentPeriodDays ?? limit.paymentPeriodDays ?? 14);
+      const latePenaltyPercent = boundedPercent(action.latePenaltyPercent ?? limit.latePenaltyPercent ?? 0);
       const changedBy = currentActorLabel(state);
       const changedAt = new Date().toISOString();
       limit.previousLimit = previousLimit;
       limit.limit = nextLimit;
+      limit.discountPercent = discountPercent;
+      limit.paymentPeriodDays = paymentPeriodDays;
+      limit.latePenaltyPercent = latePenaltyPercent;
       limit.changedBy = changedBy;
       limit.changedAt = changedAt;
 
@@ -753,6 +790,9 @@ function reducer(currentState, action) {
           partyName: limit.partyName,
           previousLimit,
           nextLimit,
+          discountPercent,
+          paymentPeriodDays,
+          latePenaltyPercent,
           changedBy,
           reason: String(action.reason || "Manager adjustment").trim(),
           changedAt
@@ -765,7 +805,7 @@ function reducer(currentState, action) {
         actionType: "updated",
         recordType: "credit_limit",
         recordLabel: limit.partyName,
-        summary: `Credit limit changed from ${previousLimit} to ${nextLimit}`
+        summary: `Credit terms updated for ${limit.partyName}`
       });
 
       return state;
@@ -856,6 +896,100 @@ function reducer(currentState, action) {
           summary: `${route.name} representative run moved to ${textLabel(route.status)}`
         });
       }
+      return state;
+    }
+
+    case "UPSERT_RETAILER": {
+      if (!state.client?.id) return state;
+      const retailerId = String(action.retailerId || "").trim();
+      const existingRetailer = state.retailers.find((item) => item.id === retailerId);
+      const previousName = existingRetailer?.name;
+      const nextName = String(action.name || existingRetailer?.name || "New supermarket").trim();
+      const retailer = {
+        id: retailerId || createId("RTL"),
+        name: nextName,
+        city: String(action.city || existingRetailer?.city || "").trim(),
+        region: String(action.region || existingRetailer?.region || "").trim(),
+        tier: String(action.tier || existingRetailer?.tier || "Standard").trim(),
+        channel: String(action.channel || existingRetailer?.channel || "Supermarket").trim(),
+        contact: String(action.contact || existingRetailer?.contact || "").trim(),
+        fillRate: Math.max(0, Math.min(100, Number(action.fillRate ?? existingRetailer?.fillRate ?? 0))),
+        outstanding: Math.max(0, Number(action.outstanding ?? existingRetailer?.outstanding ?? 0)),
+        lastOrder: existingRetailer?.lastOrder || todayISO(),
+        lastContact: existingRetailer?.lastContact || todayISO(),
+        status: String(action.status || existingRetailer?.status || "active"),
+        updatedAt: todayISO()
+      };
+
+      if (existingRetailer) {
+        Object.assign(existingRetailer, retailer);
+      } else {
+        state.retailers = [retailer, ...state.retailers];
+      }
+
+      const requestedLimit = Math.max(0, Number(action.creditLimit || 0));
+      const discountPercent = boundedPercent(action.discountPercent || 0);
+      const paymentPeriodDays = normalizedPaymentPeriod(action.paymentPeriodDays || 14);
+      const latePenaltyPercent = boundedPercent(action.latePenaltyPercent || 0);
+      const changedBy = currentActorLabel(state);
+      const changedAt = new Date().toISOString();
+      let creditLimit = state.creditLimits.find((item) => (
+        String(item.partyName || "").trim().toLowerCase() === String(previousName || nextName).trim().toLowerCase()
+      ));
+
+      if (requestedLimit > 0) {
+        if (!creditLimit) {
+          creditLimit = {
+            id: createId("CRD"),
+            partyType: "Supermarket",
+            partyName: nextName,
+            limit: requestedLimit,
+            balance: retailer.outstanding,
+            previousLimit: 0,
+            changedBy,
+            changedAt
+          };
+          state.creditLimits = [creditLimit, ...state.creditLimits];
+        } else {
+          creditLimit.previousLimit = Number(creditLimit.limit || 0);
+          creditLimit.partyName = nextName;
+          creditLimit.limit = requestedLimit;
+          creditLimit.balance = retailer.outstanding;
+          creditLimit.changedBy = changedBy;
+          creditLimit.changedAt = changedAt;
+        }
+
+        creditLimit.discountPercent = discountPercent;
+        creditLimit.paymentPeriodDays = paymentPeriodDays;
+        creditLimit.latePenaltyPercent = latePenaltyPercent;
+
+        state.creditLimitHistory = [
+          {
+            id: createId("CLH"),
+            creditLimitId: creditLimit.id,
+            partyType: creditLimit.partyType,
+            partyName: creditLimit.partyName,
+            previousLimit: Number(creditLimit.previousLimit || 0),
+            nextLimit: requestedLimit,
+            discountPercent,
+            paymentPeriodDays,
+            latePenaltyPercent,
+            changedBy,
+            reason: "Supermarket relationship terms updated",
+            changedAt
+          },
+          ...(state.creditLimitHistory || [])
+        ];
+      }
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: existingRetailer ? "updated" : "created",
+        recordType: "retailer",
+        recordLabel: retailer.name,
+        summary: `${existingRetailer ? "Updated" : "Added"} supermarket relationship`
+      });
+
       return state;
     }
 

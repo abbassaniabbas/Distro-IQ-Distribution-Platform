@@ -83,10 +83,17 @@ export function getScopedActivityLogs(state) {
 
   const logs = (state.activityLogs || [])
     .filter((entry) => entry.clientId === state.client.id);
+  const role = currentUserRole(state);
 
-  if (currentUserRole(state) === "store_keeper") {
+  if (role === "store_keeper") {
     return logs
       .filter((entry) => ["inventory", "stock_movement", "route"].includes(entry.recordType))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  if (role === "accountant") {
+    return logs
+      .filter((entry) => ["sale", "invoice", "credit_limit", "report"].includes(entry.recordType))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 

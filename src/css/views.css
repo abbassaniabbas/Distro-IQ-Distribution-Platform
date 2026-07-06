@@ -263,6 +263,39 @@
   grid-template-columns: minmax(0, 1.8fr) minmax(300px, 0.95fr);
 }
 
+.manager-ops-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.95fr);
+  align-items: stretch;
+  gap: 18px;
+}
+
+.manager-ops-left {
+  display: grid;
+  grid-template-rows: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  min-width: 0;
+}
+
+.manager-half-panel,
+.manager-attention-panel {
+  min-width: 0;
+  min-height: 0;
+}
+
+.manager-half-panel .panel-header {
+  margin-bottom: 12px;
+}
+
+.manager-half-panel .bar-list {
+  gap: 9px;
+}
+
+.manager-half-panel .bar-row {
+  grid-template-columns: minmax(104px, 0.72fr) minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 .orders-layout,
 .inventory-layout,
 .routes-layout,
@@ -280,9 +313,23 @@
   gap: 18px;
 }
 
+.personal-settings-layout {
+  grid-template-columns: minmax(0, 720px);
+}
+
 .settings-side {
   display: grid;
   gap: 18px;
+}
+
+.danger-panel {
+  border-color: rgba(207, 77, 67, 0.24);
+  background: #fffafa;
+}
+
+.danger-box {
+  border-color: rgba(207, 77, 67, 0.22);
+  background: rgba(207, 77, 67, 0.06);
 }
 
 .onboarding-layout {
@@ -862,6 +909,30 @@
   font-size: 0.82rem;
 }
 
+.manager-command-grid.is-compact {
+  grid-template-columns: repeat(6, minmax(118px, 1fr));
+  gap: 10px;
+}
+
+.manager-command-grid.is-compact .manager-command-card {
+  align-content: center;
+  gap: 6px;
+  min-height: 78px;
+  padding: 11px 12px;
+}
+
+.manager-command-grid.is-compact .manager-command-card .eyebrow {
+  font-size: 0.68rem;
+  line-height: 1.1;
+  white-space: normal;
+}
+
+.manager-command-grid.is-compact .manager-command-card strong {
+  overflow-wrap: anywhere;
+  font-size: 1.05rem;
+  line-height: 1.12;
+}
+
 .manager-form-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(150px, 1fr));
@@ -1392,6 +1463,43 @@
   gap: 14px;
 }
 
+.accountant-finance {
+  display: grid;
+  gap: 18px;
+}
+
+.accountant-filter-panel {
+  display: grid;
+  gap: 16px;
+}
+
+.accountant-export-actions,
+.accountant-filter-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.accountant-export-actions {
+  justify-content: flex-end;
+}
+
+.accountant-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.accountant-filter-foot {
+  justify-content: space-between;
+  padding-top: 2px;
+}
+
+.accountant-kpis .metric-card {
+  min-height: 136px;
+}
+
 .platform-seed-grid,
 .platform-module-grid {
   display: grid;
@@ -1453,6 +1561,14 @@
     grid-template-columns: 1fr;
   }
 
+  .manager-ops-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-ops-left {
+    grid-template-rows: auto;
+  }
+
   .product-grid,
   .route-grid,
   .retailer-grid,
@@ -1478,8 +1594,13 @@
   .manager-form-grid,
   .ceo-filter-grid,
   .ceo-mini-grid,
+  .accountant-filter-grid,
   .storekeeper-category-grid {
     grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
+
+  .manager-command-grid.is-compact {
+    grid-template-columns: repeat(3, minmax(130px, 1fr));
   }
 
   .ceo-filter-reset {
@@ -1494,8 +1615,15 @@
   .retailer-grid,
   .account-grid,
   .invoice-grid,
+  .accountant-filter-grid,
   .finance-kpis {
     grid-template-columns: 1fr;
+  }
+
+  .accountant-export-actions,
+  .accountant-filter-foot {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .bar-row,
@@ -1533,6 +1661,14 @@
   .ceo-mini-grid,
   .storekeeper-category-grid,
   .stock-category-metrics {
+    grid-template-columns: 1fr;
+  }
+
+  .manager-command-grid.is-compact {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+
+  .manager-half-panel .bar-row {
     grid-template-columns: 1fr;
   }
 

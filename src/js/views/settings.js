@@ -1,5 +1,11 @@
 import { updateCurrentUserPassword, updateCurrentUserProfile } from "../services/auth.js";
-import { loadWorkspace, recordActivity, updateMyMembershipProfile, updateWorkspaceSettings } from "../services/backend.js";
+import {
+  deleteWorkspace,
+  loadWorkspace,
+  recordActivity,
+  updateMyMembershipProfile,
+  updateWorkspaceSettings
+} from "../services/backend.js";
 import {
   DEFAULT_BRAND_COLOR,
   LOGO_ACCEPT,
@@ -16,7 +22,7 @@ import {
   getScopedAccounts,
   validateClientForm
 } from "../services/tenant.js";
-import { currentUserPermissions, roleDescription, roleLabel } from "../services/rbac.js";
+import { currentUserPermissions, currentUserRole, roleDescription, roleLabel } from "../services/rbac.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { bindBrandColorInputs } from "../ui/brand-controls.js";
@@ -30,6 +36,10 @@ function getCurrentAccount(state) {
 
 function canEditCompanySettings(state) {
   return currentUserPermissions(state).canConfigureFactory;
+}
+
+function canDeleteFactoryAccount(state) {
+  return currentUserRole(state) === "ceo";
 }
 
 function renderFieldError(name) {
@@ -179,6 +189,38 @@ function renderCompanySettings(state, account) {
   `;
 }
 
+function renderFactoryDeletion(state) {
+  if (!canDeleteFactoryAccount(state)) return "";
+
+  return `
+    <section class="panel danger-panel">
+      ${panelHeader("Delete factory account", "CEO-only action")}
+      <form id="delete-factory-form" class="form-grid" novalidate>
+        <div class="span-full client-id-box danger-box">
+          <span class="eyebrow">Permanent deletion</span>
+          <strong>${escapeHtml(state.client.companyName)}</strong>
+          <span class="muted">This removes the factory workspace and its local records from this app.</span>
+        </div>
+        <label class="field span-full">
+          <span>Type the factory name to confirm</span>
+          <input name="confirmCompanyName" autocomplete="off" placeholder="${escapeHtml(state.client.companyName)}">
+          ${renderFieldError("confirmCompanyName")}
+        </label>
+        <span id="delete-factory-message" class="field-error span-full"></span>
+        <div class="span-full split">
+          <span class="muted">Only the CEO can perform this action.</span>
+          ${textButton({
+            iconName: "x",
+            label: "Delete factory",
+            className: "warning",
+            type: "submit"
+          })}
+        </div>
+      </form>
+    </section>
+  `;
+}
+
 function renderProfileSettings(state, account) {
   const name = account?.name || state.user?.user_metadata?.full_name || "";
   const email = account?.email || state.user?.email || "";
@@ -261,14 +303,16 @@ export function renderSettings({ state }) {
   }
 
   const account = getCurrentAccount(state);
+  const showFactorySettings = canEditCompanySettings(state);
 
   return `
     <section class="view settings-view">
-      <div class="settings-layout">
-        ${renderCompanySettings(state, account)}
+      <div class="settings-layout ${showFactorySettings ? "" : "personal-settings-layout"}">
+        ${showFactorySettings ? renderCompanySettings(state, account) : ""}
         <div class="settings-side">
           ${renderProfileSettings(state, account)}
           ${renderPasswordSettings()}
+          ${renderFactoryDeletion(state)}
         </div>
       </div>
     </section>
@@ -360,6 +404,7 @@ export function bindSettings({ root, store }) {
   const companyForm = qs("#company-settings-form", root);
   const profileForm = qs("#profile-settings-form", root);
   const passwordForm = qs("#password-settings-form", root);
+  const deleteFactoryForm = qs("#delete-factory-form", root);
   const logoUpload = companyForm ? bindCompanyLogoUpload({ root, form: companyForm, state }) : null;
 
   companyForm?.addEventListener("submit", async (event) => {
@@ -509,6 +554,52 @@ export function bindSettings({ root, store }) {
       message.textContent = "Password updated.";
     } catch (error) {
       message.className = "field-error span-full";
+      message.textContent = error.message;
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  deleteFactoryForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const currentState = store.getState();
+    const formData = new FormData(deleteFactoryForm);
+    const typedName = String(formData.get("confirmCompanyName") || "").trim();
+    const factoryName = currentState.client?.companyName || "";
+    const message = qs("#delete-factory-message", deleteFactoryForm);
+    const submitButton = qs('button[type="submit"]', deleteFactoryForm);
+
+    writeErrors(deleteFactoryForm, {});
+    message.textContent = "";
+
+    if (!canDeleteFactoryAccount(currentState)) {
+      message.textContent = "Only the CEO can delete the factory account.";
+      return;
+    }
+
+    if (typedName !== factoryName) {
+      writeErrors(deleteFactoryForm, {
+        confirmCompanyName: "Enter the factory name exactly."
+      });
+      return;
+    }
+
+    submitButton.disabled = true;
+
+    try {
+      if (isBackendConfigured()) {
+        await deleteWorkspace({
+          clientId: currentState.client.id
+        });
+      }
+
+      store.dispatch({
+        type: "DELETE_CLIENT_ACCOUNT",
+        message: "Factory account deleted"
+      });
+
+      window.location.hash = "#/onboarding";
+    } catch (error) {
       message.textContent = error.message;
     } finally {
       submitButton.disabled = false;

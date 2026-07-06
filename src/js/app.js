@@ -136,11 +136,12 @@ const store = createStore();
 const navRoot = qs("#primary-nav");
 const viewRoot = qs("#view-root");
 const viewTitle = qs("#view-title");
-const topbarRoleBadge = qs("#topbar-role-badge");
 const globalSearch = qs("#global-search");
 const resetButton = qs("#reset-demo-data");
 const signOutButton = qs("#sign-out");
-const sidebarDispatchCount = qs("#sidebar-dispatch-count");
+const dashboardDispatchCount = qs("#dashboard-dispatch-count");
+const sidebarRoleLabel = qs("#sidebar-role-label");
+const sidebarRoleContext = qs("#sidebar-role-context");
 const topbarUtilities = qs("#topbar-utility-actions");
 const topbarAvatar = qs("#topbar-avatar");
 const notificationsButton = qs("#topbar-notifications");
@@ -274,8 +275,19 @@ function renderNav(activeRouteId, state) {
 }
 
 function updateSidebar(state) {
+  const account = accountForCurrentUser(state);
+  const roleName = state.platformAdmin ? "Super Admin" : account?.role ? roleLabel(account.role) : "Team member";
+
+  if (sidebarRoleLabel) {
+    sidebarRoleLabel.textContent = state.session || state.platformAdmin ? roleName : "Team member";
+  }
+
+  if (sidebarRoleContext) {
+    sidebarRoleContext.textContent = state.platformAdmin ? "Bex Lab console" : state.session ? "Factory workspace" : "Not signed in";
+  }
+
   if (state.platformAdmin) {
-    sidebarDispatchCount.textContent = "Platform monitor";
+    if (dashboardDispatchCount) dashboardDispatchCount.textContent = "Platform monitor";
     return;
   }
 
@@ -286,12 +298,12 @@ function updateSidebar(state) {
       const returned = Number(assignment.returned || 0);
       return total + Math.max(0, assigned - sold - returned);
     }, 0);
-    sidebarDispatchCount.textContent = `${outstanding} units in hand`;
+    if (dashboardDispatchCount) dashboardDispatchCount.textContent = `${outstanding} units in hand`;
     return;
   }
 
   const activeDispatches = state.routes.filter((route) => ["scheduled", "in_transit"].includes(route.status)).length;
-  sidebarDispatchCount.textContent = `${activeDispatches} dispatch${activeDispatches === 1 ? "" : "es"}`;
+  if (dashboardDispatchCount) dashboardDispatchCount.textContent = `${activeDispatches} dispatch${activeDispatches === 1 ? "" : "es"}`;
 }
 
 function accountForCurrentUser(state) {
@@ -318,14 +330,8 @@ function updateTopbarUtilities(state, view) {
 
   const shouldShow = Boolean(state.session && !view.isSetup);
   topbarUtilities.hidden = !shouldShow;
-  if (topbarRoleBadge) {
-    topbarRoleBadge.hidden = !shouldShow;
-  }
 
   if (!shouldShow) {
-    if (topbarRoleBadge) {
-      topbarRoleBadge.textContent = "";
-    }
     return;
   }
 
@@ -334,11 +340,6 @@ function updateTopbarUtilities(state, view) {
   const avatarUrl = userMeta.avatar_url || userMeta.picture || "";
   const profileName = account?.name || userMeta.full_name || state.user?.email || "DistroIQ user";
   const profileRole = state.platformAdmin ? "Super Admin" : account?.role ? roleLabel(account.role) : "Team member";
-
-  if (topbarRoleBadge) {
-    topbarRoleBadge.textContent = `${profileRole} portal`;
-    topbarRoleBadge.classList.toggle("is-platform", Boolean(state.platformAdmin));
-  }
 
   topbarAvatar.title = `${profileName} - ${profileRole}`;
 

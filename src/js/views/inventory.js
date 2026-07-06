@@ -292,6 +292,13 @@ function renderManagerProductPanel(state, permissions) {
           <span>Selling price</span>
           <input name="unitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
         </label>
+        <label class="field">
+          <span>Catalogue status</span>
+          <select name="status">
+            <option value="active">Visible</option>
+            <option value="inactive">Hidden</option>
+          </select>
+        </label>
         <label class="field span-full">
           <span>Image URL</span>
           <input name="imageUrl" type="url" placeholder="https://...">
@@ -433,7 +440,7 @@ function renderProductCard(product, permissions) {
           ${canManageProducts
             ? textButton({
                 iconName: product.status === "inactive" ? "check" : "x",
-                label: product.status === "inactive" ? "Reactivate" : "Deactivate",
+                label: product.status === "inactive" ? "Show" : "Hide",
                 className: "js-toggle-product-status",
                 data: { "product-id": product.id }
               })
@@ -1011,6 +1018,7 @@ export function bindInventory({ root, store }) {
       reorderPoint: Number(formData.get("reorderPoint") || 0),
       unitCost: Number(formData.get("unitCost") || 0),
       unitPrice: Number(formData.get("unitPrice") || 0),
+      status: formData.get("status"),
       imageUrl: formData.get("imageUrl"),
       message: productId ? "Product saved" : "Product created"
     });
@@ -1034,6 +1042,7 @@ export function bindInventory({ root, store }) {
     productForm.elements.reorderPoint.value = product.reorderPoint || 0;
     productForm.elements.unitCost.value = product.unitCost || 0;
     productForm.elements.unitPrice.value = product.unitPrice || 0;
+    productForm.elements.status.value = product.status || "active";
     productForm.elements.imageUrl.value = product.imageUrl || "";
     productForm.scrollIntoView({ behavior: "smooth", block: "start" });
     return true;

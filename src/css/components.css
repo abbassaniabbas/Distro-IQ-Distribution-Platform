@@ -49,6 +49,16 @@
   background: var(--navy-2);
 }
 
+.button.subtle {
+  background: #ffffff;
+  color: var(--navy);
+}
+
+.button.subtle:hover {
+  border-color: rgba(25, 185, 133, 0.38);
+  background: #f4fbf8;
+}
+
 .button.warning {
   border-color: rgba(207, 77, 67, 0.22);
   background: rgba(207, 77, 67, 0.08);

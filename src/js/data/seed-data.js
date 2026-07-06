@@ -45,6 +45,9 @@ const seedData = {
       partyName: "Chika Eze",
       previousLimit: 300000,
       nextLimit: 350000,
+      discountPercent: 2,
+      paymentPeriodDays: 14,
+      latePenaltyPercent: 1.5,
       changedBy: "Manager",
       reason: "Higher Lagos route volume",
       changedAt: "2026-07-01T09:20:00"
@@ -56,6 +59,9 @@ const seedData = {
       partyName: "Lekki Family Mart",
       previousLimit: 450000,
       nextLimit: 500000,
+      discountPercent: 3,
+      paymentPeriodDays: 21,
+      latePenaltyPercent: 1,
       changedBy: "Manager",
       reason: "Approved supermarket account review",
       changedAt: "2026-06-30T13:40:00"
@@ -530,6 +536,9 @@ const seedData = {
       limit: 350000,
       balance: 218000,
       previousLimit: 300000,
+      discountPercent: 2,
+      paymentPeriodDays: 14,
+      latePenaltyPercent: 1.5,
       changedBy: "Manager",
       changedAt: "2026-07-01T09:20:00"
     },
@@ -540,6 +549,9 @@ const seedData = {
       limit: 300000,
       balance: 246000,
       previousLimit: 250000,
+      discountPercent: 1,
+      paymentPeriodDays: 14,
+      latePenaltyPercent: 1.5,
       changedBy: "Manager",
       changedAt: "2026-07-02T10:05:00"
     },
@@ -550,6 +562,9 @@ const seedData = {
       limit: 500000,
       balance: 245000,
       previousLimit: 450000,
+      discountPercent: 3,
+      paymentPeriodDays: 21,
+      latePenaltyPercent: 1,
       changedBy: "Manager",
       changedAt: "2026-06-30T13:40:00"
     },
@@ -560,6 +575,9 @@ const seedData = {
       limit: 120000,
       balance: 92000,
       previousLimit: 100000,
+      discountPercent: 1.5,
+      paymentPeriodDays: 10,
+      latePenaltyPercent: 2,
       changedBy: "Manager",
       changedAt: "2026-06-28T15:30:00"
     },
@@ -570,6 +588,9 @@ const seedData = {
       limit: 400000,
       balance: 158000,
       previousLimit: 350000,
+      discountPercent: 2,
+      paymentPeriodDays: 14,
+      latePenaltyPercent: 1.5,
       changedBy: "Manager",
       changedAt: "2026-07-01T11:15:00"
     },
@@ -580,6 +601,9 @@ const seedData = {
       limit: 180000,
       balance: 71000,
       previousLimit: 160000,
+      discountPercent: 1,
+      paymentPeriodDays: 10,
+      latePenaltyPercent: 2,
       changedBy: "Manager",
       changedAt: "2026-06-29T12:05:00"
     },
@@ -590,6 +614,9 @@ const seedData = {
       limit: 100000,
       balance: 36000,
       previousLimit: 90000,
+      discountPercent: 0,
+      paymentPeriodDays: 7,
+      latePenaltyPercent: 2,
       changedBy: "Manager",
       changedAt: "2026-06-29T09:45:00"
     }

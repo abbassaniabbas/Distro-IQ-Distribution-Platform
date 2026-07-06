@@ -92,9 +92,8 @@
 }
 
 .sidebar-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
+  position: relative;
+  display: grid;
   gap: 12px;
   margin-top: auto;
   padding: 14px;
@@ -109,13 +108,12 @@
   font-size: 0.92rem;
 }
 
-.signal-dot {
-  width: 10px;
-  height: 10px;
-  flex: 0 0 10px;
-  border-radius: 999px;
-  background: var(--green);
-  box-shadow: 0 0 0 5px rgba(25, 185, 133, 0.14);
+.sidebar-footer small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
 }
 
 .main-shell {
@@ -141,35 +139,33 @@
   margin-top: 4px;
 }
 
+.topbar-heading {
+  min-width: 0;
+}
+
 .topbar-title-row {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 12px;
+  min-width: 0;
 }
 
-.role-badge {
+.dashboard-status-summary {
   display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid rgba(25, 185, 133, 0.22);
-  border-radius: 999px;
-  background: var(--mint-soft);
-  color: var(--mint-dark);
-  font-size: 0.74rem;
-  font-weight: 900;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding-left: 12px;
+  border-left: 1px solid var(--line);
+  color: var(--muted);
   white-space: nowrap;
 }
 
-.role-badge.is-platform {
-  border-color: rgba(20, 54, 95, 0.18);
-  background: var(--navy-soft);
+.dashboard-status-summary strong {
   color: var(--navy);
-}
-
-.role-badge[hidden] {
-  display: none;
+  font-size: 0.9rem;
+  line-height: 1;
 }
 
 .topbar-actions {
@@ -313,7 +309,7 @@ body[data-app-view="auth"] .view-root > .view {
   }
 
   .sidebar-footer {
-    display: none;
+    margin-top: 4px;
   }
 
   .topbar {
@@ -350,8 +346,18 @@ body[data-app-view="auth"] .view-root > .view {
     font-size: 0.85rem;
   }
 
+  .sidebar-footer {
+    grid-template-columns: 1fr;
+  }
+
   .topbar-actions {
     align-items: stretch;
+  }
+
+  .dashboard-status-summary {
+    flex-basis: 100%;
+    padding-left: 0;
+    border-left: 0;
   }
 
   .topbar-utility-actions {

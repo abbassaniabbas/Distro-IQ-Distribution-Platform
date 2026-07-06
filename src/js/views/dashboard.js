@@ -15,7 +15,7 @@ import {
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, metricCard, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
+import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 
 function todayISO() {
@@ -1227,9 +1227,15 @@ function renderManagerControlPanel(state, vision) {
   const watchedCredit = vision.creditWatchCount + vision.creditHoldCount;
   const cards = [
     {
+      label: "Sales operations",
+      value: formatCurrency(vision.invoiceTotal || 0),
+      body: "Monitor consolidated sales, cash, credit, and returns.",
+      href: "#manager-sales-operations"
+    },
+    {
       label: "Catalogue",
       value: formatNumber(activeProducts),
-      body: "Create, edit, price, image, and deactivate products.",
+      body: "Add, update, categorize, price, image, show, or hide products.",
       href: "#/inventory"
     },
     {
@@ -1239,32 +1245,60 @@ function renderManagerControlPanel(state, vision) {
       href: "#/inventory"
     },
     {
-      label: "Credit limits",
+      label: "Credit terms",
       value: formatNumber(watchedCredit),
-      body: "Adjust representative and supermarket credit exposure.",
+      body: "Set limits, discounts, payment periods, and late penalties.",
       href: "#/finance"
+    },
+    {
+      label: "Supermarkets",
+      value: formatNumber(state.retailers?.length || 0),
+      body: "Manage supermarket profiles, contacts, tiers, and terms.",
+      href: "#/retailers"
     },
     {
       label: "Reports",
       value: formatNumber(submittedReports),
-      body: "Review submitted sales and stock reports.",
+      body: "Review representative sales and stock submissions.",
       href: "#manager-report-review"
     }
   ];
 
   return `
     <section class="panel manager-command-panel">
-      ${panelHeader("Manager controls", "Catalogue, representative stock, credit limits, and report review")}
-      <div class="manager-command-grid">
+      ${panelHeader("Manager controls", "Sales operations, stock custody, credit terms, catalogue, and supermarket relationships")}
+      <div class="manager-command-grid is-compact">
         ${cards.map((card) => `
-          <a class="manager-command-card" href="${escapeHtml(card.href)}" data-search-index="${escapeHtml(`${card.label} ${card.body}`.toLowerCase())}">
+          <a class="manager-command-card" href="${escapeHtml(card.href)}" title="${escapeHtml(card.body)}" aria-label="${escapeHtml(`${card.label}. ${card.body}`)}" data-search-index="${escapeHtml(`${card.label} ${card.body}`.toLowerCase())}">
             <span class="eyebrow">${escapeHtml(card.label)}</span>
             <strong>${escapeHtml(card.value)}</strong>
-            <p>${escapeHtml(card.body)}</p>
           </a>
         `).join("")}
       </div>
     </section>
+  `;
+}
+
+function renderManagerOperationsLayout(state, permissions, vision) {
+  return `
+    <div class="manager-ops-layout">
+      <div class="manager-ops-left">
+        <section class="panel manager-half-panel">
+          ${panelHeader("Factory-to-cash controls", "Produced stock, custody, paper trails, signatures, and payment visibility")}
+          <div class="bar-list">${renderFactoryCashControls(vision)}</div>
+        </section>
+
+        <section class="panel manager-half-panel">
+          ${panelHeader("Territory sales", "Sales value by territory")}
+          <div class="bar-list">${renderRegionalSummary(state)}</div>
+        </section>
+      </div>
+
+      <section class="panel manager-attention-panel">
+        ${panelHeader("Attention queue", "Items that need action today")}
+        ${renderAlerts(state, permissions)}
+      </section>
+    </div>
   `;
 }
 
@@ -1317,6 +1351,76 @@ function renderManagerReportRows(state) {
       </tr>
     `;
   }).join("");
+}
+
+function renderManagerSalesOperationsRows(state) {
+  const rows = new Map();
+
+  (state.salesReports || []).forEach((report) => {
+    const key = report.repName || "Unassigned";
+    const row = rows.get(key) || {
+      repName: key,
+      reports: 0,
+      salesAmount: 0,
+      cashAmount: 0,
+      creditAmount: 0,
+      returnAmount: 0,
+      unitsSold: 0,
+      unitsReturned: 0,
+      latestDate: ""
+    };
+
+    row.reports += 1;
+    row.salesAmount += Number(report.salesAmount || 0);
+    row.cashAmount += Number(report.cashAmount || 0);
+    row.creditAmount += Number(report.creditAmount || 0);
+    row.returnAmount += Number(report.returnAmount || 0);
+    row.unitsSold += Number(report.unitsSold || 0);
+    row.unitsReturned += Number(report.unitsReturned || 0);
+    row.latestDate = String(report.reportDate || "").localeCompare(row.latestDate) > 0 ? report.reportDate : row.latestDate;
+    rows.set(key, row);
+  });
+
+  return [...rows.values()]
+    .sort((a, b) => b.salesAmount - a.salesAmount)
+    .map((row) => {
+      const creditShare = row.salesAmount ? (row.creditAmount / row.salesAmount) * 100 : 0;
+
+      return `
+        <tr data-search-index="${escapeHtml(`${row.repName} ${row.latestDate}`.toLowerCase())}">
+          <td>
+            <strong>${escapeHtml(row.repName)}</strong>
+            <div class="muted">${formatNumber(row.reports)} report${row.reports === 1 ? "" : "s"} - latest ${formatDate(row.latestDate)}</div>
+          </td>
+          <td>
+            <strong>${formatCurrency(row.salesAmount)}</strong>
+            <div class="muted">${formatNumber(row.unitsSold)} units sold</div>
+          </td>
+          <td>${formatCurrency(row.cashAmount)}</td>
+          <td>
+            ${formatCurrency(row.creditAmount)}
+            <div class="muted">${formatPercent(creditShare)} of sales</div>
+          </td>
+          <td>
+            ${formatCurrency(row.returnAmount)}
+            <div class="muted">${formatNumber(row.unitsReturned)} units returned</div>
+          </td>
+        </tr>
+      `;
+    });
+}
+
+function renderManagerSalesOperations(state) {
+  return `
+    <section class="panel" id="manager-sales-operations">
+      ${panelHeader("Consolidated sales activity", "Sales, cash, credit, and returns across all sales representatives")}
+      ${table(
+        ["Representative", "Sales", "Cash", "Credit", "Returns"],
+        renderManagerSalesOperationsRows(state),
+        "No representative sales activity has been submitted yet"
+      )}
+    </section>
+  `;
 }
 
 function renderManagerReportReview(state) {
@@ -1582,6 +1686,250 @@ function renderSalesRepDashboard(state) {
   `;
 }
 
+function buildAccountantRouteMap(routes = []) {
+  const routeMap = new Map();
+
+  routes.forEach((route) => {
+    (route.orderIds || []).forEach((orderId) => {
+      routeMap.set(orderId, route);
+    });
+  });
+
+  return routeMap;
+}
+
+function getAccountantFinancialLines(state) {
+  const productMap = getProductMap(state.products || []);
+  const retailerMap = getRetailerMap(state.retailers || []);
+  const routeMap = buildAccountantRouteMap(state.routes || []);
+
+  return (state.orders || []).flatMap((order) => {
+    const route = routeMap.get(order.id);
+    const retailer = retailerMap.get(order.retailerId);
+
+    return (order.items || []).map((item) => {
+      const product = productMap.get(item.productId);
+      const quantity = Number(item.quantity || 0);
+      const revenue = quantity * Number(product?.unitPrice || 0);
+      const cost = quantity * Number(product?.unitCost || 0);
+
+      return {
+        productId: item.productId,
+        productName: product?.name || "Unknown product",
+        repName: route?.driver || "Unassigned",
+        customerName: retailer?.name || "Unknown customer",
+        date: order.createdAt,
+        quantity,
+        revenue,
+        cost,
+        profit: revenue - cost
+      };
+    });
+  });
+}
+
+function buildAccountantSnapshot(state) {
+  const lines = getAccountantFinancialLines(state);
+  const reportedSales = (state.salesReports || []).reduce((total, report) => total + Number(report.salesAmount || 0), 0);
+  const cost = lines.reduce((total, line) => total + line.cost, 0);
+  const profit = lines.reduce((total, line) => total + line.profit, 0);
+  const receivables = (state.invoices || [])
+    .filter((invoice) => invoice.status !== "paid")
+    .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const overdue = (state.invoices || [])
+    .filter((invoice) => invoice.status === "overdue")
+    .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+
+  return {
+    lines,
+    reportedSales,
+    cost,
+    profit,
+    receivables,
+    overdue
+  };
+}
+
+function renderAccountantProductFocus(lines) {
+  const productRows = new Map();
+
+  lines.forEach((line) => {
+    const row = productRows.get(line.productId) || {
+      productName: line.productName,
+      revenue: 0,
+      profit: 0
+    };
+
+    row.revenue += line.revenue;
+    row.profit += line.profit;
+    productRows.set(line.productId, row);
+  });
+
+  const rows = [...productRows.values()]
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 4);
+  const highestRevenue = Math.max(...rows.map((row) => row.revenue), 1);
+
+  if (!rows.length) {
+    return `<div class="empty-state">No product revenue available</div>`;
+  }
+
+  return rows.map((row) => {
+    const percent = (row.revenue / highestRevenue) * 100;
+
+    return `
+      <div class="bar-row" data-search-index="${escapeHtml(row.productName.toLowerCase())}">
+        <strong>${escapeHtml(row.productName)}</strong>
+        ${progressBar(percent, row.profit < 0 ? "danger" : "good")}
+        <span class="strong">${formatCurrency(row.revenue)}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderAccountantCreditFocus(state) {
+  const creditRows = [...(state.creditLimits || [])]
+    .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0))
+    .slice(0, 4);
+
+  if (!creditRows.length) {
+    return `<div class="empty-state">No credit balances available</div>`;
+  }
+
+  return creditRows.map((limit) => {
+    const balance = Number(limit.balance || 0);
+    const approvedLimit = Number(limit.limit || 0);
+    const percent = approvedLimit ? (balance / approvedLimit) * 100 : 100;
+
+    return `
+      <div class="bar-row" data-search-index="${escapeHtml(`${limit.partyName} ${limit.partyType}`.toLowerCase())}">
+        <strong>${escapeHtml(limit.partyName)}</strong>
+        ${progressBar(percent, percent >= 100 ? "danger" : percent >= 85 ? "warning" : "good")}
+        <span class="strong">${formatPercent(percent)}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderAccountantReportRows(state) {
+  return [...(state.salesReports || [])]
+    .sort((a, b) => String(b.reportDate || "").localeCompare(String(a.reportDate || "")))
+    .slice(0, 5)
+    .map((report) => `
+      <tr data-search-index="${escapeHtml(`${report.id} ${report.repName} ${report.tripLabel} ${report.status}`.toLowerCase())}">
+        <td>
+          <strong>${escapeHtml(report.id)}</strong>
+          <div class="muted">${escapeHtml(report.tripLabel || "Sales report")}</div>
+        </td>
+        <td>${escapeHtml(report.repName || "Unassigned")}</td>
+        <td>${formatDate(report.reportDate)}</td>
+        <td>${formatCurrency(report.salesAmount)}</td>
+        <td>${formatCurrency(report.creditAmount)}</td>
+        <td>${statusPill(report.status)}</td>
+      </tr>
+    `);
+}
+
+function renderAccountantDashboard(state) {
+  const snapshot = buildAccountantSnapshot(state);
+  const submittedReports = (state.salesReports || []).filter((report) => report.status === "submitted").length;
+  const riskyCredit = (state.creditLimits || []).filter((limit) => {
+    const percent = limit.limit ? (Number(limit.balance || 0) / Number(limit.limit || 0)) * 100 : 100;
+    return percent >= 85;
+  }).length;
+  const shortcuts = [
+    {
+      label: "Sales reports",
+      value: formatNumber(state.salesReports?.length || 0),
+      body: "Review submitted representative reports.",
+      href: "#/finance"
+    },
+    {
+      label: "Credit reports",
+      value: formatNumber(state.creditLimits?.length || 0),
+      body: "See balances, limits, and risk accounts.",
+      href: "#/finance"
+    },
+    {
+      label: "Profit summary",
+      value: formatCurrency(snapshot.profit),
+      body: "Compare revenue, cost, margin, and product performance.",
+      href: "#/finance"
+    },
+    {
+      label: "Exports",
+      value: "CSV",
+      body: "Download reports for reconciliation.",
+      href: "#/finance"
+    }
+  ];
+
+  return `
+    <section class="view dashboard-view accountant-dashboard">
+      <div class="metric-grid">
+        ${metricCard({
+          label: "Reported sales",
+          value: formatCurrency(snapshot.reportedSales),
+          meta: `${formatNumber(submittedReports)} submitted report${submittedReports === 1 ? "" : "s"}`,
+          iconName: "finance"
+        })}
+        ${metricCard({
+          label: "Gross profit",
+          value: formatCurrency(snapshot.profit),
+          meta: `${formatCurrency(snapshot.cost)} product cost`,
+          iconName: "wallet"
+        })}
+        ${metricCard({
+          label: "Receivables",
+          value: formatCurrency(snapshot.receivables),
+          meta: `${formatCurrency(snapshot.overdue)} overdue`,
+          iconName: "alert"
+        })}
+        ${metricCard({
+          label: "Credit risk",
+          value: formatNumber(riskyCredit),
+          meta: "Accounts at 85% usage or higher",
+          iconName: "shield"
+        })}
+      </div>
+
+      <section class="panel manager-command-panel">
+        ${panelHeader("Accountant workspace", "Read-only reports and export-ready summaries")}
+        <div class="manager-command-grid">
+          ${shortcuts.map((card) => `
+            <a class="manager-command-card" href="${escapeHtml(card.href)}" data-search-index="${escapeHtml(`${card.label} ${card.body}`.toLowerCase())}">
+              <span class="eyebrow">${escapeHtml(card.label)}</span>
+              <strong>${escapeHtml(card.value)}</strong>
+              <p>${escapeHtml(card.body)}</p>
+            </a>
+          `).join("")}
+        </div>
+      </section>
+
+      <div class="dashboard-layout">
+        <section class="panel">
+          ${panelHeader("Product revenue", "Top product lines by sales value")}
+          <div class="bar-list">${renderAccountantProductFocus(snapshot.lines)}</div>
+        </section>
+
+        <section class="panel">
+          ${panelHeader("Credit exposure", "Highest balances against approved limits")}
+          <div class="bar-list">${renderAccountantCreditFocus(state)}</div>
+        </section>
+      </div>
+
+      <section class="panel">
+        ${panelHeader("Recent sales reports", "Submitted reports visible to finance")}
+        ${table(
+          ["Report", "Sales representative", "Date", "Sales", "Credit", "Status"],
+          renderAccountantReportRows(state),
+          "No submitted sales reports available"
+        )}
+      </section>
+    </section>
+  `;
+}
+
 export function renderDashboard({ state }) {
   if (state.session && state.client?.id && currentUserRole(state) === "sales_rep") {
     return renderSalesRepDashboard(state);
@@ -1599,6 +1947,10 @@ export function renderDashboard({ state }) {
 
   if (state.session && state.client?.id && role === "store_keeper") {
     return renderStoreKeeperDashboard(state, permissions);
+  }
+
+  if (state.session && state.client?.id && role === "accountant") {
+    return renderAccountantDashboard(state);
   }
 
   return `
@@ -1631,22 +1983,26 @@ export function renderDashboard({ state }) {
       </div>
       ${isManagerPortal ? renderManagerControlPanel(state, vision) : ""}
 
-      <div class="dashboard-layout">
-        <section class="panel">
-          ${panelHeader("Territory sales", "Snack order value by sales territory")}
-          <div class="bar-list">${renderRegionalSummary(state)}</div>
-        </section>
+      ${isManagerPortal
+        ? renderManagerOperationsLayout(state, permissions, vision)
+        : `
+          <div class="dashboard-layout">
+            <section class="panel">
+              ${panelHeader("Territory sales", "Snack order value by sales territory")}
+              <div class="bar-list">${renderRegionalSummary(state)}</div>
+            </section>
 
-        <section class="panel">
-          ${panelHeader("Attention queue", "Items that need action today")}
-          ${renderAlerts(state, permissions)}
-        </section>
-      </div>
+            <section class="panel">
+              ${panelHeader("Attention queue", "Items that need action today")}
+              ${renderAlerts(state, permissions)}
+            </section>
+          </div>
 
-      <section class="panel">
-        ${panelHeader("Factory-to-cash controls", "Produced stock, representative custody, paper trails, signatures, and payment visibility")}
-        <div class="bar-list">${renderFactoryCashControls(vision)}</div>
-      </section>
+          <section class="panel">
+            ${panelHeader("Factory-to-cash controls", "Produced stock, representative custody, paper trails, signatures, and payment visibility")}
+            <div class="bar-list">${renderFactoryCashControls(vision)}</div>
+          </section>
+        `}
 
       <section class="panel">
         ${panelHeader("Recent sales orders", `${formatCurrency(metrics.orderRevenue)} in cycle - ${formatNumber(metrics.openOrders)} still open - ${formatPercent(metrics.fillRate)} delivered`)}
@@ -1665,6 +2021,7 @@ export function renderDashboard({ state }) {
           </table>
         </div>
       </section>
+      ${isManagerPortal ? renderManagerSalesOperations(state) : ""}
       ${isManagerPortal ? renderManagerReportReview(state) : ""}
     </section>
   `;
