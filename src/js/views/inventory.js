@@ -133,9 +133,161 @@ function renderCategoryRows(state) {
   });
 }
 
+function stockCategoryLabel(stockCategory) {
+  const labels = {
+    raw_materials: "Raw Materials",
+    finished_products: "Finished Products",
+    equipment: "Equipment"
+  };
+
+  return labels[stockCategory] || "Finished Products";
+}
+
+function productUnit(product) {
+  return product.unit || (stockCategoryIdForProduct(product) === "raw_materials" ? "kg" : "unit");
+}
+
+function renderProductImage(product) {
+  if (product.imageUrl) {
+    return `<img src="${escapeHtml(product.imageUrl)}" alt="">`;
+  }
+
+  return `<span>${escapeHtml(product.name.slice(0, 2).toUpperCase())}</span>`;
+}
+
+function renderManagerProductPanel(state, permissions) {
+  if (!permissions.canManageProducts) return "";
+
+  return `
+    <section class="panel manager-tool-panel">
+      ${panelHeader("Product catalogue", "Create, edit, price, image, and deactivate snack products")}
+      <form id="manager-product-form" class="manager-form-grid" novalidate>
+        <input type="hidden" name="productId">
+        <label class="field">
+          <span>Product name</span>
+          <input name="name" placeholder="Plantain Chips 50g" required>
+        </label>
+        <label class="field">
+          <span>SKU</span>
+          <input name="sku" placeholder="SKU-1008">
+        </label>
+        <label class="field">
+          <span>Category</span>
+          <select name="stockCategory">
+            ${state.stockCategories.map((category) => `
+              <option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>
+            `).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Unit</span>
+          <input name="unit" placeholder="pack, carton, kg">
+        </label>
+        <label class="field">
+          <span>Factory stock</span>
+          <input name="stock" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+        </label>
+        <label class="field">
+          <span>Reorder point</span>
+          <input name="reorderPoint" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+        </label>
+        <label class="field">
+          <span>Cost price</span>
+          <input name="unitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+        </label>
+        <label class="field">
+          <span>Selling price</span>
+          <input name="unitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+        </label>
+        <label class="field span-full">
+          <span>Image URL</span>
+          <input name="imageUrl" type="url" placeholder="https://...">
+        </label>
+        <div class="manager-form-actions span-full">
+          ${textButton({
+            iconName: "check",
+            label: "Save product",
+            className: "primary",
+            type: "submit"
+          })}
+          ${textButton({
+            iconName: "refresh",
+            label: "Clear",
+            className: "js-clear-product-form"
+          })}
+        </div>
+      </form>
+    </section>
+  `;
+}
+
+function managerRepOptions(state) {
+  const names = new Set([
+    ...(state.accounts || []).filter((account) => account.role === "sales_rep").map((account) => account.name),
+    ...(state.routes || []).map((route) => route.driver),
+    ...(state.stockAssignments || []).map((assignment) => assignment.repName)
+  ].filter(Boolean));
+
+  return [...names].sort();
+}
+
+function renderAssignmentConsole(state, permissions) {
+  if (!permissions.canAssignStock) return "";
+
+  const reps = managerRepOptions(state);
+  const assignableProducts = state.products.filter((product) => (
+    product.status !== "inactive" && stockCategoryIdForProduct(product) === "finished_products"
+  ));
+
+  return `
+    <section class="panel manager-tool-panel">
+      ${panelHeader("Stock assignment", "Load finished stock onto a rep and reconcile variances")}
+      <form id="manager-assignment-form" class="manager-form-grid" novalidate>
+        <label class="field">
+          <span>Sales rep</span>
+          <select name="repName" required>
+            <option value="">Choose rep</option>
+            ${reps.map((rep) => `<option value="${escapeHtml(rep)}">${escapeHtml(rep)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Rep run</span>
+          <select name="routeId">
+            <option value="">No run selected</option>
+            ${state.routes.map((route) => `<option value="${escapeHtml(route.id)}">${escapeHtml(route.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Product</span>
+          <select name="productId" required>
+            <option value="">Choose product</option>
+            ${assignableProducts.map((product) => `
+              <option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} (${formatNumber(product.stock)} ${escapeHtml(productUnit(product))})</option>
+            `).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Quantity</span>
+          <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+        </label>
+        <div class="manager-form-actions span-full">
+          ${textButton({
+            iconName: "truck",
+            label: "Load stock",
+            className: "primary",
+            type: "submit"
+          })}
+        </div>
+        <span id="assignment-form-message" class="field-error span-full"></span>
+      </form>
+    </section>
+  `;
+}
+
 function renderProductCard(product, permissions) {
   const health = getStockHealth(product);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canManageProducts = permissions.canManageProducts;
   const searchIndex = [
     product.id,
     product.name,
@@ -148,46 +300,69 @@ function renderProductCard(product, permissions) {
 
   return `
     <article
-      class="product-card"
+      class="product-card ${product.status === "inactive" ? "is-inactive" : ""}"
       data-category="${escapeHtml(product.category)}"
       data-search-index="${escapeHtml(searchIndex)}"
     >
       <header>
+        <div class="product-media">${renderProductImage(product)}</div>
         <div>
           <span class="eyebrow">${escapeHtml(product.id)}</span>
           <h3>${escapeHtml(product.name)}</h3>
         </div>
-        ${statusPill(health.status)}
+        ${statusPill(product.status === "inactive" ? "inactive" : health.status)}
       </header>
 
       <div class="stock-line">
         <div class="stock-meta">
-          <span>${formatNumber(product.stock)} units</span>
+          <span>${formatNumber(product.stock)} ${escapeHtml(productUnit(product))}</span>
           <span>${health.daysCover} days cover</span>
         </div>
         ${progressBar(health.percent, health.tone)}
       </div>
 
       <div class="split">
-        <span class="muted">${escapeHtml(product.warehouse)}</span>
+        <span class="muted">Cost ${formatCurrency(product.unitCost)}</span>
         <strong>${product.unitPrice ? formatCurrency(product.unitPrice) : "Factory use"}</strong>
       </div>
 
       <footer>
         <span class="muted">${escapeHtml(product.category)}</span>
-        ${textButton({
-          iconName: "plus",
-          label: "Restock",
-          className: "primary js-restock-product",
-          disabled: !canRestock,
-          data: { "product-id": product.id }
-        })}
+        <div class="row-actions">
+          ${canManageProducts
+            ? textButton({
+                iconName: "settings",
+                label: "Edit",
+                className: "js-edit-product",
+                data: { "product-id": product.id }
+              })
+            : ""}
+          ${canManageProducts
+            ? textButton({
+                iconName: product.status === "inactive" ? "check" : "x",
+                label: product.status === "inactive" ? "Reactivate" : "Deactivate",
+                className: "js-toggle-product-status",
+                data: { "product-id": product.id }
+              })
+            : textButton({
+                iconName: "plus",
+                label: "Restock",
+                className: "primary js-restock-product",
+                disabled: !canRestock,
+                data: { "product-id": product.id }
+              })}
+        </div>
       </footer>
     </article>
   `;
 }
 
-function renderAssignmentRows(state) {
+function assignmentDisplayStatus(assignment) {
+  if (assignment.varianceFlagged && assignment.status !== "reconciled") return "variance";
+  return assignment.status;
+}
+
+function renderAssignmentRows(state, permissions) {
   const productMap = getProductMap(state.products);
 
   return state.stockAssignments.map((assignment) => {
@@ -222,7 +397,39 @@ function renderAssignmentRows(state) {
         </td>
         <td>${formatNumber(assignment.returned)}</td>
         <td><strong>${formatNumber(outstanding)}</strong></td>
-        <td>${statusPill(assignment.status)}</td>
+        <td>
+          ${statusPill(assignmentDisplayStatus(assignment))}
+          ${assignment.varianceNote ? `<div class="muted">${escapeHtml(assignment.varianceNote)}</div>` : ""}
+        </td>
+        <td>
+          ${
+            permissions.canReconcileStock && assignment.status !== "reconciled"
+              ? `
+                <div class="assignment-actions">
+                  ${
+                    outstanding > 0
+                      ? `<input class="table-note-input" data-variance-note="${escapeHtml(assignment.id)}" placeholder="Variance note">`
+                      : ""
+                  }
+                  ${textButton({
+                    iconName: "alert",
+                    label: "Flag",
+                    className: "js-flag-assignment",
+                    disabled: outstanding <= 0,
+                    data: { "assignment-id": assignment.id }
+                  })}
+                  ${textButton({
+                    iconName: "check",
+                    label: assignment.varianceFlagged ? "Close" : "Reconcile",
+                    className: "primary js-reconcile-assignment",
+                    disabled: outstanding > 0 && !assignment.varianceFlagged,
+                    data: { "assignment-id": assignment.id }
+                  })}
+                </div>
+              `
+              : ""
+          }
+        </td>
       </tr>
     `;
   });
@@ -314,6 +521,8 @@ export function renderInventory({ state }) {
     <section class="view inventory-view">
       ${renderCustodyMetrics(vision)}
       ${renderLifecycle(state)}
+      ${renderManagerProductPanel(state, permissions)}
+      ${renderAssignmentConsole(state, permissions)}
 
       <section class="panel inventory-layout">
         ${panelHeader("Stock categories", "Raw materials, finished products, and equipment behave differently")}
@@ -346,8 +555,8 @@ export function renderInventory({ state }) {
       <section class="panel inventory-layout">
         ${panelHeader("Rep stock assignments", "Assigned, sold, returned, and outstanding quantities by sales rep")}
         ${table(
-          ["Assignment", "Rep", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status"],
-          renderAssignmentRows(state),
+          ["Assignment", "Rep", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status", ""],
+          renderAssignmentRows(state, permissions),
           "No stock assignments recorded"
         )}
       </section>
@@ -375,10 +584,98 @@ export function renderInventory({ state }) {
 
 export function bindInventory({ root, store }) {
   const categoryFilter = qs("#inventory-category-filter", root);
+  const productForm = qs("#manager-product-form", root);
+  const assignmentForm = qs("#manager-assignment-form", root);
 
   categoryFilter.addEventListener("change", () => {
     qsa(".product-card", root).forEach((card) => {
       card.hidden = categoryFilter.value !== "all" && card.dataset.category !== categoryFilter.value;
+    });
+  });
+
+  productForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(productForm);
+    const sku = String(formData.get("sku") || "").trim();
+    const productId = String(formData.get("productId") || sku).trim();
+
+    store.dispatch({
+      type: "UPSERT_PRODUCT",
+      productId,
+      name: formData.get("name"),
+      stockCategory: formData.get("stockCategory"),
+      unit: formData.get("unit"),
+      stock: Number(formData.get("stock") || 0),
+      reorderPoint: Number(formData.get("reorderPoint") || 0),
+      unitCost: Number(formData.get("unitCost") || 0),
+      unitPrice: Number(formData.get("unitPrice") || 0),
+      imageUrl: formData.get("imageUrl"),
+      message: productId ? "Product saved" : "Product created"
+    });
+  });
+
+  qs(".js-clear-product-form", root)?.addEventListener("click", () => {
+    productForm?.reset();
+    if (productForm?.elements.productId) productForm.elements.productId.value = "";
+  });
+
+  qsa(".js-edit-product", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const product = store.getState().products.find((item) => item.id === button.dataset.productId);
+      if (!productForm || !product) return;
+
+      productForm.elements.productId.value = product.id;
+      productForm.elements.sku.value = product.id;
+      productForm.elements.name.value = product.name || "";
+      productForm.elements.stockCategory.value = stockCategoryIdForProduct(product);
+      productForm.elements.unit.value = productUnit(product);
+      productForm.elements.stock.value = product.stock || 0;
+      productForm.elements.reorderPoint.value = product.reorderPoint || 0;
+      productForm.elements.unitCost.value = product.unitCost || 0;
+      productForm.elements.unitPrice.value = product.unitPrice || 0;
+      productForm.elements.imageUrl.value = product.imageUrl || "";
+      productForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  });
+
+  qsa(".js-toggle-product-status", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "TOGGLE_PRODUCT_STATUS",
+        productId: button.dataset.productId,
+        message: "Product status updated"
+      });
+    });
+  });
+
+  assignmentForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const state = store.getState();
+    const formData = new FormData(assignmentForm);
+    const productId = String(formData.get("productId") || "");
+    const quantity = Number(formData.get("quantity") || 0);
+    const product = state.products.find((item) => item.id === productId);
+    const message = qs("#assignment-form-message", root);
+
+    if (message) message.textContent = "";
+
+    if (!product || !formData.get("repName") || !quantity || quantity <= 0) {
+      if (message) message.textContent = "Choose a rep, product, and quantity.";
+      return;
+    }
+
+    if (quantity > Number(product.stock || 0)) {
+      if (message) message.textContent = `Only ${formatNumber(product.stock)} available.`;
+      return;
+    }
+
+    store.dispatch({
+      type: "LOAD_STOCK_ASSIGNMENT",
+      repName: formData.get("repName"),
+      routeId: formData.get("routeId"),
+      productId,
+      quantity,
+      message: "Stock loaded to rep"
     });
   });
 
@@ -388,6 +685,28 @@ export function bindInventory({ root, store }) {
         type: "RESTOCK_PRODUCT",
         productId: button.dataset.productId,
         message: "Snack stock replenished"
+      });
+    });
+  });
+
+  qsa(".js-flag-assignment", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const noteInput = qs(`[data-variance-note="${button.dataset.assignmentId}"]`, root);
+      store.dispatch({
+        type: "FLAG_ASSIGNMENT_VARIANCE",
+        assignmentId: button.dataset.assignmentId,
+        note: noteInput?.value || "Variance needs explanation",
+        message: "Variance flagged"
+      });
+    });
+  });
+
+  qsa(".js-reconcile-assignment", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "RECONCILE_ASSIGNMENT",
+        assignmentId: button.dataset.assignmentId,
+        message: "Assignment reconciled"
       });
     });
   });

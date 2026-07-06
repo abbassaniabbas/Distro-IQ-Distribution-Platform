@@ -399,6 +399,7 @@
 
 .status-pill.ready,
 .status-pill.active,
+.status-pill.reviewed,
 .status-pill.paid,
 .status-pill.delivered,
 .status-pill.reconciled,
@@ -422,6 +423,7 @@
 .status-pill.sent,
 .status-pill.pending,
 .status-pill.open,
+.status-pill.flagged,
 .status-pill.supply,
 .status-pill.not-required {
   background: rgba(20, 54, 95, 0.1);
@@ -440,6 +442,8 @@
 .status-pill.delayed,
 .status-pill.overdue,
 .status-pill.low,
+.status-pill.inactive,
+.status-pill.variance,
 .status-pill.return,
 .status-pill.write-off,
 .status-pill.credit-hold,

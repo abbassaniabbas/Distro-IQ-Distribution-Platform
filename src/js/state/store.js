@@ -57,7 +57,8 @@ function ensureStateShape(value) {
     accounts: Array.isArray(state.accounts) ? state.accounts : [],
     invites: Array.isArray(state.invites) ? state.invites : [],
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
-    salesReports: Array.isArray(state.salesReports) ? state.salesReports : [],
+    salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
+    creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
     orders: mergeSeedRecords(state.orders, seedData.orders),
     routes: mergeSeedRecords(state.routes, seedData.routes),
@@ -115,6 +116,16 @@ function textLabel(value) {
   return String(value || "")
     .replace(/_/g, " ")
     .replace(/\b\w/g, (character) => character.toUpperCase());
+}
+
+function categoryNameForStockCategory(stockCategory) {
+  if (stockCategory === "raw_materials") return "Raw Materials";
+  if (stockCategory === "equipment") return "Equipment";
+  return "Finished Products";
+}
+
+function currentActorLabel(state) {
+  return getCurrentActor(state).name || "Manager";
 }
 
 function appendActivityLog(state, activity) {
@@ -454,6 +465,7 @@ function reducer(currentState, action) {
         unitsReturned: Number(action.unitsReturned || 0),
         transactionIds: Array.isArray(action.transactionIds) ? action.transactionIds : [],
         status: "submitted",
+        reviewNote: "",
         submittedAt: new Date().toISOString()
       };
       const sameReport = (item) => (
@@ -474,6 +486,210 @@ function reducer(currentState, action) {
         summary: `${report.repName} submitted a sales report`
       });
 
+      return state;
+    }
+
+    case "UPSERT_PRODUCT": {
+      const productId = String(action.productId || "").trim();
+      const existingProduct = state.products.find((item) => item.id === productId);
+      const stockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
+      const product = {
+        id: productId || createId(stockCategory === "equipment" ? "EQP" : "SKU"),
+        name: String(action.name || existingProduct?.name || "New product").trim(),
+        category: categoryNameForStockCategory(stockCategory),
+        stockCategory,
+        unit: String(action.unit || existingProduct?.unit || "unit").trim(),
+        warehouse: String(action.warehouse || existingProduct?.warehouse || "Finished Goods Store").trim(),
+        region: "Factory",
+        stock: Math.max(0, Number(action.stock ?? existingProduct?.stock ?? 0)),
+        reorderPoint: Math.max(0, Number(action.reorderPoint ?? existingProduct?.reorderPoint ?? 0)),
+        dailyVelocity: Math.max(0, Number(action.dailyVelocity ?? existingProduct?.dailyVelocity ?? 0)),
+        unitCost: Math.max(0, Number(action.unitCost ?? existingProduct?.unitCost ?? 0)),
+        unitPrice: Math.max(0, Number(action.unitPrice ?? existingProduct?.unitPrice ?? 0)),
+        imageUrl: String(action.imageUrl || existingProduct?.imageUrl || "").trim(),
+        status: existingProduct?.status || "active",
+        equipmentStatus: stockCategory === "equipment" ? (existingProduct?.equipmentStatus || "in_stock") : undefined,
+        updatedAt: todayISO()
+      };
+
+      if (existingProduct) {
+        Object.assign(existingProduct, product);
+      } else {
+        state.products = [product, ...state.products];
+      }
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: existingProduct ? "updated" : "created",
+        recordType: "inventory",
+        recordLabel: product.id,
+        summary: `${existingProduct ? "Updated" : "Created"} product ${product.name}`
+      });
+
+      return state;
+    }
+
+    case "TOGGLE_PRODUCT_STATUS": {
+      const product = state.products.find((item) => item.id === action.productId);
+      if (product) {
+        product.status = product.status === "inactive" ? "active" : "inactive";
+        product.updatedAt = todayISO();
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: product.status === "inactive" ? "deactivated" : "updated",
+          recordType: "inventory",
+          recordLabel: product.id,
+          summary: `${product.name} marked ${product.status}`
+        });
+      }
+      return state;
+    }
+
+    case "LOAD_STOCK_ASSIGNMENT": {
+      const product = state.products.find((item) => item.id === action.productId);
+      const quantity = Math.max(0, Number(action.quantity || 0));
+
+      if (!product || !quantity || Number(product.stock || 0) < quantity) {
+        return state;
+      }
+
+      product.stock = Math.max(0, Number(product.stock || 0) - quantity);
+      product.updatedAt = todayISO();
+      state.stockAssignments = [
+        {
+          id: createId("ASN"),
+          routeId: action.routeId || "Factory load",
+          repName: action.repName || "Sales Rep",
+          productId: product.id,
+          assignedAt: todayISO(),
+          assigned: quantity,
+          sold: 0,
+          returned: 0,
+          status: "open",
+          varianceFlagged: false,
+          varianceNote: ""
+        },
+        ...state.stockAssignments
+      ];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "assigned",
+        recordType: "inventory",
+        recordLabel: product.id,
+        summary: `Loaded ${quantity} ${product.name} to ${action.repName}`
+      });
+
+      return state;
+    }
+
+    case "FLAG_ASSIGNMENT_VARIANCE": {
+      const assignment = state.stockAssignments.find((item) => item.id === action.assignmentId);
+      if (assignment) {
+        assignment.status = "variance";
+        assignment.varianceFlagged = true;
+        assignment.varianceNote = String(action.note || "Manager requested explanation").trim();
+        assignment.flaggedAt = new Date().toISOString();
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "flagged",
+          recordType: "inventory",
+          recordLabel: assignment.id,
+          summary: `${assignment.repName} assignment flagged for variance`
+        });
+      }
+      return state;
+    }
+
+    case "RECONCILE_ASSIGNMENT": {
+      const assignment = state.stockAssignments.find((item) => item.id === action.assignmentId);
+      if (assignment) {
+        const outstanding = Math.max(0, Number(assignment.assigned || 0) - Number(assignment.sold || 0) - Number(assignment.returned || 0));
+        if (outstanding > 0 && !assignment.varianceFlagged) return state;
+
+        assignment.status = "reconciled";
+        assignment.reconciledAt = new Date().toISOString();
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "reconciled",
+          recordType: "inventory",
+          recordLabel: assignment.id,
+          summary: `${assignment.repName} assignment reconciled`
+        });
+      }
+      return state;
+    }
+
+    case "UPDATE_CREDIT_LIMIT": {
+      const limit = state.creditLimits.find((item) => item.id === action.creditLimitId);
+      const nextLimit = Math.max(0, Number(action.limit || 0));
+      if (!limit || !nextLimit) return state;
+
+      const previousLimit = Number(limit.limit || 0);
+      const changedBy = currentActorLabel(state);
+      const changedAt = new Date().toISOString();
+      limit.previousLimit = previousLimit;
+      limit.limit = nextLimit;
+      limit.changedBy = changedBy;
+      limit.changedAt = changedAt;
+
+      state.creditLimitHistory = [
+        {
+          id: createId("CLH"),
+          creditLimitId: limit.id,
+          partyType: limit.partyType,
+          partyName: limit.partyName,
+          previousLimit,
+          nextLimit,
+          changedBy,
+          reason: String(action.reason || "Manager adjustment").trim(),
+          changedAt
+        },
+        ...(state.creditLimitHistory || [])
+      ];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "updated",
+        recordType: "credit_limit",
+        recordLabel: limit.partyName,
+        summary: `Credit limit changed from ${previousLimit} to ${nextLimit}`
+      });
+
+      return state;
+    }
+
+    case "REVIEW_SALES_REPORT": {
+      const report = state.salesReports.find((item) => item.id === action.reportId);
+      if (report) {
+        report.status = "reviewed";
+        report.reviewedAt = new Date().toISOString();
+        report.reviewNote = String(action.note || "Reviewed by manager").trim();
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "completed",
+          recordType: "report",
+          recordLabel: report.id,
+          summary: `${report.repName} report reviewed`
+        });
+      }
+      return state;
+    }
+
+    case "FLAG_SALES_REPORT": {
+      const report = state.salesReports.find((item) => item.id === action.reportId);
+      if (report) {
+        report.status = "flagged";
+        report.reviewNote = String(action.note || "Needs correction").trim();
+        report.flaggedAt = new Date().toISOString();
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "flagged",
+          recordType: "report",
+          recordLabel: report.id,
+          summary: `${report.repName} report flagged for correction`
+        });
+      }
       return state;
     }
 

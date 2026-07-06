@@ -136,6 +136,7 @@ const store = createStore();
 const navRoot = qs("#primary-nav");
 const viewRoot = qs("#view-root");
 const viewTitle = qs("#view-title");
+const topbarRoleBadge = qs("#topbar-role-badge");
 const globalSearch = qs("#global-search");
 const resetButton = qs("#reset-demo-data");
 const signOutButton = qs("#sign-out");
@@ -317,14 +318,27 @@ function updateTopbarUtilities(state, view) {
 
   const shouldShow = Boolean(state.session && !view.isSetup);
   topbarUtilities.hidden = !shouldShow;
+  if (topbarRoleBadge) {
+    topbarRoleBadge.hidden = !shouldShow;
+  }
 
-  if (!shouldShow) return;
+  if (!shouldShow) {
+    if (topbarRoleBadge) {
+      topbarRoleBadge.textContent = "";
+    }
+    return;
+  }
 
   const account = accountForCurrentUser(state);
   const userMeta = state.user?.user_metadata || {};
   const avatarUrl = userMeta.avatar_url || userMeta.picture || "";
   const profileName = account?.name || userMeta.full_name || state.user?.email || "DistroIQ user";
   const profileRole = state.platformAdmin ? "Super Admin" : account?.role ? roleLabel(account.role) : "Team member";
+
+  if (topbarRoleBadge) {
+    topbarRoleBadge.textContent = `${profileRole} portal`;
+    topbarRoleBadge.classList.toggle("is-platform", Boolean(state.platformAdmin));
+  }
 
   topbarAvatar.title = `${profileName} - ${profileRole}`;
 

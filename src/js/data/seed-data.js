@@ -3,7 +3,64 @@ const seedData = {
   accounts: [],
   invites: [],
   activityLogs: [],
-  salesReports: [],
+  salesReports: [
+    {
+      id: "RPT-4101",
+      clientId: "",
+      repName: "Chika Eze",
+      reportDate: "2026-07-05",
+      tripLabel: "Lagos Rep Run",
+      salesAmount: 74800,
+      cashAmount: 52800,
+      creditAmount: 22000,
+      returnAmount: 8800,
+      unitsSold: 340,
+      unitsReturned: 40,
+      transactionIds: ["TXN-7003"],
+      status: "submitted",
+      submittedAt: "2026-07-05T16:40:00"
+    },
+    {
+      id: "RPT-4102",
+      clientId: "",
+      repName: "Sani Musa",
+      reportDate: "2026-07-05",
+      tripLabel: "Abuja Rep Run",
+      salesAmount: 126000,
+      cashAmount: 0,
+      creditAmount: 126000,
+      returnAmount: 0,
+      unitsSold: 420,
+      unitsReturned: 0,
+      transactionIds: ["TXN-7001"],
+      status: "submitted",
+      submittedAt: "2026-07-05T17:05:00"
+    }
+  ],
+  creditLimitHistory: [
+    {
+      id: "CLH-8001",
+      creditLimitId: "CRD-5001",
+      partyType: "Sales rep",
+      partyName: "Chika Eze",
+      previousLimit: 300000,
+      nextLimit: 350000,
+      changedBy: "Manager",
+      reason: "Higher Lagos route volume",
+      changedAt: "2026-07-01T09:20:00"
+    },
+    {
+      id: "CLH-8002",
+      creditLimitId: "CRD-5003",
+      partyType: "Supermarket",
+      partyName: "Lekki Family Mart",
+      previousLimit: 450000,
+      nextLimit: 500000,
+      changedBy: "Manager",
+      reason: "Approved supermarket account review",
+      changedAt: "2026-06-30T13:40:00"
+    }
+  ],
   backend: {
     configured: false,
     status: "idle",

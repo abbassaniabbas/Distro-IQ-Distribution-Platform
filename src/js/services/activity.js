@@ -12,7 +12,11 @@ export const ACTION_LABELS = {
   sold: "Sold",
   returned: "Returned",
   submitted: "Submitted",
-  blocked: "Blocked"
+  blocked: "Blocked",
+  assigned: "Assigned",
+  reconciled: "Reconciled",
+  flagged: "Flagged",
+  deactivated: "Deactivated"
 };
 
 export const RECORD_LABELS = {
@@ -23,6 +27,7 @@ export const RECORD_LABELS = {
   route: "Rep Run",
   retailer: "Customer",
   invoice: "Invoice",
+  credit_limit: "Credit Limit",
   sale: "Sale",
   report: "Sales Report"
 };

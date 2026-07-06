@@ -7,7 +7,7 @@ import {
 } from "../services/calculations.js";
 import { formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions } from "../services/rbac.js";
-import { escapeHtml, qsa } from "../ui/dom.js";
+import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 
 function renderAgingRows(invoices) {
@@ -99,6 +99,71 @@ function renderCreditExposureRows(state) {
   });
 }
 
+function renderCreditLimitManager(state, permissions) {
+  if (!permissions.canSetCreditLimits) return "";
+
+  return `
+    <section class="panel manager-tool-panel">
+      ${panelHeader("Credit limit manager", "Set rep and supermarket limits with retained change history")}
+      <form id="credit-limit-form" class="manager-form-grid" novalidate>
+        <label class="field">
+          <span>Account</span>
+          <select name="creditLimitId" required>
+            <option value="">Choose account</option>
+            ${state.creditLimits.map((limit) => `
+              <option value="${escapeHtml(limit.id)}">${escapeHtml(limit.partyName)} - ${escapeHtml(limit.partyType)}</option>
+            `).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>New limit</span>
+          <input name="limit" type="number" min="1" step="1000" inputmode="numeric" placeholder="0" required>
+        </label>
+        <label class="field span-full">
+          <span>Reason</span>
+          <input name="reason" placeholder="Route growth, risk review, payment performance">
+        </label>
+        <div class="manager-form-actions span-full">
+          ${textButton({
+            iconName: "wallet",
+            label: "Update limit",
+            className: "primary",
+            type: "submit"
+          })}
+        </div>
+        <span id="credit-limit-message" class="field-error span-full"></span>
+      </form>
+    </section>
+  `;
+}
+
+function renderCreditHistoryRows(state) {
+  return (state.creditLimitHistory || []).map((entry) => {
+    const searchIndex = [
+      entry.partyName,
+      entry.partyType,
+      entry.changedBy,
+      entry.reason
+    ].join(" ").toLowerCase();
+
+    return `
+      <tr data-search-index="${escapeHtml(searchIndex)}">
+        <td>
+          <strong>${escapeHtml(entry.partyName)}</strong>
+          <div class="muted">${escapeHtml(entry.partyType)}</div>
+        </td>
+        <td>${formatCurrency(entry.previousLimit)}</td>
+        <td>${formatCurrency(entry.nextLimit)}</td>
+        <td>${escapeHtml(entry.reason || "Manager adjustment")}</td>
+        <td>
+          ${escapeHtml(entry.changedBy)}
+          <div class="muted">${formatDate(entry.changedAt?.slice(0, 10))}</div>
+        </td>
+      </tr>
+    `;
+  });
+}
+
 export function renderFinance({ state }) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
@@ -138,6 +203,7 @@ export function renderFinance({ state }) {
           iconName: "wallet"
         })}
       </div>
+      ${renderCreditLimitManager(state, permissions)}
 
       <div class="finance-layout">
         <section class="panel">
@@ -163,11 +229,45 @@ export function renderFinance({ state }) {
           "No credit limits available"
         )}
       </section>
+
+      <section class="panel">
+        ${panelHeader("Credit limit history", "Every manager adjustment stays visible")}
+        ${table(
+          ["Account", "Previous", "New", "Reason", "Changed by"],
+          renderCreditHistoryRows(state),
+          "No credit limit changes recorded"
+        )}
+      </section>
     </section>
   `;
 }
 
 export function bindFinance({ root, store }) {
+  const creditForm = qs("#credit-limit-form", root);
+
+  creditForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(creditForm);
+    const message = qs("#credit-limit-message", root);
+    const creditLimitId = String(formData.get("creditLimitId") || "");
+    const limit = Number(formData.get("limit") || 0);
+
+    if (message) message.textContent = "";
+
+    if (!creditLimitId || !limit || limit <= 0) {
+      if (message) message.textContent = "Choose an account and enter a new limit.";
+      return;
+    }
+
+    store.dispatch({
+      type: "UPDATE_CREDIT_LIMIT",
+      creditLimitId,
+      limit,
+      reason: formData.get("reason"),
+      message: "Credit limit updated"
+    });
+  });
+
   qsa(".js-mark-paid", root).forEach((button) => {
     button.addEventListener("click", () => {
       store.dispatch({

@@ -543,6 +543,107 @@
   font-weight: 850;
 }
 
+.manager-command-panel,
+.manager-tool-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.manager-command-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.manager-command-card {
+  display: grid;
+  gap: 8px;
+  min-height: 138px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(7, 26, 47, 0.06);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.manager-command-card:hover,
+.manager-command-card:focus-visible {
+  border-color: rgba(25, 185, 133, 0.36);
+  box-shadow: 0 16px 34px rgba(7, 26, 47, 0.1);
+  transform: translateY(-1px);
+}
+
+.manager-command-card strong {
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.manager-command-card p {
+  font-size: 0.82rem;
+}
+
+.manager-form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.manager-form-grid .span-full {
+  grid-column: 1 / -1;
+}
+
+.manager-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.product-media {
+  display: grid;
+  width: 46px;
+  height: 46px;
+  place-items: center;
+  flex: 0 0 46px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--mint-soft);
+  color: var(--navy);
+  font-weight: 950;
+}
+
+.product-media img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.product-card.is-inactive {
+  background: #f7fbfc;
+  opacity: 0.72;
+}
+
+.assignment-actions {
+  display: grid;
+  gap: 8px;
+  min-width: 190px;
+}
+
+.table-note-input {
+  width: 100%;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0 10px;
+  font: inherit;
+  font-size: 0.78rem;
+}
+
 .rep-activity-list {
   display: grid;
   gap: 10px;
@@ -1096,6 +1197,11 @@
   .rep-hero {
     grid-template-columns: 1fr;
   }
+
+  .manager-command-grid,
+  .manager-form-grid {
+    grid-template-columns: repeat(2, minmax(180px, 1fr));
+  }
 }
 
 @media (max-width: 760px) {
@@ -1137,7 +1243,9 @@
   }
 
   .platform-seed-grid,
-  .platform-module-grid {
+  .platform-module-grid,
+  .manager-command-grid,
+  .manager-form-grid {
     grid-template-columns: 1fr;
   }
 

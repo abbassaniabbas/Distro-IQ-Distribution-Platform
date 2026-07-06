@@ -272,6 +272,130 @@ function renderFactoryCashControls(vision) {
   `).join("");
 }
 
+function renderManagerControlPanel(state, vision) {
+  const openVariances = (state.stockAssignments || []).filter((assignment) => (
+    assignment.status !== "reconciled" && assignmentOutstanding(assignment) > 0
+  )).length;
+  const submittedReports = (state.salesReports || []).filter((report) => report.status === "submitted").length;
+  const activeProducts = (state.products || []).filter((product) => product.status !== "inactive").length;
+  const watchedCredit = vision.creditWatchCount + vision.creditHoldCount;
+  const cards = [
+    {
+      label: "Catalogue",
+      value: formatNumber(activeProducts),
+      body: "Create, edit, price, image, and deactivate products.",
+      href: "#/inventory"
+    },
+    {
+      label: "Rep stock",
+      value: formatNumber(openVariances),
+      body: "Load stock to reps and close reconciliations.",
+      href: "#/inventory"
+    },
+    {
+      label: "Credit limits",
+      value: formatNumber(watchedCredit),
+      body: "Adjust rep and supermarket credit exposure.",
+      href: "#/finance"
+    },
+    {
+      label: "Reports",
+      value: formatNumber(submittedReports),
+      body: "Review submitted sales and stock reports.",
+      href: "#manager-report-review"
+    }
+  ];
+
+  return `
+    <section class="panel manager-command-panel">
+      ${panelHeader("Manager controls", "Catalogue, rep stock, credit limits, and report review")}
+      <div class="manager-command-grid">
+        ${cards.map((card) => `
+          <a class="manager-command-card" href="${escapeHtml(card.href)}" data-search-index="${escapeHtml(`${card.label} ${card.body}`.toLowerCase())}">
+            <span class="eyebrow">${escapeHtml(card.label)}</span>
+            <strong>${escapeHtml(card.value)}</strong>
+            <p>${escapeHtml(card.body)}</p>
+          </a>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderManagerReportRows(state) {
+  return (state.salesReports || []).map((report) => {
+    const searchIndex = [
+      report.repName,
+      report.reportDate,
+      report.status,
+      report.reviewNote
+    ].join(" ").toLowerCase();
+
+    return `
+      <tr data-search-index="${escapeHtml(searchIndex)}">
+        <td>
+          <strong>${escapeHtml(report.repName)}</strong>
+          <div class="muted">${formatDate(report.reportDate)} - ${escapeHtml(report.tripLabel || "Trip")}</div>
+        </td>
+        <td>${statusPill(report.status)}</td>
+        <td>
+          <strong>${formatCurrency(report.salesAmount)}</strong>
+          <div class="muted">${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned</div>
+        </td>
+        <td>
+          ${formatCurrency(report.cashAmount)} cash
+          <div class="muted">${formatCurrency(report.creditAmount)} credit</div>
+        </td>
+        <td>
+          ${escapeHtml(report.reviewNote || "No query")}
+          <div class="muted">${formatNumber((report.transactionIds || []).length)} linked record${(report.transactionIds || []).length === 1 ? "" : "s"}</div>
+        </td>
+        <td>
+          <div class="row-actions">
+            ${textButton({
+              iconName: "alert",
+              label: "Flag",
+              className: "js-flag-report",
+              disabled: report.status === "flagged",
+              data: { "report-id": report.id }
+            })}
+            ${textButton({
+              iconName: "check",
+              label: report.status === "reviewed" ? "Reviewed" : "Review",
+              className: "primary js-review-report",
+              disabled: report.status === "reviewed",
+              data: { "report-id": report.id }
+            })}
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join("");
+}
+
+function renderManagerReportReview(state) {
+  return `
+    <section class="panel" id="manager-report-review">
+      ${panelHeader("Report review", "Submitted rep reports can be reviewed or flagged for correction")}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Report</th>
+              <th>Status</th>
+              <th>Sales</th>
+              <th>Payment mix</th>
+              <th>Query</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${renderManagerReportRows(state) || '<tr><td colspan="6">No submitted reports yet</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function renderRepStockCards(assignments) {
   if (!assignments.length) {
     return '<div class="empty-state">No stock assigned yet</div>';
@@ -520,6 +644,7 @@ export function renderDashboard({ state }) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
   const permissions = currentUserPermissions(state);
+  const isManagerPortal = currentUserRole(state) === "manager";
 
   return `
     <section class="view dashboard-view">
@@ -549,6 +674,7 @@ export function renderDashboard({ state }) {
           iconName: "wallet"
         })}
       </div>
+      ${isManagerPortal ? renderManagerControlPanel(state, vision) : ""}
 
       <div class="dashboard-layout">
         <section class="panel">
@@ -584,6 +710,7 @@ export function renderDashboard({ state }) {
           </table>
         </div>
       </section>
+      ${isManagerPortal ? renderManagerReportReview(state) : ""}
     </section>
   `;
 }
@@ -610,6 +737,27 @@ export function bindDashboard({ root, store }) {
         type: "ADVANCE_ORDER",
         orderId: button.dataset.orderId,
         message: "Sales order status updated"
+      });
+    });
+  });
+
+  qsa(".js-review-report", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "REVIEW_SALES_REPORT",
+        reportId: button.dataset.reportId,
+        message: "Report reviewed"
+      });
+    });
+  });
+
+  qsa(".js-flag-report", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "FLAG_SALES_REPORT",
+        reportId: button.dataset.reportId,
+        note: "Manager query raised",
+        message: "Report flagged"
       });
     });
   });
