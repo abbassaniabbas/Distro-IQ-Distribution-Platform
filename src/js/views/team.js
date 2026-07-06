@@ -8,8 +8,10 @@ import { inviteAccount } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { formatDate } from "../services/formatters.js";
 import { currentUserPermissions, roleLabel } from "../services/rbac.js";
-import { escapeHtml, qs, qsa } from "../ui/dom.js";
+import { escapeHtml, qs } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
+
+let activeLoginDetailsModal = null;
 
 function renderRoleOptions() {
   return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
@@ -33,6 +35,130 @@ function collectAccountForm(form) {
     email: formData.get("email") || "",
     role: formData.get("role") || ""
   };
+}
+
+function appLoginUrl() {
+  const basePath = `${window.location.origin}${window.location.pathname}`;
+  return `${basePath}#/login`;
+}
+
+function emailLoginDetails({ client, invite }) {
+  const companyName = client?.companyName || "DistroIQ";
+  const subject = `Your DistroIQ login for ${companyName}`;
+  const body = [
+    `Hello,`,
+    "",
+    `Your DistroIQ account for ${companyName} is ready.`,
+    "",
+    `Sign-in page: ${appLoginUrl()}`,
+    `Email: ${invite.to}`,
+    `Temporary password: ${invite.temporaryPassword}`,
+    `Role: ${roleLabel(invite.role)}`,
+    "",
+    `After signing in, you will be asked to create your own password.`
+  ].join("\n");
+
+  window.location.href = `mailto:${encodeURIComponent(invite.to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+function findCreatedInvite(workspace, email) {
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+
+  return (workspace.invites || []).find((invite) => (
+    String(invite.to || "").trim().toLowerCase() === normalizedEmail && invite.temporaryPassword
+  )) || null;
+}
+
+async function copyPasswordToClipboard(password, statusTarget, trigger) {
+  try {
+    await navigator.clipboard.writeText(password);
+    if (statusTarget) statusTarget.textContent = "Password copied.";
+    if (trigger) trigger.querySelector("span").textContent = "Copied";
+  } catch {
+    if (statusTarget) statusTarget.textContent = "Copy failed. Select and copy the password manually.";
+  }
+}
+
+function closeLoginDetailsModal() {
+  activeLoginDetailsModal?.remove();
+  activeLoginDetailsModal = null;
+  document.removeEventListener("keydown", handleLoginDetailsModalKeydown);
+}
+
+function handleLoginDetailsModalKeydown(event) {
+  if (event.key === "Escape") {
+    closeLoginDetailsModal();
+  }
+}
+
+function showLoginDetailsModal({ client, invite }) {
+  if (!invite?.temporaryPassword) return;
+
+  closeLoginDetailsModal();
+
+  const modal = document.createElement("div");
+  modal.className = "login-details-modal-backdrop";
+  modal.innerHTML = `
+    <section class="login-details-modal" role="dialog" aria-modal="true" aria-labelledby="login-details-title">
+      <header class="login-details-modal-header">
+        <div>
+          <span class="eyebrow">Member created</span>
+          <h2 id="login-details-title">Login details</h2>
+        </div>
+        <button class="button login-details-close" type="button" data-close-login-details>Close</button>
+      </header>
+
+      <div class="login-details-grid">
+        <div class="client-id-box">
+          <span class="eyebrow">Sign-in email</span>
+          <strong>${escapeHtml(invite.to)}</strong>
+        </div>
+        <div class="client-id-box">
+          <span class="eyebrow">Role</span>
+          <strong>${escapeHtml(roleLabel(invite.role))}</strong>
+        </div>
+        <div class="client-id-box span-full">
+          <span class="eyebrow">Temporary password</span>
+          <code>${escapeHtml(invite.temporaryPassword)}</code>
+        </div>
+      </div>
+
+      <div class="login-details-actions">
+        ${textButton({
+          iconName: "check",
+          label: "Copy password",
+          className: "js-modal-copy-password",
+          data: { "temporary-password": invite.temporaryPassword }
+        })}
+        ${textButton({
+          iconName: "mail",
+          label: "Email login details",
+          className: "primary js-modal-email-login-details"
+        })}
+      </div>
+      <span class="login-details-status" aria-live="polite"></span>
+    </section>
+  `;
+
+  document.body.appendChild(modal);
+  activeLoginDetailsModal = modal;
+  document.addEventListener("keydown", handleLoginDetailsModalKeydown);
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal || event.target.closest("[data-close-login-details]")) {
+      closeLoginDetailsModal();
+    }
+  });
+
+  qs(".js-modal-copy-password", modal).addEventListener("click", (event) => {
+    copyPasswordToClipboard(invite.temporaryPassword, qs(".login-details-status", modal), event.currentTarget);
+  });
+
+  qs(".js-modal-email-login-details", modal).addEventListener("click", () => {
+    emailLoginDetails({ client, invite });
+  });
+
+  qs(".js-modal-copy-password", modal).focus();
 }
 
 function renderAccountCard(account) {
@@ -85,27 +211,11 @@ function renderInvitePreview(invite) {
         <strong>${escapeHtml(invite.to)}</strong>
         ${statusPill(invite.status)}
       </div>
-      <span class="muted">Give this temporary password to the team member. They will change it after signing in.</span>
+      <span class="muted">Temporary login details are shown in a secure modal when the member is created.</span>
       <div class="client-id-box">
         <span class="eyebrow">Sign-in email</span>
         <strong>${escapeHtml(invite.to)}</strong>
       </div>
-      ${
-        invite.temporaryPassword
-          ? `
-            <div class="client-id-box">
-              <span class="eyebrow">Temporary password</span>
-              <code>${escapeHtml(invite.temporaryPassword)}</code>
-            </div>
-            ${textButton({
-              iconName: "check",
-              label: "Copy password",
-              className: "js-copy-temp-password",
-              data: { "temporary-password": invite.temporaryPassword }
-            })}
-          `
-          : '<span class="muted">Temporary password is shown only when the member is created.</span>'
-      }
     </article>
   `;
 }
@@ -236,11 +346,20 @@ export function bindTeam({ root, store }) {
           ...workspace,
           message: "Member created"
         });
+        showLoginDetailsModal({
+          client: workspace.client,
+          invite: findCreatedInvite(workspace, values.email)
+        });
       } else {
         store.dispatch({
           type: "CREATE_ACCOUNT",
           payload: values,
           message: "Member created"
+        });
+        const updatedState = store.getState();
+        showLoginDetailsModal({
+          client: updatedState.client,
+          invite: findCreatedInvite(updatedState, values.email)
         });
       }
     } catch (error) {
@@ -248,16 +367,5 @@ export function bindTeam({ root, store }) {
     } finally {
       submitButton.disabled = false;
     }
-  });
-
-  qsa(".js-copy-temp-password", root).forEach((button) => {
-    button.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(button.dataset.temporaryPassword);
-        button.querySelector("span").textContent = "Copied";
-      } catch {
-        button.querySelector("span").textContent = "Copy failed";
-      }
-    });
   });
 }

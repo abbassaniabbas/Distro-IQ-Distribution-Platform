@@ -40,6 +40,7 @@ function mapInvite(row) {
     clientId: row.client_id,
     accountId: row.membership_id,
     to: row.email,
+    role: row.role,
     subject: row.subject || "DistroIQ invite",
     resetLink: row.redirect_to || "",
     temporaryPassword: "",
@@ -285,7 +286,7 @@ export async function loadWorkspace() {
       .order("created_at", { ascending: false }),
     supabase
       .from("invites")
-      .select("id, client_id, membership_id, email, subject, redirect_to, status, created_at")
+      .select("id, client_id, membership_id, email, role, subject, redirect_to, status, created_at")
       .eq("client_id", client.id)
       .order("created_at", { ascending: false }),
     supabase
