@@ -31,7 +31,7 @@ function todayISO() {
 }
 
 function currentActorName(state) {
-  return getCurrentActor(state).name || "Sales Rep";
+  return getCurrentActor(state).name || "Sales Representative";
 }
 
 function updateCreditBalance(state, partyName, creditImpact) {
@@ -241,18 +241,43 @@ function reducer(currentState, action) {
 
     case "CREATE_CLIENT": {
       const client = createClientProfile(action.payload);
+      const userEmail = String(state.user?.email || "").trim().toLowerCase();
+      const userName = state.user?.user_metadata?.full_name || userEmail || "CEO";
+      const hasCurrentUserAccount = state.accounts.some((account) => (
+        account.userId === state.user?.id ||
+        (userEmail && String(account.email || "").trim().toLowerCase() === userEmail)
+      ));
+      const ceoAccount = hasCurrentUserAccount
+        ? null
+        : {
+            id: createId("USR"),
+            clientId: client.id,
+            userId: state.user?.id || "",
+            name: userName,
+            email: userEmail || "ceo@distroiq.local",
+            role: "ceo",
+            status: "active",
+            temporaryPassword: "",
+            passwordResetRequired: false,
+            createdAt: new Date().toISOString()
+          };
+
       state.client = client;
+      if (ceoAccount) {
+        state.accounts = [ceoAccount, ...state.accounts];
+      }
       appendActivityLog(state, {
         clientId: client.id,
         actionType: "created",
         recordType: "company",
         recordLabel: client.companyName,
-        summary: "Created factory workspace"
+        summary: "Created factory workspace with CEO access"
       });
 
       return {
         ...state,
-        client
+        client,
+        accounts: state.accounts
       };
     }
 
@@ -559,7 +584,7 @@ function reducer(currentState, action) {
         {
           id: createId("ASN"),
           routeId: action.routeId || "Factory load",
-          repName: action.repName || "Sales Rep",
+          repName: action.repName || "Sales Representative",
           productId: product.id,
           assignedAt: todayISO(),
           assigned: quantity,
@@ -720,7 +745,7 @@ function reducer(currentState, action) {
           actionType: "updated",
           recordType: "route",
           recordLabel: route.id,
-          summary: `${route.name} rep run moved to ${textLabel(route.status)}`
+          summary: `${route.name} representative run moved to ${textLabel(route.status)}`
         });
       }
       return state;

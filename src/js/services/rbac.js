@@ -1,13 +1,13 @@
 export const ROLE_OPTIONS = [
   {
     value: "sales_rep",
-    label: "Sales Rep",
+    label: "Sales Representative",
     description: "Own assigned stock, sales, returns, credit balance, and reports"
   },
   {
     value: "manager",
     label: "Manager",
-    description: "Products, rep stock assignment, reconciliation, credit limits, supermarkets, and reports"
+    description: "Products, representative stock assignment, reconciliation, credit limits, supermarkets, and reports"
   },
   {
     value: "store_keeper",
@@ -22,7 +22,7 @@ export const ROLE_OPTIONS = [
   {
     value: "ceo",
     label: "CEO",
-    description: "Read-only company-wide dashboard across sales, stock, reps, supermarkets, and reports"
+    description: "Company-wide dashboard, setup ownership, team invitations, and report oversight"
   }
 ];
 
@@ -109,7 +109,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false
   },
   ceo: {
-    nav: ["dashboard", "orders", "inventory", "routes", "retailers", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "routes", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -122,8 +122,8 @@ const ROLE_PERMISSIONS = {
     canDispatchStock: false,
     canViewFinancialReports: true,
     canExportReports: true,
-    canManageUsers: false,
-    canConfigureFactory: false,
+    canManageUsers: true,
+    canConfigureFactory: true,
     canAuditRecords: true
   }
 };
@@ -134,7 +134,7 @@ export function normalizeRole(role) {
 
 export function roleLabel(role) {
   const normalizedRole = normalizeRole(role);
-  return ROLE_OPTIONS.find((item) => item.value === normalizedRole)?.label || "Sales Rep";
+  return ROLE_OPTIONS.find((item) => item.value === normalizedRole)?.label || "Sales Representative";
 }
 
 export function roleDescription(role) {

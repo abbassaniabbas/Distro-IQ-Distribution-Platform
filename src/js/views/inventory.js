@@ -44,7 +44,7 @@ function renderLifecycle(state) {
     {
       label: "Assignment / dispatch",
       value: `${formatNumber(vision.repOutstandingUnits)} outstanding`,
-      body: `${formatNumber(totals.assignedStock)} units have been loaded to reps or sent directly to customers.`
+      body: `${formatNumber(totals.assignedStock)} units have been loaded to representatives or sent directly to customers.`
     },
     {
       label: "Outcome",
@@ -87,7 +87,7 @@ function renderCustodyMetrics(vision) {
         iconName: "package"
       })}
       ${metricCard({
-        label: "Rep custody",
+        label: "Representative custody",
         value: formatNumber(vision.repOutstandingUnits),
         meta: `${formatPercent(vision.repSellThroughPercent)} sold through from open loads`,
         iconName: "routes"
@@ -241,17 +241,17 @@ function renderAssignmentConsole(state, permissions) {
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader("Stock assignment", "Load finished stock onto a rep and reconcile variances")}
+      ${panelHeader("Stock assignment", "Load finished stock onto a representative and reconcile variances")}
       <form id="manager-assignment-form" class="manager-form-grid" novalidate>
         <label class="field">
-          <span>Sales rep</span>
+          <span>Sales representative</span>
           <select name="repName" required>
-            <option value="">Choose rep</option>
+            <option value="">Choose representative</option>
             ${reps.map((rep) => `<option value="${escapeHtml(rep)}">${escapeHtml(rep)}</option>`).join("")}
           </select>
         </label>
         <label class="field">
-          <span>Rep run</span>
+          <span>Representative run</span>
           <select name="routeId">
             <option value="">No run selected</option>
             ${state.routes.map((route) => `<option value="${escapeHtml(route.id)}">${escapeHtml(route.name)}</option>`).join("")}
@@ -553,9 +553,9 @@ export function renderInventory({ state }) {
       </section>
 
       <section class="panel inventory-layout">
-        ${panelHeader("Rep stock assignments", "Assigned, sold, returned, and outstanding quantities by sales rep")}
+        ${panelHeader("Representative stock assignments", "Assigned, sold, returned, and outstanding quantities by sales representative")}
         ${table(
-          ["Assignment", "Rep", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status", ""],
+          ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status", ""],
           renderAssignmentRows(state, permissions),
           "No stock assignments recorded"
         )}
@@ -660,7 +660,7 @@ export function bindInventory({ root, store }) {
     if (message) message.textContent = "";
 
     if (!product || !formData.get("repName") || !quantity || quantity <= 0) {
-      if (message) message.textContent = "Choose a rep, product, and quantity.";
+      if (message) message.textContent = "Choose a representative, product, and quantity.";
       return;
     }
 
@@ -675,7 +675,7 @@ export function bindInventory({ root, store }) {
       routeId: formData.get("routeId"),
       productId,
       quantity,
-      message: "Stock loaded to rep"
+      message: "Stock loaded to representative"
     });
   });
 

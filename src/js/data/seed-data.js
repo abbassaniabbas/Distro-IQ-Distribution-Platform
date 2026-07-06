@@ -9,7 +9,7 @@ const seedData = {
       clientId: "",
       repName: "Chika Eze",
       reportDate: "2026-07-05",
-      tripLabel: "Lagos Rep Run",
+      tripLabel: "Lagos Representative Run",
       salesAmount: 74800,
       cashAmount: 52800,
       creditAmount: 22000,
@@ -25,7 +25,7 @@ const seedData = {
       clientId: "",
       repName: "Sani Musa",
       reportDate: "2026-07-05",
-      tripLabel: "Abuja Rep Run",
+      tripLabel: "Abuja Representative Run",
       salesAmount: 126000,
       cashAmount: 0,
       creditAmount: 126000,
@@ -41,7 +41,7 @@ const seedData = {
     {
       id: "CLH-8001",
       creditLimitId: "CRD-5001",
-      partyType: "Sales rep",
+      partyType: "Sales representative",
       partyName: "Chika Eze",
       previousLimit: 300000,
       nextLimit: 350000,
@@ -81,7 +81,7 @@ const seedData = {
       id: "finished_products",
       name: "Finished Products",
       timeframe: "Production to sale",
-      behavior: "Produced from raw materials, held as available stock, issued to reps, or dispatched to customers."
+      behavior: "Produced from raw materials, held as available stock, issued to representatives, or dispatched to customers."
     },
     {
       id: "equipment",
@@ -371,7 +371,7 @@ const seedData = {
   routes: [
     {
       id: "RTE-201",
-      name: "Lagos Rep Run",
+      name: "Lagos Representative Run",
       driver: "Chika Eze",
       vehicle: "Snack Van LAG-284KD",
       region: "South West",
@@ -384,7 +384,7 @@ const seedData = {
     },
     {
       id: "RTE-202",
-      name: "Abuja Rep Run",
+      name: "Abuja Representative Run",
       driver: "Sani Musa",
       vehicle: "Snack Van ABJ-771XR",
       region: "North Central",
@@ -397,7 +397,7 @@ const seedData = {
     },
     {
       id: "RTE-203",
-      name: "Port Harcourt Rep Run",
+      name: "Port Harcourt Representative Run",
       driver: "Grace Udo",
       vehicle: "Snack Van PHC-449QM",
       region: "South South",
@@ -410,7 +410,7 @@ const seedData = {
     },
     {
       id: "RTE-204",
-      name: "Kano Wholesale Rep Run",
+      name: "Kano Wholesale Representative Run",
       driver: "Bala Adamu",
       vehicle: "Snack Van KAN-092LT",
       region: "North West",
@@ -489,7 +489,7 @@ const seedData = {
       quantity: 24,
       amount: 6720,
       paymentType: "credit adjustment",
-      partyType: "Sales rep",
+      partyType: "Sales representative",
       partyName: "Grace Udo",
       date: "2026-07-04",
       recordedBy: "Grace Udo",
@@ -525,7 +525,7 @@ const seedData = {
   creditLimits: [
     {
       id: "CRD-5001",
-      partyType: "Sales rep",
+      partyType: "Sales representative",
       partyName: "Chika Eze",
       limit: 350000,
       balance: 218000,
@@ -535,7 +535,7 @@ const seedData = {
     },
     {
       id: "CRD-5002",
-      partyType: "Sales rep",
+      partyType: "Sales representative",
       partyName: "Sani Musa",
       limit: 300000,
       balance: 246000,

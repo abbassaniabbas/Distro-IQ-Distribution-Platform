@@ -32,7 +32,7 @@ function currentRepName(state) {
     account?.name ||
     state.user?.user_metadata?.full_name ||
     state.stockAssignments?.[0]?.repName ||
-    "Sales Rep"
+    "Sales Representative"
   );
 }
 
@@ -244,7 +244,7 @@ function renderFactoryCashControls(vision) {
       tone: vision.traceabilityPercent < 95 ? "warning" : "good"
     },
     {
-      label: "Rep sell-through",
+      label: "Representative sell-through",
       percent: vision.repSellThroughPercent,
       value: `${formatNumber(vision.soldUnits)} sold`,
       tone: vision.repSellThroughPercent < 65 ? "warning" : "good"
@@ -287,15 +287,15 @@ function renderManagerControlPanel(state, vision) {
       href: "#/inventory"
     },
     {
-      label: "Rep stock",
+      label: "Representative stock",
       value: formatNumber(openVariances),
-      body: "Load stock to reps and close reconciliations.",
+      body: "Load stock to representatives and close reconciliations.",
       href: "#/inventory"
     },
     {
       label: "Credit limits",
       value: formatNumber(watchedCredit),
-      body: "Adjust rep and supermarket credit exposure.",
+      body: "Adjust representative and supermarket credit exposure.",
       href: "#/finance"
     },
     {
@@ -308,7 +308,7 @@ function renderManagerControlPanel(state, vision) {
 
   return `
     <section class="panel manager-command-panel">
-      ${panelHeader("Manager controls", "Catalogue, rep stock, credit limits, and report review")}
+      ${panelHeader("Manager controls", "Catalogue, representative stock, credit limits, and report review")}
       <div class="manager-command-grid">
         ${cards.map((card) => `
           <a class="manager-command-card" href="${escapeHtml(card.href)}" data-search-index="${escapeHtml(`${card.label} ${card.body}`.toLowerCase())}">
@@ -376,7 +376,7 @@ function renderManagerReportRows(state) {
 function renderManagerReportReview(state) {
   return `
     <section class="panel" id="manager-report-review">
-      ${panelHeader("Report review", "Submitted rep reports can be reviewed or flagged for correction")}
+      ${panelHeader("Report review", "Submitted representative reports can be reviewed or flagged for correction")}
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -656,9 +656,9 @@ export function renderDashboard({ state }) {
           iconName: "orders"
         })}
         ${metricCard({
-          label: "Rep stock owed",
+          label: "Representative stock owed",
           value: formatNumber(vision.repOutstandingUnits),
-          meta: `${formatCurrency(vision.repOutstandingValue)} still with reps`,
+          meta: `${formatCurrency(vision.repOutstandingValue)} still with representatives`,
           iconName: "package"
         })}
         ${metricCard({
@@ -689,7 +689,7 @@ export function renderDashboard({ state }) {
       </div>
 
       <section class="panel">
-        ${panelHeader("Factory-to-cash controls", "Produced stock, rep custody, paper trails, signatures, and payment visibility")}
+        ${panelHeader("Factory-to-cash controls", "Produced stock, representative custody, paper trails, signatures, and payment visibility")}
         <div class="bar-list">${renderFactoryCashControls(vision)}</div>
       </section>
 

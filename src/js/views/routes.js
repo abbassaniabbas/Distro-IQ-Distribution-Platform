@@ -6,7 +6,7 @@ import { panelHeader, progressBar, statusPill, table, textButton } from "../ui/c
 
 function renderRouteMap() {
   return `
-    <div class="route-map" aria-label="Sales rep run map">
+    <div class="route-map" aria-label="Sales representative run map">
       <span class="route-line" style="left: 17%; top: 44%; width: 26%; transform: rotate(-18deg);"></span>
       <span class="route-line" style="left: 42%; top: 34%; width: 26%; transform: rotate(24deg);"></span>
       <span class="route-line" style="left: 63%; top: 55%; width: 22%; transform: rotate(-28deg);"></span>
@@ -52,7 +52,7 @@ function renderRouteCard(route, state, permissions) {
 
       <div class="stack">
         <div class="split">
-          <span class="muted">Sales rep</span>
+          <span class="muted">Sales representative</span>
           <strong>${escapeHtml(route.driver)}</strong>
         </div>
         <div class="split">
@@ -75,7 +75,7 @@ function renderRouteCard(route, state, permissions) {
 
       <div class="stock-line">
         <div class="stock-meta">
-          <span>Rep sell-through</span>
+          <span>Representative sell-through</span>
           <span>${formatPercent(sellThroughPercent)}</span>
         </div>
         ${progressBar(sellThroughPercent, sellThroughPercent < 65 ? "warning" : "good")}
@@ -140,12 +140,12 @@ export function renderRoutes({ state }) {
     <section class="view routes-view">
       <div class="dashboard-layout">
         <section class="panel">
-          ${panelHeader("Rep run board", "Live view of today's snack stock moving with sales reps")}
+          ${panelHeader("Representative run board", "Live view of today's snack stock moving with sales representatives")}
           ${renderRouteMap()}
         </section>
 
         <section class="panel">
-          ${panelHeader("Rep run mix", "Sales rep stock status by operating phase")}
+          ${panelHeader("Representative run mix", "Sales representative stock status by operating phase")}
           <div class="bar-list">
             ${["scheduled", "in_transit", "delivered"]
               .map((status) => {
@@ -166,18 +166,18 @@ export function renderRoutes({ state }) {
       </div>
 
       <section class="panel routes-layout">
-        ${panelHeader("Sales rep assignments", "Reps, vans, outlet stops, and assigned stock readiness")}
+        ${panelHeader("Sales representative assignments", "Representatives, vans, outlet stops, and assigned stock readiness")}
         <div class="route-grid">
           ${state.routes.map((route) => renderRouteCard(route, state, permissions)).join("")}
         </div>
       </section>
 
       <section class="panel">
-        ${panelHeader("Rep custody ledger", "Assigned, sold, outstanding, and credit exposure per sales rep")}
+        ${panelHeader("Representative custody ledger", "Assigned, sold, outstanding, and credit exposure per sales representative")}
         ${table(
-          ["Sales rep", "Assigned", "Sell-through", "Outstanding", "Credit"],
+          ["Sales representative", "Assigned", "Sell-through", "Outstanding", "Credit"],
           renderRepLedgerRows(state),
-          "No rep custody records available"
+          "No representative custody records available"
         )}
       </section>
     </section>
@@ -190,7 +190,7 @@ export function bindRoutes({ root, store }) {
       store.dispatch({
         type: "ADVANCE_ROUTE",
         routeId: button.dataset.routeId,
-        message: "Rep run status updated"
+        message: "Representative run status updated"
       });
     });
   });

@@ -2,7 +2,7 @@
 
 DistroIQ is a role-based sales, stock, and distribution platform for a confectionery factory producing chips and other snack products. It replaces the notebook, phone call, and end-of-month reconciliation meeting with one connected workspace.
 
-The platform tracks what stock exists and what happens to it: raw materials, packaging, finished snacks, rep stock assignments, customer sales, returns, and balances owed. Managers and store keepers control product, stock, and credit configuration, while sales representatives capture field activity.
+The platform tracks what stock exists and what happens to it: raw materials, packaging, finished snacks, representative stock assignments, customer sales, returns, and balances owed. Managers and store keepers control product, stock, and credit configuration, while sales representatives capture field activity.
 
 The app is split by responsibility so future screens and workflows are easier to find, test, and extend.
 
@@ -12,11 +12,11 @@ The frontend files are local to this computer. Supabase is used for authenticati
 
 | Role | Access model |
 | --- | --- |
-| Sales Rep | Sees their own assigned stock and sales work, logs sales/returns, views own credit balance, and submits reports. |
-| Manager | Manages products, assigns stock to reps, reconciles stock, sets credit limits, manages supermarkets/customers, and reviews reports. |
+| Sales Representative | Sees their own assigned stock and sales work, logs sales/returns, views own credit balance, and submits reports. |
+| Manager | Manages products, assigns stock to representatives, reconciles stock, sets credit limits, manages supermarkets/customers, and reviews reports. |
 | Store Keeper | Manages raw materials, finished goods, equipment, stock movements, and stock dispatch. |
 | Accountant | Read-only sales reports, credit balances, revenue/profit summaries, and exports. |
-| CEO | Read-only company-wide dashboard across sales, stock, reps, supermarkets/customers, and reports. |
+| CEO | First company account; can invite team members and view the company-wide dashboard across sales, stock, representatives, supermarkets/customers, and reports. |
 | Super Admin | Full platform control: creates factories/companies, manages users, resets access, configures modules, and audits records. |
 
 ## Run

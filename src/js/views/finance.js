@@ -104,7 +104,7 @@ function renderCreditLimitManager(state, permissions) {
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader("Credit limit manager", "Set rep and supermarket limits with retained change history")}
+      ${panelHeader("Credit limit manager", "Set representative and supermarket limits with retained change history")}
       <form id="credit-limit-form" class="manager-form-grid" novalidate>
         <label class="field">
           <span>Account</span>
@@ -222,7 +222,7 @@ export function renderFinance({ state }) {
       </div>
 
       <section class="panel">
-        ${panelHeader("Credit exposure", "Approved limits, current balances, and remaining headroom by rep or customer")}
+        ${panelHeader("Credit exposure", "Approved limits, current balances, and remaining headroom by representative or customer")}
         ${table(
           ["Account", "Status", "Usage", "Limit", "Headroom"],
           renderCreditExposureRows(state),

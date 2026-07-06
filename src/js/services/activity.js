@@ -24,7 +24,7 @@ export const RECORD_LABELS = {
   account: "Account",
   order: "Sales Order",
   inventory: "Stock",
-  route: "Rep Run",
+  route: "Representative Run",
   retailer: "Customer",
   invoice: "Invoice",
   credit_limit: "Credit Limit",

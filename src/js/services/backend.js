@@ -158,8 +158,8 @@ function friendlyEdgeFunctionMessage(message, fallback = "The request could not 
     return "The invite service on Supabase is outdated. Deploy the updated invite-user function, then try again.";
   }
 
-  if (lower.includes("only managers can invite users")) {
-    return "Only an active Manager can add team members for this company.";
+  if (lower.includes("only managers can invite users") || lower.includes("only ceos and managers can invite users")) {
+    return "Only an active CEO or Manager can add team members for this company.";
   }
 
   if (lower.includes("supabase function environment")) {

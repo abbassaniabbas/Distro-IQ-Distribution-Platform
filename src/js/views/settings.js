@@ -161,7 +161,7 @@ function renderCompanySettings(state, account) {
 
         <span id="company-settings-message" class="field-error span-full"></span>
         <div class="span-full split">
-          <span class="muted">${canEdit ? "Saved changes apply for everyone in this factory." : "Only Managers can change factory-wide settings."}</span>
+          <span class="muted">${canEdit ? "Saved changes apply for everyone in this factory." : "Only CEOs and Managers can change factory-wide settings."}</span>
           ${textButton({
             iconName: "settings",
             label: "Save factory",

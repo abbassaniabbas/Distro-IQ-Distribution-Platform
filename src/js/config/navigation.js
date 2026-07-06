@@ -18,7 +18,7 @@ export const NAV_ITEMS = [
   },
   {
     id: "routes",
-    label: "Rep Runs",
+    label: "Representative Runs",
     icon: "routes"
   },
   {

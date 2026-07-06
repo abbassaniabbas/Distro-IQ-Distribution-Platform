@@ -82,7 +82,7 @@ const routes = {
     bind: bindInventory
   },
   routes: {
-    title: "Rep Runs",
+    title: "Representative Runs",
     render: renderRoutes,
     bind: bindRoutes
   },

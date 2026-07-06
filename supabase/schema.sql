@@ -317,7 +317,7 @@ as $$
     where client_id = p_client_id
       and user_id = auth.uid()
       and status = 'active'
-      and role = 'manager'
+      and role in ('ceo', 'manager')
   );
 $$;
 
@@ -376,7 +376,7 @@ begin
   end if;
 
   v_email := coalesce(auth.jwt() ->> 'email', '');
-  v_name := coalesce(auth.jwt() -> 'user_metadata' ->> 'full_name', v_email, 'Manager');
+  v_name := coalesce(auth.jwt() -> 'user_metadata' ->> 'full_name', v_email, 'CEO');
 
   insert into public.clients (
     company_name,
@@ -414,7 +414,7 @@ begin
     auth.uid(),
     v_email,
     v_name,
-    'manager',
+    'ceo',
     'active',
     false
   );

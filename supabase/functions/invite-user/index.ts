@@ -110,7 +110,7 @@ Deno.serve(async (req) => {
   });
 
   if (roleError || !allowed) {
-    return jsonResponse({ error: "Only Managers can invite users" }, 403);
+    return jsonResponse({ error: "Only CEOs and Managers can invite users" }, 403);
   }
 
   const { data: existingMembership, error: existingMembershipError } = await adminClient
