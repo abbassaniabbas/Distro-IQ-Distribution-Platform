@@ -1,4 +1,5 @@
 import { createId } from "./tenant.js";
+import { currentUserRole } from "./rbac.js";
 
 export const ACTION_LABELS = {
   created: "Created",
@@ -14,6 +15,7 @@ export const ACTION_LABELS = {
   submitted: "Submitted",
   blocked: "Blocked",
   assigned: "Assigned",
+  dispatched: "Dispatched",
   reconciled: "Reconciled",
   flagged: "Flagged",
   deactivated: "Deactivated"
@@ -24,6 +26,7 @@ export const RECORD_LABELS = {
   account: "Account",
   order: "Sales Order",
   inventory: "Stock",
+  stock_movement: "Stock Movement",
   route: "Representative Run",
   retailer: "Customer",
   invoice: "Invoice",
@@ -78,7 +81,15 @@ export function createActivityLog({
 export function getScopedActivityLogs(state) {
   if (!state.client?.id) return [];
 
-  return (state.activityLogs || [])
-    .filter((entry) => entry.clientId === state.client.id)
+  const logs = (state.activityLogs || [])
+    .filter((entry) => entry.clientId === state.client.id);
+
+  if (currentUserRole(state) === "store_keeper") {
+    return logs
+      .filter((entry) => ["inventory", "stock_movement", "route"].includes(entry.recordType))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  return logs
     .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 }

@@ -20,6 +20,10 @@ import { metricCard, panelHeader, progressBar, statusPill, table, textButton } f
 
 const DEFAULT_STOCK_TAB = "factory-health";
 
+function todayISO() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function inventoryRouteParams() {
   if (typeof window === "undefined") return new URLSearchParams();
 
@@ -37,10 +41,28 @@ function stockTabsForPermissions(permissions) {
       id: "factory-health",
       label: "Factory stock health"
     },
+    {
+      id: "raw-materials",
+      label: "Raw materials"
+    },
+    {
+      id: "finished-goods",
+      label: "Finished goods"
+    },
+    {
+      id: "equipment",
+      label: "Equipment"
+    },
     ...(permissions.canManageProducts
       ? [{
           id: "add-stock",
           label: "Add/update stock"
+        }]
+      : []),
+    ...(permissions.canDispatchStock || permissions.canManageStockMovements
+      ? [{
+          id: "dispatch",
+          label: "Dispatch"
         }]
       : []),
     {
@@ -56,8 +78,8 @@ function stockTabsForPermissions(permissions) {
       label: "Assignments"
     },
     {
-      id: "transactions",
-      label: "Transactions"
+      id: "movement-history",
+      label: "Movement history"
     },
     {
       id: "credit",
@@ -428,6 +450,250 @@ function renderProductCard(product, permissions) {
   `;
 }
 
+function currentStaffName(state) {
+  const userEmail = String(state.user?.email || "").trim().toLowerCase();
+  const account = (state.accounts || []).find((item) => (
+    item.userId === state.user?.id ||
+    (userEmail && String(item.email || "").trim().toLowerCase() === userEmail)
+  ));
+
+  return account?.name || state.user?.user_metadata?.full_name || "Store Keeper";
+}
+
+function stockCategoryTitle(categoryId) {
+  return {
+    raw_materials: "Raw materials",
+    finished_products: "Finished goods",
+    equipment: "Equipment"
+  }[categoryId] || "Factory stock";
+}
+
+function stockCategorySubtitle(categoryId) {
+  return {
+    raw_materials: "Production inputs, packaging, and consumables held inside the factory",
+    finished_products: "Produced snacks ready for representatives, supermarkets, or customer dispatch",
+    equipment: "Owned, assigned, or saleable equipment tracked by status"
+  }[categoryId] || "Current factory stock levels";
+}
+
+function stockCategoryTone(product) {
+  const health = getStockHealth(product);
+  if (health.status === "low") return "danger";
+  if (health.status === "partial") return "warning";
+  return "good";
+}
+
+function renderCategoryStockPage(state, permissions, categoryId) {
+  const products = state.products.filter((product) => stockCategoryIdForProduct(product) === categoryId);
+  const lowCount = products.filter((product) => getStockHealth(product).status !== "ready").length;
+  const totalUnits = products.reduce((total, product) => total + Number(product.stock || 0), 0);
+
+  return `
+    <div class="metric-grid stock-category-metrics">
+      ${metricCard({
+        label: "Items",
+        value: formatNumber(products.length),
+        meta: `${formatNumber(totalUnits)} units in stock`,
+        iconName: "package"
+      })}
+      ${metricCard({
+        label: "Low stock",
+        value: formatNumber(lowCount),
+        meta: lowCount ? "Needs attention" : "All clear",
+        iconName: "alert"
+      })}
+    </div>
+    <section class="panel inventory-layout">
+      ${panelHeader(stockCategoryTitle(categoryId), stockCategorySubtitle(categoryId))}
+      ${products.length
+        ? `<div class="product-grid">${products.map((product) => renderProductCard(product, permissions)).join("")}</div>`
+        : '<div class="empty-state">No items in this stock section yet</div>'}
+    </section>
+  `;
+}
+
+function recipientOptions(state) {
+  const representatives = new Set([
+    ...(state.accounts || []).filter((account) => account.role === "sales_rep").map((account) => account.name),
+    ...(state.routes || []).map((route) => route.driver),
+    ...(state.stockAssignments || []).map((assignment) => assignment.repName)
+  ].filter(Boolean));
+
+  return [
+    ...[...representatives].sort().map((name) => ({ type: "Sales Representative", name })),
+    ...(state.retailers || []).map((retailer) => ({ type: "Supermarket", name: retailer.name })),
+    { type: "Internal Location", name: "Production Line" },
+    { type: "Internal Location", name: "Packaging Store" }
+  ];
+}
+
+function renderDispatchForm(state, permissions) {
+  if (!permissions.canDispatchStock && !permissions.canManageStockMovements) return "";
+
+  const dispatchableProducts = state.products.filter((product) => (
+    product.status !== "inactive" && Number(product.stock || 0) > 0
+  ));
+
+  return `
+    <section class="panel manager-tool-panel">
+      ${panelHeader("Record factory dispatch", "Log stock leaving the factory for a representative, supermarket, or internal destination")}
+      <form id="stock-dispatch-form" class="manager-form-grid" novalidate>
+        <label class="field">
+          <span>Item</span>
+          <select name="productId" required>
+            <option value="">Choose stock item</option>
+            ${dispatchableProducts.map((product) => `
+              <option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} (${formatNumber(product.stock)} ${escapeHtml(productUnit(product))})</option>
+            `).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Quantity</span>
+          <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+        </label>
+        <label class="field">
+          <span>Recipient type</span>
+          <select name="recipientType" required>
+            <option value="Sales Representative">Sales Representative</option>
+            <option value="Supermarket">Supermarket</option>
+            <option value="Internal Location">Internal Location</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Recipient</span>
+          <input name="recipientName" list="dispatch-recipient-list" placeholder="Name or outlet" required>
+          <datalist id="dispatch-recipient-list">
+            ${recipientOptions(state).map((option) => `<option value="${escapeHtml(option.name)}">${escapeHtml(option.type)}</option>`).join("")}
+          </datalist>
+        </label>
+        <label class="field">
+          <span>Destination</span>
+          <input name="destination" placeholder="Van, supermarket, production line" required>
+        </label>
+        <label class="field">
+          <span>Date</span>
+          <input name="dispatchDate" type="date" value="${escapeHtml(todayISO())}" required>
+        </label>
+        <label class="field span-full">
+          <span>Staff responsible</span>
+          <input name="staffName" value="${escapeHtml(currentStaffName(state))}" required>
+        </label>
+        <div class="manager-form-actions span-full">
+          ${textButton({
+            iconName: "truck",
+            label: "Record dispatch",
+            className: "primary",
+            type: "submit"
+          })}
+        </div>
+        <span id="stock-dispatch-message" class="field-error span-full"></span>
+      </form>
+    </section>
+  `;
+}
+
+function renderDispatchPage(state, permissions) {
+  return `
+    ${renderDispatchForm(state, permissions)}
+    <section class="panel inventory-layout">
+      ${panelHeader("Dispatch log", "Item, quantity, date, recipient, destination, and staff responsible")}
+      ${table(
+        ["Item", "Quantity", "Date", "Recipient", "Destination", "Staff"],
+        renderDispatchRows(state),
+        "No factory dispatches recorded yet"
+      )}
+    </section>
+  `;
+}
+
+function dispatchTransactions(state) {
+  return (state.stockTransactions || []).filter((transaction) => {
+    const type = String(transaction.type || "").toLowerCase();
+    return transaction.dispatchDestination || type === "supply" || type === "internal movement";
+  });
+}
+
+function renderDispatchRows(state) {
+  const productMap = getProductMap(state.products);
+
+  return dispatchTransactions(state).map((transaction) => {
+    const product = productMap.get(transaction.productId);
+    const recipient = transaction.recipientName || transaction.partyName || "Factory";
+    const destination = transaction.dispatchDestination || transaction.destination || transaction.partyType || "Factory";
+    const staff = transaction.staffResponsible || transaction.recordedBy || "Store Keeper";
+    const searchIndex = [
+      product?.name,
+      transaction.quantity,
+      transaction.date,
+      recipient,
+      destination,
+      staff
+    ].join(" ").toLowerCase();
+
+    return `
+      <tr data-search-index="${escapeHtml(searchIndex)}">
+        <td>
+          <strong>${escapeHtml(product?.name || transaction.productId)}</strong>
+          <div class="muted">${escapeHtml(transaction.id)}</div>
+        </td>
+        <td>${formatNumber(transaction.quantity)}</td>
+        <td>${formatDate(transaction.date)}</td>
+        <td>
+          ${escapeHtml(recipient)}
+          <div class="muted">${escapeHtml(transaction.partyType || "Recipient")}</div>
+        </td>
+        <td>${escapeHtml(destination)}</td>
+        <td>${escapeHtml(staff)}</td>
+      </tr>
+    `;
+  });
+}
+
+function movementDirection(transaction) {
+  if (transaction.movementDirection) return transaction.movementDirection;
+  const type = String(transaction.type || "").toLowerCase();
+  if (type === "return" || type.includes("intake") || type.includes("restock")) return "in";
+  return "out";
+}
+
+function renderMovementRows(state) {
+  const productMap = getProductMap(state.products);
+
+  return [...(state.stockTransactions || [])]
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.id || "").localeCompare(String(a.id || "")))
+    .map((transaction) => {
+      const product = productMap.get(transaction.productId);
+      const direction = movementDirection(transaction);
+      const searchIndex = [
+        transaction.type,
+        direction,
+        product?.name,
+        transaction.partyName,
+        transaction.recordedBy
+      ].join(" ").toLowerCase();
+
+      return `
+        <tr data-search-index="${escapeHtml(searchIndex)}">
+          <td>
+            ${statusPill(direction === "in" ? "in_stock" : "dispatched")}
+            <div class="muted">${escapeHtml(statusText(transaction.type))}</div>
+          </td>
+          <td>
+            <strong>${escapeHtml(product?.name || transaction.productId)}</strong>
+            <div class="muted">${escapeHtml(transaction.id)}</div>
+          </td>
+          <td>${formatNumber(transaction.quantity)}</td>
+          <td>${formatDate(transaction.date)}</td>
+          <td>
+            ${escapeHtml(transaction.partyName || transaction.recipientName || "Factory")}
+            <div class="muted">${escapeHtml(transaction.dispatchDestination || transaction.partyType || "Movement")}</div>
+          </td>
+          <td>${escapeHtml(transaction.staffResponsible || transaction.recordedBy || "Team member")}</td>
+        </tr>
+      `;
+    });
+}
+
 function assignmentDisplayStatus(assignment) {
   if (assignment.varianceFlagged && assignment.status !== "reconciled") return "variance";
   return assignment.status;
@@ -664,11 +930,11 @@ function renderAssignmentsPage(state, permissions) {
 function renderTransactionsPage(state) {
   return `
     <section class="panel inventory-layout">
-      ${panelHeader("Transactions", "Sales, returns, supply, and internal stock movement records")}
+      ${panelHeader("Movement history", "All stock movement in and out of the factory")}
       ${table(
-        ["Transaction", "Type", "Product", "Amount", "Party", "Recorded by"],
-        renderTransactionRows(state),
-        "No stock transactions recorded"
+        ["Direction", "Item", "Quantity", "Date", "Party / destination", "Staff"],
+        renderMovementRows(state),
+        "No stock movement recorded"
       )}
     </section>
   `;
@@ -689,10 +955,14 @@ function renderCreditPage(state) {
 
 function renderStockTabPage({ activeTabId, state, permissions, categories, vision }) {
   if (activeTabId === "add-stock") return renderAddStockPage(state, permissions);
+  if (activeTabId === "raw-materials") return renderCategoryStockPage(state, permissions, "raw_materials");
+  if (activeTabId === "finished-goods") return renderCategoryStockPage(state, permissions, "finished_products");
+  if (activeTabId === "equipment") return renderCategoryStockPage(state, permissions, "equipment");
+  if (activeTabId === "dispatch") return renderDispatchPage(state, permissions);
   if (activeTabId === "overview") return renderOverviewPage(state, vision);
   if (activeTabId === "categories") return renderCategoriesPage(state);
   if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
-  if (activeTabId === "transactions") return renderTransactionsPage(state);
+  if (activeTabId === "movement-history") return renderTransactionsPage(state);
   if (activeTabId === "credit") return renderCreditPage(state);
 
   return renderFactoryStockHealthPage(state, permissions, categories);
@@ -716,6 +986,7 @@ export function bindInventory({ root, store }) {
   const categoryFilter = qs("#inventory-category-filter", root);
   const productForm = qs("#manager-product-form", root);
   const assignmentForm = qs("#manager-assignment-form", root);
+  const dispatchForm = qs("#stock-dispatch-form", root);
   const requestedProductId = inventoryRouteParams().get("product");
 
   categoryFilter?.addEventListener("change", () => {
@@ -819,6 +1090,44 @@ export function bindInventory({ root, store }) {
       quantity,
       message: "Stock loaded to representative"
     });
+  });
+
+  dispatchForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const state = store.getState();
+    const formData = new FormData(dispatchForm);
+    const productId = String(formData.get("productId") || "");
+    const quantity = Number(formData.get("quantity") || 0);
+    const product = state.products.find((item) => item.id === productId);
+    const message = qs("#stock-dispatch-message", root);
+
+    if (message) message.textContent = "";
+
+    if (!product || !quantity || quantity <= 0 || !formData.get("recipientName") || !formData.get("destination")) {
+      if (message) message.textContent = "Choose an item, quantity, recipient, and destination.";
+      return;
+    }
+
+    if (quantity > Number(product.stock || 0)) {
+      if (message) message.textContent = `Only ${formatNumber(product.stock)} available.`;
+      return;
+    }
+
+    store.dispatch({
+      type: "RECORD_STOCK_DISPATCH",
+      productId,
+      quantity,
+      recipientType: formData.get("recipientType"),
+      recipientName: formData.get("recipientName"),
+      destination: formData.get("destination"),
+      dispatchDate: formData.get("dispatchDate"),
+      staffName: formData.get("staffName"),
+      message: "Factory dispatch recorded"
+    });
+
+    dispatchForm.reset();
+    dispatchForm.elements.dispatchDate.value = todayISO();
+    dispatchForm.elements.staffName.value = currentStaffName(store.getState());
   });
 
   qsa(".js-restock-product", root).forEach((button) => {

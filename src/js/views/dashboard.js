@@ -865,6 +865,193 @@ function renderCeoDashboard(state) {
   `;
 }
 
+function storeKeeperCategorySummary(state) {
+  const categories = [
+    {
+      id: "raw_materials",
+      label: "Raw materials",
+      href: "#/inventory?tab=raw-materials"
+    },
+    {
+      id: "finished_products",
+      label: "Finished goods",
+      href: "#/inventory?tab=finished-goods"
+    },
+    {
+      id: "equipment",
+      label: "Equipment",
+      href: "#/inventory?tab=equipment"
+    }
+  ];
+
+  return categories.map((category) => {
+    const products = (state.products || []).filter((product) => stockCategoryIdForProduct(product) === category.id);
+    const units = products.reduce((total, product) => total + Number(product.stock || 0), 0);
+    const lowCount = products.filter((product) => getStockHealth(product).status !== "ready").length;
+
+    return {
+      ...category,
+      products,
+      units,
+      lowCount
+    };
+  });
+}
+
+function renderStoreKeeperCategoryCards(state) {
+  return `
+    <div class="storekeeper-category-grid">
+      ${storeKeeperCategorySummary(state).map((category) => `
+        <a class="storekeeper-category-card" href="${escapeHtml(category.href)}" data-search-index="${escapeHtml(category.label.toLowerCase())}">
+          <span class="eyebrow">${escapeHtml(category.label)}</span>
+          <strong>${formatNumber(category.units)}</strong>
+          <p>${formatNumber(category.products.length)} item${category.products.length === 1 ? "" : "s"} - ${formatNumber(category.lowCount)} low</p>
+          ${statusPill(category.lowCount ? "low" : "ready")}
+        </a>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderStoreKeeperAlertRows(state, permissions) {
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const lowStockProducts = getLowStockProducts(state.products || []).slice(0, 5);
+
+  if (!lowStockProducts.length) {
+    return '<div class="empty-state">No low-stock alerts</div>';
+  }
+
+  return `
+    <div class="alert-list">
+      ${lowStockProducts.map((product) => `
+        <article class="alert-item" data-search-index="${escapeHtml(`${product.name} ${product.category}`.toLowerCase())}">
+          <span class="alert-icon" aria-hidden="true">!</span>
+          <div class="stack">
+            <div>
+              <strong>${escapeHtml(product.name)}</strong>
+              <p>${formatNumber(product.stock)} left in ${escapeHtml(product.warehouse || "Factory")} - minimum ${formatNumber(product.reorderPoint)}</p>
+            </div>
+            ${textButton({
+              iconName: "plus",
+              label: "Restock",
+              className: "primary js-restock-product",
+              disabled: !canRestock,
+              data: { "product-id": product.id }
+            })}
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function storeKeeperDispatches(state, limit = 5) {
+  const dispatches = [...(state.stockTransactions || [])]
+    .filter((transaction) => {
+      const type = normalized(transaction.type);
+      return transaction.dispatchDestination || type === "supply" || type === "internal movement";
+    })
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.id || "").localeCompare(String(a.id || "")));
+
+  return limit ? dispatches.slice(0, limit) : dispatches;
+}
+
+function renderStoreKeeperDispatchRows(state) {
+  const productMap = getProductMap(state.products || []);
+  const dispatches = storeKeeperDispatches(state);
+
+  if (!dispatches.length) {
+    return '<div class="empty-state">No factory dispatches recorded yet</div>';
+  }
+
+  return `
+    <div class="storekeeper-dispatch-list">
+      ${dispatches.map((dispatch) => {
+        const product = productMap.get(dispatch.productId);
+
+        return `
+          <article class="storekeeper-dispatch-row" data-search-index="${escapeHtml(`${product?.name || ""} ${dispatch.partyName || ""}`.toLowerCase())}">
+            <div>
+              <strong>${escapeHtml(product?.name || dispatch.productId)}</strong>
+              <p>${formatNumber(dispatch.quantity)} units to ${escapeHtml(dispatch.partyName || dispatch.recipientName || "Factory")}</p>
+            </div>
+            <div>
+              ${statusPill(dispatch.movementDirection === "in" ? "in_stock" : "dispatched")}
+              <span class="muted">${formatDate(dispatch.date)}</span>
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderStoreKeeperDashboard(state, permissions) {
+  const vision = calculateVisionMetrics(state);
+  const lowStockProducts = getLowStockProducts(state.products || []);
+  const dispatchCount = storeKeeperDispatches(state, 0).length;
+  const movementCount = (state.stockTransactions || []).length;
+
+  return `
+    <section class="view dashboard-view storekeeper-dashboard">
+      <section class="ceo-command-strip storekeeper-command-strip">
+        <div>
+          <span class="eyebrow">Store Keeper portal</span>
+          <h2>Factory stock control</h2>
+        </div>
+        <a class="button primary" href="#/inventory?tab=dispatch">
+          ${icon("truck")}
+          <span>Record dispatch</span>
+        </a>
+      </section>
+
+      <div class="metric-grid">
+        ${metricCard({
+          label: "Finished goods",
+          value: formatNumber(vision.finishedStockUnits),
+          meta: "Ready stock in factory",
+          iconName: "package"
+        })}
+        ${metricCard({
+          label: "Raw material risks",
+          value: formatNumber(vision.rawMaterialRiskCount),
+          meta: "Below reorder health",
+          iconName: "alert"
+        })}
+        ${metricCard({
+          label: "Dispatches",
+          value: formatNumber(dispatchCount),
+          meta: "Recent factory movements",
+          iconName: "truck"
+        })}
+        ${metricCard({
+          label: "Movement records",
+          value: formatNumber(movementCount),
+          meta: "In and out history",
+          iconName: "dashboard"
+        })}
+      </div>
+
+      <div class="dashboard-layout">
+        <section class="panel">
+          ${panelHeader("Low-stock alerts", `${formatNumber(lowStockProducts.length)} item${lowStockProducts.length === 1 ? "" : "s"} need attention`)}
+          ${renderStoreKeeperAlertRows(state, permissions)}
+        </section>
+
+        <section class="panel">
+          ${panelHeader("Recent dispatches", "Stock leaving or entering factory control")}
+          ${renderStoreKeeperDispatchRows(state)}
+        </section>
+      </div>
+
+      <section class="panel">
+        ${panelHeader("Stock sections", "Raw materials, finished goods, and equipment are managed separately")}
+        ${renderStoreKeeperCategoryCards(state)}
+      </section>
+    </section>
+  `;
+}
+
 function renderRegionalSummary(state) {
   return buildRegionalSummary(state)
     .map(
@@ -1407,7 +1594,11 @@ export function renderDashboard({ state }) {
   const isManagerPortal = role === "manager";
 
   if (state.session && state.client?.id && role === "ceo") {
-    return renderCeoDashboard(state, permissions);
+    return renderCeoDashboard(state);
+  }
+
+  if (state.session && state.client?.id && role === "store_keeper") {
+    return renderStoreKeeperDashboard(state, permissions);
   }
 
   return `

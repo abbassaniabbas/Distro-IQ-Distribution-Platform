@@ -596,13 +596,100 @@ function reducer(currentState, action) {
         },
         ...state.stockAssignments
       ];
+      state.stockTransactions = [
+        {
+          id: createId("TXN"),
+          type: "supply",
+          productId: product.id,
+          quantity,
+          amount: quantity * Number(product.unitPrice || 0),
+          paymentType: "none",
+          partyType: "Sales Representative",
+          partyName: action.repName || "Sales Representative",
+          recipientName: action.repName || "Sales Representative",
+          dispatchDestination: action.routeId || "Representative run",
+          staffResponsible: currentActorName(state),
+          date: todayISO(),
+          recordedBy: currentActorName(state),
+          movementDirection: "out",
+          creditImpact: 0
+        },
+        ...(state.stockTransactions || [])
+      ];
 
       appendActivityLog(state, {
         clientId: state.client?.id,
         actionType: "assigned",
-        recordType: "inventory",
+        recordType: "stock_movement",
         recordLabel: product.id,
         summary: `Loaded ${quantity} ${product.name} to ${action.repName}`
+      });
+
+      return state;
+    }
+
+    case "RECORD_STOCK_DISPATCH": {
+      const product = state.products.find((item) => item.id === action.productId);
+      const quantity = Math.max(0, Number(action.quantity || 0));
+      const recipientType = String(action.recipientType || "Recipient").trim();
+      const recipientName = String(action.recipientName || "Recipient").trim();
+      const destination = String(action.destination || recipientType).trim();
+      const staffName = String(action.staffName || currentActorName(state)).trim();
+      const dispatchDate = action.dispatchDate || todayISO();
+
+      if (!product || !quantity || Number(product.stock || 0) < quantity) {
+        return state;
+      }
+
+      product.stock = Math.max(0, Number(product.stock || 0) - quantity);
+      product.updatedAt = dispatchDate;
+
+      if (recipientType.toLowerCase().includes("representative")) {
+        state.stockAssignments = [
+          {
+            id: createId("ASN"),
+            routeId: destination || "Factory dispatch",
+            repName: recipientName,
+            productId: product.id,
+            assignedAt: dispatchDate,
+            assigned: quantity,
+            sold: 0,
+            returned: 0,
+            status: "open",
+            varianceFlagged: false,
+            varianceNote: ""
+          },
+          ...state.stockAssignments
+        ];
+      }
+
+      state.stockTransactions = [
+        {
+          id: createId("TXN"),
+          type: recipientType.toLowerCase().includes("internal") ? "internal movement" : "supply",
+          productId: product.id,
+          quantity,
+          amount: quantity * Number(product.unitPrice || 0),
+          paymentType: "none",
+          partyType: recipientType,
+          partyName: recipientName,
+          recipientName,
+          dispatchDestination: destination,
+          staffResponsible: staffName,
+          date: dispatchDate,
+          recordedBy: staffName,
+          movementDirection: "out",
+          creditImpact: 0
+        },
+        ...(state.stockTransactions || [])
+      ];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "dispatched",
+        recordType: "stock_movement",
+        recordLabel: product.id,
+        summary: `Dispatched ${quantity} ${product.name} to ${recipientName}`
       });
 
       return state;
@@ -721,9 +808,30 @@ function reducer(currentState, action) {
     case "RESTOCK_PRODUCT": {
       const product = state.products.find((item) => item.id === action.productId);
       if (product) {
+        const previousStock = Number(product.stock || 0);
         const targetStock = Math.max(product.reorderPoint * 2, product.stock + product.reorderPoint);
         product.stock = targetStock;
         product.updatedAt = todayISO();
+        state.stockTransactions = [
+          {
+            id: createId("TXN"),
+            type: "internal movement",
+            productId: product.id,
+            quantity: Math.max(0, targetStock - previousStock),
+            amount: 0,
+            paymentType: "none",
+            partyType: "Factory",
+            partyName: "Stock replenishment",
+            recipientName: "Factory stock",
+            dispatchDestination: product.warehouse || "Factory",
+            staffResponsible: currentActorName(state),
+            date: todayISO(),
+            recordedBy: currentActorName(state),
+            movementDirection: "in",
+            creditImpact: 0
+          },
+          ...(state.stockTransactions || [])
+        ];
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "restocked",

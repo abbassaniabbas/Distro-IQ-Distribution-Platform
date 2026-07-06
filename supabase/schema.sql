@@ -133,6 +133,26 @@ create table if not exists public.stock_transactions (
   created_at timestamptz not null default now()
 );
 
+alter table public.stock_transactions
+add column if not exists recipient_name text not null default '';
+
+alter table public.stock_transactions
+add column if not exists dispatch_destination text not null default '';
+
+alter table public.stock_transactions
+add column if not exists staff_responsible text not null default '';
+
+alter table public.stock_transactions
+add column if not exists movement_direction text not null default 'out';
+
+do $$ begin
+  alter table public.stock_transactions
+  add constraint stock_transactions_movement_direction_check
+  check (movement_direction in ('in', 'out', 'neutral'));
+exception
+  when duplicate_object then null;
+end $$;
+
 create table if not exists public.credit_limits (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -867,7 +887,14 @@ create policy "activity_logs_select_by_client"
 on public.activity_logs
 for select
 to authenticated
-using (public.is_client_member(client_id) or public.is_platform_admin());
+using (
+  public.is_platform_admin()
+  or public.has_client_role(client_id, array['ceo', 'manager', 'accountant'])
+  or (
+    public.has_client_role(client_id, array['store_keeper'])
+    and record_type in ('inventory', 'stock_movement', 'route')
+  )
+);
 
 drop policy if exists "platform_admins_select_self" on public.platform_admins;
 create policy "platform_admins_select_self"

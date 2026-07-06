@@ -4,6 +4,7 @@ import {
   recordTypeLabel
 } from "../services/activity.js";
 import { formatDateTime } from "../services/formatters.js";
+import { currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, table } from "../ui/components.js";
 
@@ -95,12 +96,17 @@ export function renderActivityLog({ state }) {
   }
 
   const logs = getScopedActivityLogs(state);
+  const isStoreKeeper = currentUserRole(state) === "store_keeper";
+  const title = isStoreKeeper ? "Store activity log" : "Activity log";
+  const subtitle = isStoreKeeper
+    ? "Stock movements, representative assignments, and in-transit run updates"
+    : "Review what changed, who changed it, and when";
 
   return `
     <section class="view activity-log-view">
       <section class="panel">
         <div class="toolbar">
-          ${panelHeader("Activity log", "Review what changed, who changed it, and when")}
+          ${panelHeader(title, subtitle)}
           <div class="toolbar-group activity-filters">
             <label class="field">
               <span>Date from</span>
