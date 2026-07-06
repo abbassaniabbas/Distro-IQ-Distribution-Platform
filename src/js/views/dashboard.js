@@ -1,17 +1,22 @@
 import {
   assignmentOutstanding,
+  buildRepLedger,
   buildRegionalSummary,
   calculateMetrics,
   calculateVisionMetrics,
   getCreditLimitForParty,
   getLowStockProducts,
   getOrdersWithTotals,
-  getProductMap
+  getProductMap,
+  getRetailerMap,
+  getStockHealth,
+  stockCategoryIdForProduct
 } from "../services/calculations.js";
-import { formatCompact, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
+import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
+import { icon } from "../ui/icons.js";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -104,6 +109,760 @@ function repDaySummary(transactions) {
     unitsReturned: 0,
     transactionIds: []
   });
+}
+
+function toTimestamp(value) {
+  if (!value) return 0;
+
+  const rawValue = String(value);
+  const normalizedValue = rawValue.includes("T") ? rawValue : `${rawValue}T12:00:00`;
+  const timestamp = new Date(normalizedValue).getTime();
+
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
+
+function latestDate(values) {
+  return values.reduce((latest, value) => {
+    const timestamp = toTimestamp(value);
+    return timestamp > toTimestamp(latest) ? value : latest;
+  }, "");
+}
+
+function formatUpdatedAt(value) {
+  if (!value) return "No updates yet";
+  return String(value).includes("T") ? formatDateTime(value) : formatDate(value);
+}
+
+function freshnessFor(values) {
+  const updatedAt = latestDate(values.filter(Boolean));
+  const timestamp = toTimestamp(updatedAt);
+  const ageInHours = timestamp ? (Date.now() - timestamp) / 36e5 : Infinity;
+  const isCurrent = timestamp && ageInHours <= 36;
+
+  return {
+    status: isCurrent ? "current" : "stale",
+    label: isCurrent ? "Current" : "Stale",
+    updatedAt,
+    text: `Updated ${formatUpdatedAt(updatedAt)}`
+  };
+}
+
+function rowPeriodMatches(value, period) {
+  if (period === "all") return true;
+
+  const timestamp = toTimestamp(value);
+  if (!timestamp) return false;
+
+  if (period === "today") {
+    return String(value || "").slice(0, 10) === todayISO();
+  }
+
+  const days = period === "7d" ? 7 : 30;
+  const windowMs = days * 24 * 60 * 60 * 1000;
+
+  return timestamp >= Date.now() - windowMs;
+}
+
+function salesValueFromOrder(order, productMap) {
+  return (order.items || []).reduce((total, item) => {
+    const product = productMap.get(item.productId);
+    return total + Number(product?.unitPrice || 0) * Number(item.quantity || 0);
+  }, 0);
+}
+
+function buildCeoFreshness(state) {
+  return {
+    sales: freshnessFor([
+      ...(state.orders || []).map((order) => order.createdAt || order.dueAt),
+      ...(state.stockTransactions || []).map((transaction) => transaction.createdAt || transaction.date),
+      ...(state.salesReports || []).map((report) => report.submittedAt || report.reportDate)
+    ]),
+    stock: freshnessFor([
+      ...(state.products || []).map((product) => product.updatedAt || product.createdAt),
+      ...(state.stockAssignments || []).map((assignment) => assignment.updatedAt || assignment.assignedAt),
+      ...(state.stockTransactions || []).map((transaction) => transaction.createdAt || transaction.date)
+    ]),
+    credit: freshnessFor([
+      ...(state.creditLimits || []).map((limit) => limit.changedAt || limit.updatedAt),
+      ...(state.invoices || []).map((invoice) => invoice.updatedAt || invoice.issuedAt || invoice.dueAt)
+    ]),
+    reports: freshnessFor((state.salesReports || []).map((report) => report.submittedAt || report.reportDate))
+  };
+}
+
+function renderCeoMetricCard({ label, value, meta, iconName, freshness }) {
+  return `
+    <article class="metric-card ceo-metric-card">
+      <header>
+        <span class="eyebrow">${escapeHtml(label)}</span>
+        <span class="metric-icon">${icon(iconName)}</span>
+      </header>
+      <div>
+        <div class="metric-value">${escapeHtml(value)}</div>
+        <div class="metric-meta">${escapeHtml(meta)}</div>
+        <div class="ceo-freshness">
+          ${statusPill(freshness.status)}
+          <span>${escapeHtml(freshness.text)}</span>
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function productLatestActivity(productId, state) {
+  return latestDate([
+    ...(state.orders || [])
+      .filter((order) => (order.items || []).some((item) => item.productId === productId))
+      .map((order) => order.createdAt || order.dueAt),
+    ...(state.stockAssignments || [])
+      .filter((assignment) => assignment.productId === productId)
+      .map((assignment) => assignment.updatedAt || assignment.assignedAt),
+    ...(state.stockTransactions || [])
+      .filter((transaction) => transaction.productId === productId)
+      .map((transaction) => transaction.createdAt || transaction.date)
+  ]);
+}
+
+function buildCeoProductPerformance(state) {
+  const productMap = getProductMap(state.products || []);
+  const rows = (state.products || []).map((product) => ({
+    id: product.id,
+    product,
+    orderedUnits: 0,
+    directUnits: 0,
+    salesValue: 0,
+    returnedUnits: 0,
+    repUnits: 0,
+    supermarketUnits: 0,
+    latestActivity: productLatestActivity(product.id, state)
+  }));
+  const rowMap = new Map(rows.map((row) => [row.id, row]));
+
+  (state.orders || []).forEach((order) => {
+    (order.items || []).forEach((item) => {
+      const row = rowMap.get(item.productId);
+      const product = productMap.get(item.productId);
+      if (!row || !product) return;
+
+      const quantity = Number(item.quantity || 0);
+      row.orderedUnits += quantity;
+      row.supermarketUnits += quantity;
+      row.salesValue += quantity * Number(product.unitPrice || 0);
+      row.latestActivity = latestDate([row.latestActivity, order.createdAt || order.dueAt]);
+    });
+  });
+
+  (state.stockTransactions || []).forEach((transaction) => {
+    const row = rowMap.get(transaction.productId);
+    if (!row) return;
+
+    const type = normalized(transaction.type);
+    const quantity = Number(transaction.quantity || 0);
+
+    if (type === "sale" || type === "supply") {
+      row.directUnits += quantity;
+      row.salesValue += Number(transaction.amount || 0);
+    }
+
+    if (type === "return") {
+      row.returnedUnits += quantity;
+    }
+
+    row.latestActivity = latestDate([row.latestActivity, transaction.createdAt || transaction.date]);
+  });
+
+  (state.stockAssignments || []).forEach((assignment) => {
+    const row = rowMap.get(assignment.productId);
+    if (!row) return;
+
+    row.repUnits += assignmentOutstanding(assignment);
+    row.latestActivity = latestDate([row.latestActivity, assignment.updatedAt || assignment.assignedAt]);
+  });
+
+  const rankedRows = rows
+    .filter((row) => stockCategoryIdForProduct(row.product) === "finished_products")
+    .sort((a, b) => b.salesValue - a.salesValue);
+  const topId = rankedRows[0]?.id;
+  const bottomId = rankedRows.at(-1)?.id;
+
+  return rows.map((row) => ({
+    ...row,
+    salesUnits: row.orderedUnits + row.directUnits,
+    performanceSignal: row.id === topId ? "top_performer" : row.id === bottomId ? "underperforming" : "steady"
+  }));
+}
+
+function buildCeoRepRows(state) {
+  const reportTotals = new Map();
+  const productIdsByRep = new Map();
+  const latestByRep = new Map();
+
+  (state.salesReports || []).forEach((report) => {
+    const existing = reportTotals.get(report.repName) || { salesAmount: 0, reportCount: 0 };
+    existing.salesAmount += Number(report.salesAmount || 0);
+    existing.reportCount += 1;
+    reportTotals.set(report.repName, existing);
+    latestByRep.set(report.repName, latestDate([latestByRep.get(report.repName), report.submittedAt || report.reportDate]));
+  });
+
+  (state.stockAssignments || []).forEach((assignment) => {
+    const ids = productIdsByRep.get(assignment.repName) || new Set();
+    ids.add(assignment.productId);
+    productIdsByRep.set(assignment.repName, ids);
+    latestByRep.set(assignment.repName, latestDate([latestByRep.get(assignment.repName), assignment.updatedAt || assignment.assignedAt]));
+  });
+
+  return buildRepLedger(state).map((row) => ({
+    ...row,
+    productIds: [...(productIdsByRep.get(row.repName) || new Set())],
+    salesAmount: reportTotals.get(row.repName)?.salesAmount || 0,
+    reportCount: reportTotals.get(row.repName)?.reportCount || 0,
+    latestActivity: latestByRep.get(row.repName) || ""
+  }));
+}
+
+function buildCeoSupermarketRows(state) {
+  const productMap = getProductMap(state.products || []);
+  const creditByName = new Map((state.creditLimits || []).map((limit) => [normalized(limit.partyName), limit]));
+
+  return (state.retailers || []).map((retailer) => {
+    const orders = (state.orders || []).filter((order) => order.retailerId === retailer.id);
+    const productIds = new Set();
+    const orderValue = orders.reduce((total, order) => {
+      (order.items || []).forEach((item) => productIds.add(item.productId));
+      return total + salesValueFromOrder(order, productMap);
+    }, 0);
+    const creditLimit = creditByName.get(normalized(retailer.name));
+    const balance = Number(creditLimit?.balance ?? creditLimit?.balanceAmount ?? retailer.outstanding ?? 0);
+    const limit = Number(creditLimit?.limit ?? creditLimit?.limitAmount ?? 0);
+    const usagePercent = limit ? (balance / limit) * 100 : 0;
+    const latestActivity = latestDate([
+      retailer.lastOrder,
+      retailer.lastContact,
+      ...orders.map((order) => order.createdAt || order.dueAt),
+      creditLimit?.changedAt
+    ]);
+
+    return {
+      retailer,
+      productIds: [...productIds],
+      orderCount: orders.length,
+      orderValue,
+      balance,
+      limit,
+      usagePercent,
+      latestActivity,
+      status: usagePercent >= 100 ? "credit_hold" : usagePercent >= 85 ? "credit_watch" : "credit_clear"
+    };
+  });
+}
+
+function buildCeoRiskRows(state) {
+  return (state.creditLimits || [])
+    .map((limit) => {
+      const balance = Number(limit.balance ?? limit.balanceAmount ?? 0);
+      const limitAmount = Number(limit.limit ?? limit.limitAmount ?? 0);
+      const usagePercent = limitAmount ? (balance / limitAmount) * 100 : 100;
+      return {
+        ...limit,
+        balance,
+        limit: limitAmount,
+        usagePercent,
+        remaining: Math.max(0, limitAmount - balance),
+        status: usagePercent >= 100 ? "credit_hold" : usagePercent >= 85 ? "credit_watch" : "credit_clear"
+      };
+    })
+    .sort((a, b) => b.usagePercent - a.usagePercent);
+}
+
+function creditPartyTypeLabel(value) {
+  const normalizedValue = normalized(value).replace(/_/g, " ");
+
+  if (normalizedValue.includes("sales rep") || normalizedValue.includes("sales representative")) {
+    return "Sales Representative";
+  }
+
+  if (normalizedValue.includes("supermarket")) {
+    return "Supermarket";
+  }
+
+  return String(value || "Account");
+}
+
+function renderCeoFilterPanel(state, productRows, repRows, supermarketRows) {
+  const finishedProducts = productRows
+    .filter((row) => stockCategoryIdForProduct(row.product) === "finished_products")
+    .sort((a, b) => rowLabel(a.product).localeCompare(rowLabel(b.product)));
+  const reps = repRows.map((row) => row.repName).sort();
+  const supermarkets = supermarketRows.map((row) => row.retailer).sort((a, b) => a.name.localeCompare(b.name));
+
+  return `
+    <section class="panel ceo-filter-panel">
+      ${panelHeader("Leadership drilldown", "Period, representative, product, and supermarket views")}
+      <div class="ceo-filter-grid">
+        <label class="field">
+          <span>Period</span>
+          <select data-ceo-filter="period">
+            <option value="all">All time</option>
+            <option value="today">Today</option>
+            <option value="7d">Last 7 days</option>
+            <option value="30d">Last 30 days</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Representative</span>
+          <select data-ceo-filter="rep">
+            <option value="">All representatives</option>
+            ${reps.map((repName) => `<option value="${escapeHtml(repName)}">${escapeHtml(repName)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Product</span>
+          <select data-ceo-filter="product">
+            <option value="">All products</option>
+            ${finishedProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.product.name)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Supermarket</span>
+          <select data-ceo-filter="supermarket">
+            <option value="">All supermarkets</option>
+            ${supermarkets.map((retailer) => `<option value="${escapeHtml(retailer.id)}">${escapeHtml(retailer.name)}</option>`).join("")}
+          </select>
+        </label>
+        <button class="button ceo-filter-reset" type="button" data-ceo-filter-reset>
+          ${icon("refresh")}
+          <span>Reset</span>
+        </button>
+      </div>
+    </section>
+  `;
+}
+
+function rowLabel(product) {
+  return product?.name || "";
+}
+
+function productDataset(productIds) {
+  return `|${productIds.filter(Boolean).join("|")}|`;
+}
+
+function renderCeoProductRows(productRows) {
+  return productRows
+    .filter((row) => stockCategoryIdForProduct(row.product) === "finished_products")
+    .sort((a, b) => b.salesValue - a.salesValue)
+    .map((row) => `
+      <tr
+        data-ceo-row
+        data-ceo-kind="product"
+        data-ceo-product="${escapeHtml(row.id)}"
+        data-ceo-products="${escapeHtml(productDataset([row.id]))}"
+        data-ceo-date="${escapeHtml(row.latestActivity)}"
+        data-search-index="${escapeHtml(`${row.product.name} ${row.performanceSignal}`.toLowerCase())}"
+      >
+        <td>
+          <strong>${escapeHtml(row.product.name)}</strong>
+          <div class="muted">${escapeHtml(row.id)}</div>
+        </td>
+        <td>
+          <strong>${formatCurrency(row.salesValue)}</strong>
+          <div class="muted">${formatNumber(row.salesUnits)} units moved</div>
+        </td>
+        <td>
+          ${formatNumber(row.returnedUnits)} returned
+          <div class="muted">Last ${formatUpdatedAt(row.latestActivity)}</div>
+        </td>
+        <td>${statusPill(row.performanceSignal)}</td>
+      </tr>
+    `)
+    .join("");
+}
+
+function renderCeoStockRows(productRows) {
+  return productRows
+    .filter((row) => row.product.status !== "inactive")
+    .sort((a, b) => b.product.stock + b.repUnits + b.supermarketUnits - (a.product.stock + a.repUnits + a.supermarketUnits))
+    .map((row) => {
+      const health = getStockHealth(row.product);
+      const searchIndex = [
+        row.product.name,
+        row.product.warehouse,
+        row.product.category,
+        health.status
+      ].join(" ").toLowerCase();
+
+      return `
+        <tr
+          data-ceo-row
+          data-ceo-kind="product"
+          data-ceo-product="${escapeHtml(row.id)}"
+          data-ceo-products="${escapeHtml(productDataset([row.id]))}"
+          data-ceo-date="${escapeHtml(row.latestActivity)}"
+          data-search-index="${escapeHtml(searchIndex)}"
+        >
+          <td>
+            <strong>${escapeHtml(row.product.name)}</strong>
+            <div class="muted">${escapeHtml(row.product.warehouse || "Factory")}</div>
+          </td>
+          <td>${formatNumber(row.product.stock)}</td>
+          <td>${formatNumber(row.repUnits)}</td>
+          <td>${formatNumber(row.supermarketUnits)}</td>
+          <td>${statusPill(health.status)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderCeoRepRows(repRows) {
+  return repRows
+    .map((row) => {
+      const creditStatus = row.creditUsagePercent >= 100 ? "credit_hold" : row.creditUsagePercent >= 85 ? "credit_watch" : "credit_clear";
+      const searchIndex = [
+        row.repName,
+        creditStatus,
+        row.productIds.join(" ")
+      ].join(" ").toLowerCase();
+
+      return `
+        <tr
+          data-ceo-row
+          data-ceo-kind="rep"
+          data-ceo-rep="${escapeHtml(row.repName)}"
+          data-ceo-products="${escapeHtml(productDataset(row.productIds))}"
+          data-ceo-date="${escapeHtml(row.latestActivity)}"
+          data-search-index="${escapeHtml(searchIndex)}"
+        >
+          <td>
+            <strong>${escapeHtml(row.repName)}</strong>
+            <div class="muted">${formatNumber(row.openAssignments)} open assignment${row.openAssignments === 1 ? "" : "s"}</div>
+          </td>
+          <td>
+            ${formatNumber(row.outstanding)} units
+            <div class="muted">${formatNumber(row.sold)} sold - ${formatNumber(row.returned)} returned</div>
+          </td>
+          <td>
+            <div class="stock-line">
+              <div class="stock-meta">
+                <span>${formatPercent(row.sellThroughPercent)}</span>
+                <span>${formatCurrency(row.salesAmount)}</span>
+              </div>
+              ${progressBar(row.sellThroughPercent, row.sellThroughPercent < 55 ? "warning" : "good")}
+            </div>
+          </td>
+          <td>
+            ${statusPill(creditStatus)}
+            <div class="muted">${formatCurrency(row.creditBalance)} of ${formatCurrency(row.creditLimit)}</div>
+          </td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderCeoSupermarketRows(supermarketRows) {
+  return supermarketRows
+    .sort((a, b) => b.balance - a.balance)
+    .map((row) => {
+      const searchIndex = [
+        row.retailer.name,
+        row.retailer.region,
+        row.status,
+        row.productIds.join(" ")
+      ].join(" ").toLowerCase();
+
+      return `
+        <tr
+          data-ceo-row
+          data-ceo-kind="supermarket"
+          data-ceo-supermarket="${escapeHtml(row.retailer.id)}"
+          data-ceo-products="${escapeHtml(productDataset(row.productIds))}"
+          data-ceo-date="${escapeHtml(row.latestActivity)}"
+          data-search-index="${escapeHtml(searchIndex)}"
+        >
+          <td>
+            <strong>${escapeHtml(row.retailer.name)}</strong>
+            <div class="muted">${escapeHtml(row.retailer.city)} - ${escapeHtml(row.retailer.region)}</div>
+          </td>
+          <td>
+            ${formatNumber(row.orderCount)} order${row.orderCount === 1 ? "" : "s"}
+            <div class="muted">${formatCurrency(row.orderValue)}</div>
+          </td>
+          <td>
+            <div class="stock-line">
+              <div class="stock-meta">
+                <span>${formatCurrency(row.balance)}</span>
+                <span>${formatPercent(row.usagePercent)}</span>
+              </div>
+              ${progressBar(row.usagePercent, row.usagePercent >= 100 ? "danger" : row.usagePercent >= 85 ? "warning" : "good")}
+            </div>
+          </td>
+          <td>${statusPill(row.status)}</td>
+        </tr>
+      `;
+    })
+    .join("");
+}
+
+function renderCeoRiskRows(riskRows) {
+  return riskRows.slice(0, 6).map((row) => `
+    <tr
+      data-ceo-row
+      data-ceo-kind="risk"
+      data-ceo-date="${escapeHtml(row.changedAt)}"
+      data-search-index="${escapeHtml(`${row.partyName} ${row.partyType} ${row.status}`.toLowerCase())}"
+    >
+      <td>
+        <strong>${escapeHtml(row.partyName)}</strong>
+        <div class="muted">${escapeHtml(creditPartyTypeLabel(row.partyType))}</div>
+      </td>
+      <td>${statusPill(row.status)}</td>
+      <td>
+        <strong>${formatCurrency(row.balance)}</strong>
+        <div class="muted">${formatPercent(row.usagePercent)} of ${formatCurrency(row.limit)}</div>
+      </td>
+      <td>${formatCurrency(row.remaining)}</td>
+    </tr>
+  `).join("");
+}
+
+function dateKey(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function addDays(date, days) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate.toISOString().slice(0, 10);
+}
+
+function buildCeoSalesTrend(state) {
+  const productMap = getProductMap(state.products || []);
+  const anchorDate = latestDate([
+    ...(state.orders || []).map((order) => order.createdAt || order.dueAt),
+    ...(state.stockTransactions || []).map((transaction) => transaction.createdAt || transaction.date),
+    ...(state.salesReports || []).map((report) => report.submittedAt || report.reportDate)
+  ]) || todayISO();
+  const anchor = new Date(`${dateKey(anchorDate || todayISO())}T12:00:00`);
+  const days = Array.from({ length: 7 }, (_, index) => addDays(anchor, index - 6));
+  const totals = new Map(days.map((day) => [day, 0]));
+
+  (state.orders || []).forEach((order) => {
+    const key = dateKey(order.createdAt || order.dueAt);
+    if (!totals.has(key)) return;
+    totals.set(key, totals.get(key) + salesValueFromOrder(order, productMap));
+  });
+
+  const maxValue = Math.max(...totals.values(), 1);
+
+  return days.map((day) => ({
+    day,
+    label: formatDate(day),
+    value: totals.get(day) || 0,
+    percent: ((totals.get(day) || 0) / maxValue) * 100
+  }));
+}
+
+function renderCeoSalesChart(trend) {
+  return `
+    <div class="ceo-chart" aria-label="Sales trend for the last seven days">
+      ${trend.map((point) => `
+        <div class="ceo-chart-column" data-search-index="${escapeHtml(`${point.label} ${point.value}`.toLowerCase())}">
+          <div class="ceo-chart-track">
+            <span class="ceo-chart-bar" style="height: ${Math.max(8, point.percent)}%"></span>
+          </div>
+          <strong>${escapeHtml(point.label)}</strong>
+          <span>${formatCurrency(point.value)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderCeoPulseRows({ topProduct, lowStockProduct, riskyAccount, latestReport }) {
+  const rows = [
+    {
+      label: "Top product",
+      value: topProduct ? topProduct.product.name : "No sales yet",
+      meta: topProduct ? formatCurrency(topProduct.salesValue) : "Waiting for activity",
+      status: "top_performer"
+    },
+    {
+      label: "Needs stock",
+      value: lowStockProduct ? lowStockProduct.name : "Stock looks stable",
+      meta: lowStockProduct ? `${formatNumber(lowStockProduct.stock)} left` : "No urgent item",
+      status: lowStockProduct ? "low" : "ready"
+    },
+    {
+      label: "Credit watch",
+      value: riskyAccount ? riskyAccount.partyName : "No risky account",
+      meta: riskyAccount ? `${formatPercent(riskyAccount.usagePercent)} used` : "Exposure controlled",
+      status: riskyAccount?.status || "credit_clear"
+    },
+    {
+      label: "Latest report",
+      value: latestReport?.repName || "No report yet",
+      meta: latestReport ? formatUpdatedAt(latestReport.submittedAt || latestReport.reportDate) : "Waiting for submission",
+      status: latestReport?.status || "pending"
+    }
+  ];
+
+  return `
+    <div class="ceo-pulse-list">
+      ${rows.map((row) => `
+        <article class="ceo-pulse-row" data-search-index="${escapeHtml(`${row.label} ${row.value} ${row.meta}`.toLowerCase())}">
+          <div>
+            <span class="eyebrow">${escapeHtml(row.label)}</span>
+            <strong>${escapeHtml(row.value)}</strong>
+            <p>${escapeHtml(row.meta)}</p>
+          </div>
+          ${statusPill(row.status)}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderCeoStockSplit(vision, productRows) {
+  const supermarketUnits = productRows.reduce((total, row) => total + Number(row.supermarketUnits || 0), 0);
+  const maxValue = Math.max(vision.finishedStockUnits, vision.repOutstandingUnits, supermarketUnits, 1);
+  const rows = [
+    {
+      label: "Factory",
+      value: vision.finishedStockUnits,
+      tone: "good"
+    },
+    {
+      label: "Representatives",
+      value: vision.repOutstandingUnits,
+      tone: vision.repOutstandingUnits > vision.finishedStockUnits ? "warning" : "good"
+    },
+    {
+      label: "Supermarkets",
+      value: supermarketUnits,
+      tone: "good"
+    }
+  ];
+
+  return `
+    <div class="bar-list">
+      ${rows.map((row) => `
+        <div class="bar-row ceo-stock-row" data-search-index="${escapeHtml(row.label.toLowerCase())}">
+          <strong>${escapeHtml(row.label)}</strong>
+          ${progressBar((row.value / maxValue) * 100, row.tone)}
+          <span class="strong">${formatNumber(row.value)}</span>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderCeoProductFocus(productRows) {
+  const rankedRows = productRows
+    .filter((row) => stockCategoryIdForProduct(row.product) === "finished_products")
+    .sort((a, b) => b.salesValue - a.salesValue);
+  const rows = [
+    rankedRows[0],
+    rankedRows.at(-1)
+  ].filter(Boolean);
+
+  return `
+    <div class="ceo-product-focus">
+      ${rows.map((row) => `
+        <article class="ceo-product-focus-card" data-search-index="${escapeHtml(`${row.product.name} ${row.performanceSignal}`.toLowerCase())}">
+          <span class="eyebrow">${escapeHtml(row.performanceSignal === "top_performer" ? "Top performer" : "Needs attention")}</span>
+          <strong>${escapeHtml(row.product.name)}</strong>
+          <p>${formatCurrency(row.salesValue)} - ${formatNumber(row.salesUnits)} units moved</p>
+          ${statusPill(row.performanceSignal)}
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderCeoDashboard(state) {
+  const metrics = calculateMetrics(state);
+  const vision = calculateVisionMetrics(state);
+  const freshness = buildCeoFreshness(state);
+  const productRows = buildCeoProductPerformance(state);
+  const riskRows = buildCeoRiskRows(state);
+  const trend = buildCeoSalesTrend(state);
+  const riskyAccountCount = riskRows.filter((row) => row.status !== "credit_clear").length;
+  const topProduct = [...productRows].sort((a, b) => b.salesValue - a.salesValue)[0];
+  const lowStockProduct = getLowStockProducts(state.products || [])[0];
+  const riskyAccount = riskRows.find((row) => row.status !== "credit_clear") || riskRows[0];
+  const latestReport = [...(state.salesReports || [])]
+    .sort((a, b) => toTimestamp(b.submittedAt || b.reportDate) - toTimestamp(a.submittedAt || a.reportDate))[0];
+
+  return `
+    <section class="view dashboard-view ceo-dashboard">
+      <section class="ceo-command-strip">
+        <div>
+          <span class="eyebrow">CEO portal</span>
+          <h2>Executive overview</h2>
+        </div>
+        <a class="button primary" href="#/inventory?tab=add-stock">
+          ${icon("plus")}
+          <span>Add stock</span>
+        </a>
+      </section>
+
+      <div class="metric-grid ceo-minimal-metrics">
+        ${renderCeoMetricCard({
+          label: "Sales",
+          value: formatCurrency(metrics.orderRevenue),
+          meta: "Total order value",
+          iconName: "orders",
+          freshness: freshness.sales
+        })}
+        ${renderCeoMetricCard({
+          label: "Stock",
+          value: formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits),
+          meta: "Factory plus representative custody",
+          iconName: "package",
+          freshness: freshness.stock
+        })}
+        ${renderCeoMetricCard({
+          label: "Credit",
+          value: formatCurrency(vision.creditBalanceTotal),
+          meta: `${formatNumber(riskyAccountCount)} risky account${riskyAccountCount === 1 ? "" : "s"}`,
+          iconName: "wallet",
+          freshness: freshness.credit
+        })}
+        ${renderCeoMetricCard({
+          label: "Reports",
+          value: formatNumber(state.salesReports?.length || 0),
+          meta: latestReport ? `Latest: ${latestReport.repName}` : "No submitted reports yet",
+          iconName: "dashboard",
+          freshness: freshness.reports
+        })}
+      </div>
+
+      <div class="dashboard-layout ceo-dashboard-layout">
+        <section class="panel ceo-chart-panel">
+          ${panelHeader("Sales trend", "Last 7 days")}
+          ${renderCeoSalesChart(trend)}
+        </section>
+
+        <section class="panel ceo-pulse-panel">
+          ${panelHeader("Business pulse", "What needs leadership attention")}
+          ${renderCeoPulseRows({ topProduct, lowStockProduct, riskyAccount, latestReport })}
+        </section>
+      </div>
+
+      <div class="ceo-mini-grid">
+        <section class="panel">
+          ${panelHeader("Stock split", "Where finished stock currently sits")}
+          ${renderCeoStockSplit(vision, productRows)}
+        </section>
+
+        <section class="panel">
+          ${panelHeader("Product focus", "Best seller and slow mover")}
+          ${renderCeoProductFocus(productRows)}
+        </section>
+      </div>
+    </section>
+  `;
 }
 
 function renderRegionalSummary(state) {
@@ -644,7 +1403,12 @@ export function renderDashboard({ state }) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
   const permissions = currentUserPermissions(state);
-  const isManagerPortal = currentUserRole(state) === "manager";
+  const role = currentUserRole(state);
+  const isManagerPortal = role === "manager";
+
+  if (state.session && state.client?.id && role === "ceo") {
+    return renderCeoDashboard(state, permissions);
+  }
 
   return `
     <section class="view dashboard-view">
@@ -721,6 +1485,11 @@ export function bindDashboard({ root, store }) {
     return;
   }
 
+  if (root.querySelector(".ceo-dashboard")) {
+    bindCeoDashboard({ root });
+    return;
+  }
+
   qsa(".js-restock-product", root).forEach((button) => {
     button.addEventListener("click", () => {
       store.dispatch({
@@ -761,6 +1530,49 @@ export function bindDashboard({ root, store }) {
       });
     });
   });
+}
+
+function bindCeoDashboard({ root }) {
+  const filterControls = qsa("[data-ceo-filter]", root);
+  const resetButton = qs("[data-ceo-filter-reset]", root);
+
+  function selectedFilter(name) {
+    return qs(`[data-ceo-filter="${name}"]`, root)?.value || "";
+  }
+
+  function applyCeoFilters() {
+    const period = selectedFilter("period") || "all";
+    const rep = selectedFilter("rep");
+    const product = selectedFilter("product");
+    const supermarket = selectedFilter("supermarket");
+
+    qsa("[data-ceo-row]", root).forEach((row) => {
+      const kind = row.dataset.ceoKind || "";
+      const productSet = row.dataset.ceoProducts || "";
+      const hasProductDimension = productSet.length > 2;
+      const matchesPeriod = rowPeriodMatches(row.dataset.ceoDate, period);
+      const matchesRep = !rep || kind !== "rep" || row.dataset.ceoRep === rep;
+      const matchesProduct = !product || !hasProductDimension || productSet.includes(`|${product}|`);
+      const matchesSupermarket = !supermarket || kind !== "supermarket" || row.dataset.ceoSupermarket === supermarket;
+
+      row.hidden = !(matchesPeriod && matchesRep && matchesProduct && matchesSupermarket);
+    });
+  }
+
+  filterControls.forEach((control) => {
+    control.addEventListener("change", applyCeoFilters);
+  });
+
+  resetButton?.addEventListener("click", () => {
+    filterControls.forEach((control) => {
+      control.value = "";
+    });
+    const periodControl = qs('[data-ceo-filter="period"]', root);
+    if (periodControl) periodControl.value = "all";
+    applyCeoFilters();
+  });
+
+  applyCeoFilters();
 }
 
 function setRepMessage(messageEl, text, type = "") {

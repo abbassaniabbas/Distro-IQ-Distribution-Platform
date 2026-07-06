@@ -22,7 +22,7 @@ export const ROLE_OPTIONS = [
   {
     value: "ceo",
     label: "CEO",
-    description: "Company-wide dashboard, setup ownership, team invitations, and report oversight"
+    description: "Company-wide dashboard, stock oversight, team invitations, and report oversight"
   }
 ];
 
@@ -112,7 +112,7 @@ const ROLE_PERMISSIONS = {
     nav: ["dashboard", "orders", "inventory", "routes", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
-    canManageProducts: false,
+    canManageProducts: true,
     canAssignStock: false,
     canReconcileStock: false,
     canSetCreditLimits: false,

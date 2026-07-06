@@ -399,6 +399,7 @@
 
 .status-pill.ready,
 .status-pill.active,
+.status-pill.current,
 .status-pill.reviewed,
 .status-pill.paid,
 .status-pill.delivered,
@@ -411,6 +412,7 @@
 .status-pill.signed,
 .status-pill.printed,
 .status-pill.cash,
+.status-pill.top-performer,
 .status-pill.credit-clear {
   background: rgba(25, 185, 133, 0.12);
   color: var(--green);
@@ -419,6 +421,8 @@
 .status-pill.processing,
 .status-pill.in-transit,
 .status-pill.scheduled,
+.status-pill.read-only,
+.status-pill.steady,
 .status-pill.invited,
 .status-pill.sent,
 .status-pill.pending,
@@ -442,6 +446,8 @@
 .status-pill.delayed,
 .status-pill.overdue,
 .status-pill.low,
+.status-pill.stale,
+.status-pill.underperforming,
 .status-pill.inactive,
 .status-pill.variance,
 .status-pill.return,

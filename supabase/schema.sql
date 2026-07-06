@@ -961,8 +961,8 @@ create policy "stock_categories_write_by_stock_roles"
 on public.stock_categories
 for all
 to authenticated
-using (public.has_client_role(client_id, array['manager', 'store_keeper']))
-with check (public.has_client_role(client_id, array['manager', 'store_keeper']));
+using (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']))
+with check (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']));
 
 drop policy if exists "stock_products_select_by_client" on public.stock_products;
 create policy "stock_products_select_by_client"
@@ -976,8 +976,8 @@ create policy "stock_products_write_by_stock_roles"
 on public.stock_products
 for all
 to authenticated
-using (public.has_client_role(client_id, array['manager', 'store_keeper']))
-with check (public.has_client_role(client_id, array['manager', 'store_keeper']));
+using (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']))
+with check (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']));
 
 drop policy if exists "stock_assignments_select_by_client" on public.stock_assignments;
 create policy "stock_assignments_select_by_client"

@@ -18,6 +18,77 @@ import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 
+const DEFAULT_STOCK_TAB = "factory-health";
+
+function inventoryRouteParams() {
+  if (typeof window === "undefined") return new URLSearchParams();
+
+  const query = window.location.hash.split("?")[1] || "";
+  return new URLSearchParams(query);
+}
+
+function stockTabHref(tabId) {
+  return `#/inventory?tab=${encodeURIComponent(tabId)}`;
+}
+
+function stockTabsForPermissions(permissions) {
+  return [
+    {
+      id: "factory-health",
+      label: "Factory stock health"
+    },
+    ...(permissions.canManageProducts
+      ? [{
+          id: "add-stock",
+          label: "Add/update stock"
+        }]
+      : []),
+    {
+      id: "overview",
+      label: "Lifecycle"
+    },
+    {
+      id: "categories",
+      label: "Categories"
+    },
+    {
+      id: "assignments",
+      label: "Assignments"
+    },
+    {
+      id: "transactions",
+      label: "Transactions"
+    },
+    {
+      id: "credit",
+      label: "Credit limits"
+    }
+  ];
+}
+
+function activeStockTabId(permissions) {
+  const tabs = stockTabsForPermissions(permissions);
+  const requestedTab = inventoryRouteParams().get("tab") || DEFAULT_STOCK_TAB;
+
+  return tabs.some((tab) => tab.id === requestedTab) ? requestedTab : tabs[0].id;
+}
+
+function renderStockSubtabs(activeTabId, permissions) {
+  return `
+    <nav class="subtab-nav stock-subtabs" aria-label="Stock pages">
+      ${stockTabsForPermissions(permissions).map((tab) => `
+        <a
+          class="subtab-link ${tab.id === activeTabId ? "is-active" : ""}"
+          href="${escapeHtml(stockTabHref(tab.id))}"
+          aria-current="${tab.id === activeTabId ? "page" : "false"}"
+        >
+          ${escapeHtml(tab.label)}
+        </a>
+      `).join("")}
+    </nav>
+  `;
+}
+
 function lifecycleTotals(state) {
   const factoryStock = state.products.reduce((total, product) => total + Number(product.stock || 0), 0);
   const assignedStock = state.stockAssignments.reduce((total, assignment) => total + Number(assignment.assigned || 0), 0);
@@ -160,7 +231,7 @@ function renderManagerProductPanel(state, permissions) {
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader("Product catalogue", "Create, edit, price, image, and deactivate snack products")}
+      ${panelHeader("Add or update stock", "Create products, update factory stock, pricing, and product images")}
       <form id="manager-product-form" class="manager-form-grid" novalidate>
         <input type="hidden" name="productId">
         <label class="field">
@@ -512,72 +583,131 @@ function renderCreditRows(state) {
   });
 }
 
+function renderFactoryStockHealthPage(state, permissions, categories) {
+  return `
+    <section class="panel inventory-layout">
+      <div class="toolbar">
+        ${panelHeader("Factory stock health", "Raw materials, finished snacks, equipment, cover days, and replenishment risk")}
+        <div class="toolbar-group">
+          <label class="field">
+            <span class="sr-only">Filter by category</span>
+            <select id="inventory-category-filter">
+              <option value="all">All categories</option>
+              ${categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join("")}
+            </select>
+          </label>
+        </div>
+      </div>
+
+      <div class="product-grid">
+        ${state.products.map((product) => renderProductCard(product, permissions)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderAddStockPage(state, permissions) {
+  if (!permissions.canManageProducts) {
+    return `
+      <section class="panel inventory-layout">
+        ${panelHeader("Add/update stock", "This stock page is not available for your role")}
+        <p>Use the stock health view to monitor products assigned to your role.</p>
+      </section>
+    `;
+  }
+
+  return `
+    ${renderManagerProductPanel(state, permissions)}
+    <section class="panel inventory-layout">
+      ${panelHeader("Product catalogue", "Pick a product to edit its stock, pricing, image, or status")}
+      <div class="product-grid">
+        ${state.products.map((product) => renderProductCard(product, permissions)).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderOverviewPage(state, vision) {
+  return `
+    ${renderCustodyMetrics(vision)}
+    ${renderLifecycle(state)}
+  `;
+}
+
+function renderCategoriesPage(state) {
+  return `
+    <section class="panel inventory-layout">
+      ${panelHeader("Stock categories", "Raw materials, finished products, and equipment behave differently")}
+      ${table(
+        ["Category", "Timeframe", "Operational behaviour"],
+        renderCategoryRows(state),
+        "No stock categories configured"
+      )}
+    </section>
+  `;
+}
+
+function renderAssignmentsPage(state, permissions) {
+  return `
+    ${renderAssignmentConsole(state, permissions)}
+    <section class="panel inventory-layout">
+      ${panelHeader("Representative stock assignments", "Assigned, sold, returned, and outstanding quantities by sales representative")}
+      ${table(
+        ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status", ""],
+        renderAssignmentRows(state, permissions),
+        "No stock assignments recorded"
+      )}
+    </section>
+  `;
+}
+
+function renderTransactionsPage(state) {
+  return `
+    <section class="panel inventory-layout">
+      ${panelHeader("Transactions", "Sales, returns, supply, and internal stock movement records")}
+      ${table(
+        ["Transaction", "Type", "Product", "Amount", "Party", "Recorded by"],
+        renderTransactionRows(state),
+        "No stock transactions recorded"
+      )}
+    </section>
+  `;
+}
+
+function renderCreditPage(state) {
+  return `
+    <section class="panel inventory-layout">
+      ${panelHeader("Credit limits", "Running balances against manager-approved limits")}
+      ${table(
+        ["Party", "Limit", "Balance usage", "Last change", "Changed by"],
+        renderCreditRows(state),
+        "No credit limits recorded"
+      )}
+    </section>
+  `;
+}
+
+function renderStockTabPage({ activeTabId, state, permissions, categories, vision }) {
+  if (activeTabId === "add-stock") return renderAddStockPage(state, permissions);
+  if (activeTabId === "overview") return renderOverviewPage(state, vision);
+  if (activeTabId === "categories") return renderCategoriesPage(state);
+  if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
+  if (activeTabId === "transactions") return renderTransactionsPage(state);
+  if (activeTabId === "credit") return renderCreditPage(state);
+
+  return renderFactoryStockHealthPage(state, permissions, categories);
+}
+
 export function renderInventory({ state }) {
   const categories = [...new Set(state.products.map((product) => product.category))].sort();
   const permissions = currentUserPermissions(state);
   const vision = calculateVisionMetrics(state);
+  const activeTabId = activeStockTabId(permissions);
 
   return `
     <section class="view inventory-view">
-      ${renderCustodyMetrics(vision)}
-      ${renderLifecycle(state)}
-      ${renderManagerProductPanel(state, permissions)}
-      ${renderAssignmentConsole(state, permissions)}
-
-      <section class="panel inventory-layout">
-        ${panelHeader("Stock categories", "Raw materials, finished products, and equipment behave differently")}
-        ${table(
-          ["Category", "Timeframe", "Operational behaviour"],
-          renderCategoryRows(state),
-          "No stock categories configured"
-        )}
-      </section>
-
-      <section class="panel inventory-layout">
-        <div class="toolbar">
-          ${panelHeader("Factory stock health", "Raw materials, finished snacks, equipment, cover days, and replenishment risk")}
-          <div class="toolbar-group">
-            <label class="field">
-              <span class="sr-only">Filter by category</span>
-              <select id="inventory-category-filter">
-                <option value="all">All categories</option>
-                ${categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join("")}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div class="product-grid">
-          ${state.products.map((product) => renderProductCard(product, permissions)).join("")}
-        </div>
-      </section>
-
-      <section class="panel inventory-layout">
-        ${panelHeader("Representative stock assignments", "Assigned, sold, returned, and outstanding quantities by sales representative")}
-        ${table(
-          ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status", ""],
-          renderAssignmentRows(state, permissions),
-          "No stock assignments recorded"
-        )}
-      </section>
-
-      <section class="panel inventory-layout">
-        ${panelHeader("Transactions", "Sales, returns, supply, and internal stock movement records")}
-        ${table(
-          ["Transaction", "Type", "Product", "Amount", "Party", "Recorded by"],
-          renderTransactionRows(state),
-          "No stock transactions recorded"
-        )}
-      </section>
-
-      <section class="panel inventory-layout">
-        ${panelHeader("Credit limits", "Running balances against manager-approved limits")}
-        ${table(
-          ["Party", "Limit", "Balance usage", "Last change", "Changed by"],
-          renderCreditRows(state),
-          "No credit limits recorded"
-        )}
-      </section>
+      ${renderStockSubtabs(activeTabId, permissions)}
+      ${renderStockTabPage({ activeTabId, state, permissions, categories, vision })}
     </section>
   `;
 }
@@ -586,8 +716,9 @@ export function bindInventory({ root, store }) {
   const categoryFilter = qs("#inventory-category-filter", root);
   const productForm = qs("#manager-product-form", root);
   const assignmentForm = qs("#manager-assignment-form", root);
+  const requestedProductId = inventoryRouteParams().get("product");
 
-  categoryFilter.addEventListener("change", () => {
+  categoryFilter?.addEventListener("change", () => {
     qsa(".product-card", root).forEach((card) => {
       card.hidden = categoryFilter.value !== "all" && card.dataset.category !== categoryFilter.value;
     });
@@ -619,22 +750,33 @@ export function bindInventory({ root, store }) {
     if (productForm?.elements.productId) productForm.elements.productId.value = "";
   });
 
+  function fillProductForm(productId) {
+    const product = store.getState().products.find((item) => item.id === productId);
+    if (!productForm || !product) return false;
+
+    productForm.elements.productId.value = product.id;
+    productForm.elements.sku.value = product.id;
+    productForm.elements.name.value = product.name || "";
+    productForm.elements.stockCategory.value = stockCategoryIdForProduct(product);
+    productForm.elements.unit.value = productUnit(product);
+    productForm.elements.stock.value = product.stock || 0;
+    productForm.elements.reorderPoint.value = product.reorderPoint || 0;
+    productForm.elements.unitCost.value = product.unitCost || 0;
+    productForm.elements.unitPrice.value = product.unitPrice || 0;
+    productForm.elements.imageUrl.value = product.imageUrl || "";
+    productForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  }
+
+  if (requestedProductId) {
+    fillProductForm(requestedProductId);
+  }
+
   qsa(".js-edit-product", root).forEach((button) => {
     button.addEventListener("click", () => {
-      const product = store.getState().products.find((item) => item.id === button.dataset.productId);
-      if (!productForm || !product) return;
+      if (fillProductForm(button.dataset.productId)) return;
 
-      productForm.elements.productId.value = product.id;
-      productForm.elements.sku.value = product.id;
-      productForm.elements.name.value = product.name || "";
-      productForm.elements.stockCategory.value = stockCategoryIdForProduct(product);
-      productForm.elements.unit.value = productUnit(product);
-      productForm.elements.stock.value = product.stock || 0;
-      productForm.elements.reorderPoint.value = product.reorderPoint || 0;
-      productForm.elements.unitCost.value = product.unitCost || 0;
-      productForm.elements.unitPrice.value = product.unitPrice || 0;
-      productForm.elements.imageUrl.value = product.imageUrl || "";
-      productForm.scrollIntoView({ behavior: "smooth", block: "start" });
+      window.location.hash = `#/inventory?tab=add-stock&product=${encodeURIComponent(button.dataset.productId || "")}`;
     });
   });
 
