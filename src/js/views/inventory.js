@@ -18,7 +18,7 @@ import { currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 
-const DEFAULT_STOCK_TAB = "factory-health";
+const DEFAULT_STOCK_TAB = "stock-health";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -38,27 +38,9 @@ function stockTabHref(tabId) {
 function stockTabsForPermissions(permissions) {
   return [
     {
-      id: "factory-health",
-      label: "Factory stock health"
+      id: "stock-health",
+      label: "Stock health"
     },
-    {
-      id: "raw-materials",
-      label: "Raw materials"
-    },
-    {
-      id: "finished-goods",
-      label: "Finished goods"
-    },
-    {
-      id: "equipment",
-      label: "Equipment"
-    },
-    ...(permissions.canManageProducts
-      ? [{
-          id: "add-stock",
-          label: "Add/update stock"
-        }]
-      : []),
     ...(permissions.canDispatchStock || permissions.canManageStockMovements
       ? [{
           id: "dispatch",
@@ -68,10 +50,6 @@ function stockTabsForPermissions(permissions) {
     {
       id: "overview",
       label: "Lifecycle"
-    },
-    {
-      id: "categories",
-      label: "Categories"
     },
     {
       id: "assignments",
@@ -91,8 +69,12 @@ function stockTabsForPermissions(permissions) {
 function activeStockTabId(permissions) {
   const tabs = stockTabsForPermissions(permissions);
   const requestedTab = inventoryRouteParams().get("tab") || DEFAULT_STOCK_TAB;
+  const normalizedTab = ["factory-health", "add-stock", "raw-materials", "finished-goods", "equipment", "categories"]
+    .includes(requestedTab)
+    ? DEFAULT_STOCK_TAB
+    : requestedTab;
 
-  return tabs.some((tab) => tab.id === requestedTab) ? requestedTab : tabs[0].id;
+  return tabs.some((tab) => tab.id === normalizedTab) ? normalizedTab : tabs[0].id;
 }
 
 function renderStockSubtabs(activeTabId, permissions) {
@@ -201,41 +183,6 @@ function renderCustodyMetrics(vision) {
   `;
 }
 
-function renderCategoryRows(state) {
-  return state.stockCategories.map((category) => {
-    const products = state.products.filter((product) => (
-      stockCategoryIdForProduct(product) === category.id
-    ));
-    const units = products.reduce((total, product) => total + Number(product.stock || 0), 0);
-    const searchIndex = [
-      category.name,
-      category.timeframe,
-      category.behavior
-    ].join(" ").toLowerCase();
-
-    return `
-      <tr data-search-index="${escapeHtml(searchIndex)}">
-        <td>
-          <strong>${escapeHtml(category.name)}</strong>
-          <div class="muted">${formatNumber(units)} units across ${formatNumber(products.length)} item${products.length === 1 ? "" : "s"}</div>
-        </td>
-        <td>${escapeHtml(category.timeframe)}</td>
-        <td>${escapeHtml(category.behavior)}</td>
-      </tr>
-    `;
-  });
-}
-
-function stockCategoryLabel(stockCategory) {
-  const labels = {
-    raw_materials: "Raw Materials",
-    finished_products: "Finished Products",
-    equipment: "Equipment"
-  };
-
-  return labels[stockCategory] || "Finished Products";
-}
-
 function productUnit(product) {
   return product.unit || (stockCategoryIdForProduct(product) === "raw_materials" ? "kg" : "unit");
 }
@@ -248,12 +195,23 @@ function renderProductImage(product) {
   return `<span>${escapeHtml(product.name.slice(0, 2).toUpperCase())}</span>`;
 }
 
-function renderManagerProductPanel(state, permissions) {
+function renderStockProductModal(state, permissions) {
   if (!permissions.canManageProducts) return "";
 
   return `
-    <section class="panel manager-tool-panel">
-      ${panelHeader("Add or update stock", "Create products, update factory stock, pricing, and product images")}
+    <div id="stock-product-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="stock-product-modal-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Stock record</span>
+            <h2 id="stock-product-modal-title">Add stock</h2>
+          </div>
+          ${textButton({
+            iconName: "x",
+            label: "Close",
+            className: "js-close-stock-modal"
+          })}
+        </header>
       <form id="manager-product-form" class="manager-form-grid" novalidate>
         <input type="hidden" name="productId">
         <label class="field">
@@ -306,7 +264,7 @@ function renderManagerProductPanel(state, permissions) {
         <div class="manager-form-actions span-full">
           ${textButton({
             iconName: "check",
-            label: "Save product",
+            label: "Save stock",
             className: "primary",
             type: "submit"
           })}
@@ -316,8 +274,10 @@ function renderManagerProductPanel(state, permissions) {
             className: "js-clear-product-form"
           })}
         </div>
+        <span id="manager-product-message" class="field-error span-full" aria-live="polite"></span>
       </form>
-    </section>
+      </section>
+    </div>
   `;
 }
 
@@ -402,6 +362,7 @@ function renderProductCard(product, permissions) {
     <article
       class="product-card ${product.status === "inactive" ? "is-inactive" : ""}"
       data-category="${escapeHtml(product.category)}"
+      data-stock-category="${escapeHtml(stockCategoryIdForProduct(product))}"
       data-search-index="${escapeHtml(searchIndex)}"
     >
       <header>
@@ -432,7 +393,7 @@ function renderProductCard(product, permissions) {
           ${canManageProducts
             ? textButton({
                 iconName: "settings",
-                label: "Edit",
+                label: "Update",
                 className: "js-edit-product",
                 data: { "product-id": product.id }
               })
@@ -465,58 +426,6 @@ function currentStaffName(state) {
   ));
 
   return account?.name || state.user?.user_metadata?.full_name || "Store Keeper";
-}
-
-function stockCategoryTitle(categoryId) {
-  return {
-    raw_materials: "Raw materials",
-    finished_products: "Finished goods",
-    equipment: "Equipment"
-  }[categoryId] || "Factory stock";
-}
-
-function stockCategorySubtitle(categoryId) {
-  return {
-    raw_materials: "Production inputs, packaging, and consumables held inside the factory",
-    finished_products: "Produced snacks ready for representatives, supermarkets, or customer dispatch",
-    equipment: "Owned, assigned, or saleable equipment tracked by status"
-  }[categoryId] || "Current factory stock levels";
-}
-
-function stockCategoryTone(product) {
-  const health = getStockHealth(product);
-  if (health.status === "low") return "danger";
-  if (health.status === "partial") return "warning";
-  return "good";
-}
-
-function renderCategoryStockPage(state, permissions, categoryId) {
-  const products = state.products.filter((product) => stockCategoryIdForProduct(product) === categoryId);
-  const lowCount = products.filter((product) => getStockHealth(product).status !== "ready").length;
-  const totalUnits = products.reduce((total, product) => total + Number(product.stock || 0), 0);
-
-  return `
-    <div class="metric-grid stock-category-metrics">
-      ${metricCard({
-        label: "Items",
-        value: formatNumber(products.length),
-        meta: `${formatNumber(totalUnits)} units in stock`,
-        iconName: "package"
-      })}
-      ${metricCard({
-        label: "Low stock",
-        value: formatNumber(lowCount),
-        meta: lowCount ? "Needs attention" : "All clear",
-        iconName: "alert"
-      })}
-    </div>
-    <section class="panel inventory-layout">
-      ${panelHeader(stockCategoryTitle(categoryId), stockCategorySubtitle(categoryId))}
-      ${products.length
-        ? `<div class="product-grid">${products.map((product) => renderProductCard(product, permissions)).join("")}</div>`
-        : '<div class="empty-state">No items in this stock section yet</div>'}
-    </section>
-  `;
 }
 
 function recipientOptions(state) {
@@ -856,17 +765,26 @@ function renderCreditRows(state) {
   });
 }
 
-function renderFactoryStockHealthPage(state, permissions, categories) {
+function renderStockHealthPage(state, permissions) {
   return `
     <section class="panel inventory-layout">
       <div class="toolbar">
-        ${panelHeader("Factory stock health", "Raw materials, finished snacks, equipment, cover days, and replenishment risk")}
+        ${panelHeader("Stock health", "Raw materials, finished goods, equipment, cover days, and replenishment risk")}
         <div class="toolbar-group">
+          ${permissions.canManageProducts
+            ? textButton({
+                iconName: "plus",
+                label: "Add stock",
+                className: "primary js-open-stock-modal"
+              })
+            : ""}
           <label class="field">
-            <span class="sr-only">Filter by category</span>
+            <span>Stock type</span>
             <select id="inventory-category-filter">
-              <option value="all">All categories</option>
-              ${categories.map((category) => `<option value="${escapeHtml(category)}">${escapeHtml(category)}</option>`).join("")}
+              <option value="all">All stock</option>
+              ${state.stockCategories.map((category) => `
+                <option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>
+              `).join("")}
             </select>
           </label>
         </div>
@@ -879,44 +797,10 @@ function renderFactoryStockHealthPage(state, permissions, categories) {
   `;
 }
 
-function renderAddStockPage(state, permissions) {
-  if (!permissions.canManageProducts) {
-    return `
-      <section class="panel inventory-layout">
-        ${panelHeader("Add/update stock", "This stock page is not available for your role")}
-        <p>Use the stock health view to monitor products assigned to your role.</p>
-      </section>
-    `;
-  }
-
-  return `
-    ${renderManagerProductPanel(state, permissions)}
-    <section class="panel inventory-layout">
-      ${panelHeader("Product catalogue", "Pick a product to edit its stock, pricing, image, or status")}
-      <div class="product-grid">
-        ${state.products.map((product) => renderProductCard(product, permissions)).join("")}
-      </div>
-    </section>
-  `;
-}
-
 function renderOverviewPage(state, vision) {
   return `
     ${renderCustodyMetrics(vision)}
     ${renderLifecycle(state)}
-  `;
-}
-
-function renderCategoriesPage(state) {
-  return `
-    <section class="panel inventory-layout">
-      ${panelHeader("Stock categories", "Raw materials, finished products, and equipment behave differently")}
-      ${table(
-        ["Category", "Timeframe", "Operational behaviour"],
-        renderCategoryRows(state),
-        "No stock categories configured"
-      )}
-    </section>
   `;
 }
 
@@ -960,23 +844,17 @@ function renderCreditPage(state) {
   `;
 }
 
-function renderStockTabPage({ activeTabId, state, permissions, categories, vision }) {
-  if (activeTabId === "add-stock") return renderAddStockPage(state, permissions);
-  if (activeTabId === "raw-materials") return renderCategoryStockPage(state, permissions, "raw_materials");
-  if (activeTabId === "finished-goods") return renderCategoryStockPage(state, permissions, "finished_products");
-  if (activeTabId === "equipment") return renderCategoryStockPage(state, permissions, "equipment");
+function renderStockTabPage({ activeTabId, state, permissions, vision }) {
   if (activeTabId === "dispatch") return renderDispatchPage(state, permissions);
   if (activeTabId === "overview") return renderOverviewPage(state, vision);
-  if (activeTabId === "categories") return renderCategoriesPage(state);
   if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
   if (activeTabId === "movement-history") return renderTransactionsPage(state);
   if (activeTabId === "credit") return renderCreditPage(state);
 
-  return renderFactoryStockHealthPage(state, permissions, categories);
+  return renderStockHealthPage(state, permissions);
 }
 
 export function renderInventory({ state }) {
-  const categories = [...new Set(state.products.map((product) => product.category))].sort();
   const permissions = currentUserPermissions(state);
   const vision = calculateVisionMetrics(state);
   const activeTabId = activeStockTabId(permissions);
@@ -984,29 +862,64 @@ export function renderInventory({ state }) {
   return `
     <section class="view inventory-view">
       ${renderStockSubtabs(activeTabId, permissions)}
-      ${renderStockTabPage({ activeTabId, state, permissions, categories, vision })}
+      ${renderStockTabPage({ activeTabId, state, permissions, vision })}
+      ${renderStockProductModal(state, permissions)}
     </section>
   `;
 }
 
 export function bindInventory({ root, store }) {
   const categoryFilter = qs("#inventory-category-filter", root);
+  const stockModal = qs("#stock-product-modal", root);
+  const stockModalTitle = qs("#stock-product-modal-title", root);
   const productForm = qs("#manager-product-form", root);
+  const productMessage = qs("#manager-product-message", root);
   const assignmentForm = qs("#manager-assignment-form", root);
   const dispatchForm = qs("#stock-dispatch-form", root);
-  const requestedProductId = inventoryRouteParams().get("product");
+  const routeParams = inventoryRouteParams();
+  const requestedProductId = routeParams.get("product");
+  const requestedStockType = routeParams.get("type");
+  const requestedAction = routeParams.get("action");
 
-  categoryFilter?.addEventListener("change", () => {
+  function applyStockTypeFilter() {
     qsa(".product-card", root).forEach((card) => {
-      card.hidden = categoryFilter.value !== "all" && card.dataset.category !== categoryFilter.value;
+      card.hidden = categoryFilter.value !== "all" && card.dataset.stockCategory !== categoryFilter.value;
     });
-  });
+  }
+
+  categoryFilter?.addEventListener("change", applyStockTypeFilter);
+
+  if (categoryFilter && requestedStockType && [...categoryFilter.options].some((option) => option.value === requestedStockType)) {
+    categoryFilter.value = requestedStockType;
+    applyStockTypeFilter();
+  }
+
+  function resetProductForm() {
+    if (!productForm) return;
+
+    productForm.reset();
+    productForm.elements.productId.value = "";
+    if (stockModalTitle) stockModalTitle.textContent = "Add stock";
+    if (productMessage) productMessage.textContent = "";
+  }
+
+  function openStockModal() {
+    if (!stockModal || !productForm) return;
+
+    stockModal.hidden = false;
+    productForm.elements.name?.focus();
+  }
+
+  function closeStockModal() {
+    if (stockModal) stockModal.hidden = true;
+  }
 
   productForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     const formData = new FormData(productForm);
     const sku = String(formData.get("sku") || "").trim();
-    const productId = String(formData.get("productId") || sku).trim();
+    const existingProductId = String(formData.get("productId") || "").trim();
+    const productId = String(existingProductId || sku).trim();
 
     store.dispatch({
       type: "UPSERT_PRODUCT",
@@ -1020,19 +933,22 @@ export function bindInventory({ root, store }) {
       unitPrice: Number(formData.get("unitPrice") || 0),
       status: formData.get("status"),
       imageUrl: formData.get("imageUrl"),
-      message: productId ? "Product saved" : "Product created"
+      message: existingProductId ? "Stock updated" : "Stock added"
     });
+
+    closeStockModal();
   });
 
   qs(".js-clear-product-form", root)?.addEventListener("click", () => {
-    productForm?.reset();
-    if (productForm?.elements.productId) productForm.elements.productId.value = "";
+    resetProductForm();
   });
 
   function fillProductForm(productId) {
     const product = store.getState().products.find((item) => item.id === productId);
     if (!productForm || !product) return false;
 
+    if (stockModalTitle) stockModalTitle.textContent = "Update stock";
+    if (productMessage) productMessage.textContent = "";
     productForm.elements.productId.value = product.id;
     productForm.elements.sku.value = product.id;
     productForm.elements.name.value = product.name || "";
@@ -1044,7 +960,7 @@ export function bindInventory({ root, store }) {
     productForm.elements.unitPrice.value = product.unitPrice || 0;
     productForm.elements.status.value = product.status || "active";
     productForm.elements.imageUrl.value = product.imageUrl || "";
-    productForm.scrollIntoView({ behavior: "smooth", block: "start" });
+    openStockModal();
     return true;
   }
 
@@ -1052,11 +968,27 @@ export function bindInventory({ root, store }) {
     fillProductForm(requestedProductId);
   }
 
+  if (requestedAction === "add-stock") {
+    resetProductForm();
+    openStockModal();
+  }
+
+  qs(".js-open-stock-modal", root)?.addEventListener("click", () => {
+    resetProductForm();
+    openStockModal();
+  });
+
+  qsa(".js-close-stock-modal", root).forEach((button) => {
+    button.addEventListener("click", closeStockModal);
+  });
+
+  stockModal?.addEventListener("click", (event) => {
+    if (event.target === stockModal) closeStockModal();
+  });
+
   qsa(".js-edit-product", root).forEach((button) => {
     button.addEventListener("click", () => {
-      if (fillProductForm(button.dataset.productId)) return;
-
-      window.location.hash = `#/inventory?tab=add-stock&product=${encodeURIComponent(button.dataset.productId || "")}`;
+      fillProductForm(button.dataset.productId);
     });
   });
 

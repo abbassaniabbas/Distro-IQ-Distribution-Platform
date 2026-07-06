@@ -949,6 +949,46 @@
   gap: 8px;
 }
 
+.stock-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(7, 26, 47, 0.42);
+  backdrop-filter: blur(8px);
+}
+
+.stock-modal-backdrop[hidden] {
+  display: none;
+}
+
+.stock-modal {
+  display: grid;
+  width: min(100%, 820px);
+  max-height: min(88vh, 860px);
+  gap: 16px;
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: 0 24px 70px rgba(7, 26, 47, 0.22);
+}
+
+.stock-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.stock-modal-header h2 {
+  margin-top: 4px;
+  font-size: 1.25rem;
+}
+
 .product-media {
   display: grid;
   width: 46px;

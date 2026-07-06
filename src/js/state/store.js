@@ -137,6 +137,35 @@ function currentActorLabel(state) {
   return getCurrentActor(state).name || "Manager";
 }
 
+function changedFieldLabels(previousProduct, nextProduct) {
+  if (!previousProduct) return [];
+
+  const trackedFields = [
+    ["stock", "stock"],
+    ["reorderPoint", "reorder point"],
+    ["unitCost", "cost price"],
+    ["unitPrice", "selling price"],
+    ["status", "status"],
+    ["category", "category"],
+    ["unit", "unit"]
+  ];
+
+  return trackedFields
+    .filter(([key]) => String(previousProduct[key] ?? "") !== String(nextProduct[key] ?? ""))
+    .map(([, label]) => label);
+}
+
+function productActivitySummary(previousProduct, nextProduct) {
+  if (!previousProduct) {
+    return `Added stock ${nextProduct.name} with ${nextProduct.stock} ${nextProduct.unit}`;
+  }
+
+  const changedLabels = changedFieldLabels(previousProduct, nextProduct);
+  const changeText = changedLabels.length ? `: ${changedLabels.join(", ")}` : "";
+
+  return `Updated stock ${nextProduct.name}${changeText}`;
+}
+
 function appendActivityLog(state, activity) {
   if (!activity?.clientId) return;
 
@@ -547,6 +576,7 @@ function reducer(currentState, action) {
     case "UPSERT_PRODUCT": {
       const productId = String(action.productId || "").trim();
       const existingProduct = state.products.find((item) => item.id === productId);
+      const previousProduct = existingProduct ? { ...existingProduct } : null;
       const stockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
       const status = ["active", "inactive"].includes(String(action.status || "")) ? action.status : existingProduct?.status || "active";
       const product = {
@@ -579,7 +609,7 @@ function reducer(currentState, action) {
         actionType: existingProduct ? "updated" : "created",
         recordType: "inventory",
         recordLabel: product.id,
-        summary: `${existingProduct ? "Updated" : "Created"} product ${product.name}`
+        summary: productActivitySummary(previousProduct, product)
       });
 
       return state;

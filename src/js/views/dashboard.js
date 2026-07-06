@@ -801,7 +801,7 @@ function renderCeoDashboard(state) {
           <span class="eyebrow">CEO portal</span>
           <h2>Executive overview</h2>
         </div>
-        <a class="button primary" href="#/inventory?tab=add-stock">
+        <a class="button primary" href="#/inventory?action=add-stock">
           ${icon("plus")}
           <span>Add stock</span>
         </a>
@@ -870,17 +870,17 @@ function storeKeeperCategorySummary(state) {
     {
       id: "raw_materials",
       label: "Raw materials",
-      href: "#/inventory?tab=raw-materials"
+      href: "#/inventory?type=raw_materials"
     },
     {
       id: "finished_products",
       label: "Finished goods",
-      href: "#/inventory?tab=finished-goods"
+      href: "#/inventory?type=finished_products"
     },
     {
       id: "equipment",
       label: "Equipment",
-      href: "#/inventory?tab=equipment"
+      href: "#/inventory?type=equipment"
     }
   ];
 

@@ -101,10 +101,10 @@ export function renderActivityLog({ state }) {
   const isAccountant = role === "accountant";
   const title = isStoreKeeper ? "Store activity log" : isAccountant ? "Finance activity log" : "Activity log";
   const subtitle = isStoreKeeper
-    ? "Stock movements, representative assignments, and in-transit run updates"
+    ? "Permanent searchable record of stock movements, representative assignments, and in-transit run updates"
     : isAccountant
-      ? "Sales, payments, credit balances, and submitted reports"
-      : "Review what changed, who changed it, and when";
+      ? "Permanent searchable record of sales, payments, credit balances, and submitted reports"
+      : "Permanent searchable record of what changed, who changed it, and when";
 
   return `
     <section class="view activity-log-view">
@@ -112,6 +112,10 @@ export function renderActivityLog({ state }) {
         <div class="toolbar">
           ${panelHeader(title, subtitle)}
           <div class="toolbar-group activity-filters">
+            <label class="field">
+              <span>Search</span>
+              <input id="activity-search" type="search" placeholder="Search activity">
+            </label>
             <label class="field">
               <span>Date from</span>
               <input id="activity-date-from" type="date">
@@ -148,13 +152,15 @@ export function renderActivityLog({ state }) {
 }
 
 export function bindActivityLog({ root }) {
+  const searchFilter = qs("#activity-search", root);
   const fromFilter = qs("#activity-date-from", root);
   const toFilter = qs("#activity-date-to", root);
   const userFilter = qs("#activity-user-filter", root);
   const actionFilter = qs("#activity-action-filter", root);
-  const filters = [fromFilter, toFilter, userFilter, actionFilter].filter(Boolean);
+  const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter].filter(Boolean);
 
   function applyFilters() {
+    const query = String(searchFilter?.value || "").trim().toLowerCase();
     const from = fromFilter?.value || "";
     const to = toFilter?.value || "";
     const user = userFilter?.value || "all";
@@ -165,8 +171,9 @@ export function bindActivityLog({ root }) {
       const matchesDateTo = !to || row.dataset.date <= to;
       const matchesUser = user === "all" || row.dataset.user === user;
       const matchesAction = action === "all" || row.dataset.action === action;
+      const matchesSearch = !query || String(row.dataset.searchIndex || "").includes(query);
 
-      row.hidden = !matchesDateFrom || !matchesDateTo || !matchesUser || !matchesAction;
+      row.hidden = !matchesSearch || !matchesDateFrom || !matchesDateTo || !matchesUser || !matchesAction;
     });
   }
 
