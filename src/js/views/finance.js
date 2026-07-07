@@ -7,7 +7,7 @@ import {
   getRetailerMap
 } from "../services/calculations.js";
 import { formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
-import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
+import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -327,15 +327,17 @@ function renderAccountantFilters(state) {
   const products = [...(state.products || [])]
     .filter((product) => Number(product.unitPrice || 0) > 0)
     .sort((a, b) => a.name.localeCompare(b.name));
-  const repNames = new Set();
+  const accountNames = salesRepresentativeNames(state);
+  const repNames = new Set(accountNames);
 
-  (state.salesReports || []).forEach((report) => repNames.add(report.repName));
-  (state.routes || []).forEach((route) => repNames.add(route.driver));
-  (state.creditLimits || []).forEach((limit) => {
-    if (String(limit.partyType || "").toLowerCase().includes("representative")) {
-      repNames.add(limit.partyName);
-    }
-  });
+  if (!accountNames.length) {
+    (state.salesReports || []).forEach((report) => repNames.add(report.repName));
+    (state.creditLimits || []).forEach((limit) => {
+      if (String(limit.partyType || "").toLowerCase().includes("representative")) {
+        repNames.add(limit.partyName);
+      }
+    });
+  }
 
   const representatives = [...repNames].filter(Boolean).sort((a, b) => a.localeCompare(b));
 

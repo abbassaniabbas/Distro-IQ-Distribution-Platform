@@ -1,6 +1,7 @@
 import seedData from "../data/seed-data.js";
 import { createActivityLog, getCurrentActor } from "../services/activity.js";
 import { getCreditGuardForOrder } from "../services/calculations.js";
+import { salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
 
@@ -32,6 +33,16 @@ function todayISO() {
 
 function currentActorName(state) {
   return getCurrentActor(state).name || "Sales Representative";
+}
+
+function isSalesRepresentativeName(state, name) {
+  const normalizedName = String(name || "").trim().toLowerCase();
+
+  if (!normalizedName) return false;
+
+  return salesRepresentativeNames(state).some((repName) => (
+    String(repName || "").trim().toLowerCase() === normalizedName
+  ));
 }
 
 function updateCreditBalance(state, partyName, creditImpact) {
@@ -550,6 +561,16 @@ function reducer(currentState, action) {
         unitsSold: Number(action.unitsSold || 0),
         unitsReturned: Number(action.unitsReturned || 0),
         transactionIds: Array.isArray(action.transactionIds) ? action.transactionIds : [],
+        reportLines: Array.isArray(action.reportLines) ? action.reportLines.map((line) => ({
+          transactionId: String(line.transactionId || ""),
+          type: String(line.type || "Sale"),
+          productId: String(line.productId || ""),
+          productName: String(line.productName || "Unknown snack"),
+          customerName: String(line.customerName || "Customer"),
+          quantity: Number(line.quantity || 0),
+          amount: Number(line.amount || 0),
+          paymentType: String(line.paymentType || "cash")
+        })) : [],
         status: "submitted",
         reviewNote: "",
         submittedAt: new Date().toISOString()
@@ -636,8 +657,9 @@ function reducer(currentState, action) {
     case "LOAD_STOCK_ASSIGNMENT": {
       const product = state.products.find((item) => item.id === action.productId);
       const quantity = Math.max(0, Number(action.quantity || 0));
+      const repName = String(action.repName || "").trim();
 
-      if (!product || !quantity || Number(product.stock || 0) < quantity) {
+      if (!product || !quantity || Number(product.stock || 0) < quantity || !isSalesRepresentativeName(state, repName)) {
         return state;
       }
 
@@ -647,7 +669,7 @@ function reducer(currentState, action) {
         {
           id: createId("ASN"),
           routeId: action.routeId || "Factory load",
-          repName: action.repName || "Sales Representative",
+          repName,
           productId: product.id,
           assignedAt: todayISO(),
           assigned: quantity,
@@ -668,8 +690,8 @@ function reducer(currentState, action) {
           amount: quantity * Number(product.unitPrice || 0),
           paymentType: "none",
           partyType: "Sales Representative",
-          partyName: action.repName || "Sales Representative",
-          recipientName: action.repName || "Sales Representative",
+          partyName: repName,
+          recipientName: repName,
           dispatchDestination: action.routeId || "Representative run",
           staffResponsible: currentActorName(state),
           date: todayISO(),
@@ -685,7 +707,7 @@ function reducer(currentState, action) {
         actionType: "assigned",
         recordType: "stock_movement",
         recordLabel: product.id,
-        summary: `Loaded ${quantity} ${product.name} to ${action.repName}`
+        summary: `Loaded ${quantity} ${product.name} to ${repName}`
       });
 
       return state;
@@ -701,6 +723,10 @@ function reducer(currentState, action) {
       const dispatchDate = action.dispatchDate || todayISO();
 
       if (!product || !quantity || Number(product.stock || 0) < quantity) {
+        return state;
+      }
+
+      if (recipientType.toLowerCase().includes("representative") && !isSalesRepresentativeName(state, recipientName)) {
         return state;
       }
 

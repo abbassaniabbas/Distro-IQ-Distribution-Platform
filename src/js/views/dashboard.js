@@ -111,6 +111,26 @@ function repDaySummary(transactions) {
   });
 }
 
+function repTransactionLine(transaction, state) {
+  const product = (state.products || []).find((item) => item.id === transaction.productId);
+  const type = normalized(transaction.type) === "return" ? "Customer return" : "Sale";
+
+  return {
+    transactionId: transaction.id,
+    type,
+    productId: transaction.productId,
+    productName: product?.name || "Unknown snack",
+    customerName: transaction.partyName || "Customer",
+    quantity: Number(transaction.quantity || 0),
+    amount: Number(transaction.amount || 0),
+    paymentType: transaction.paymentType || "cash"
+  };
+}
+
+function repTransactionLines(transactions, state) {
+  return transactions.map((transaction) => repTransactionLine(transaction, state));
+}
+
 function toTimestamp(value) {
   if (!value) return 0;
 
@@ -1303,12 +1323,25 @@ function renderManagerOperationsLayout(state, permissions, vision) {
 }
 
 function renderManagerReportRows(state) {
+  const transactionMap = new Map((state.stockTransactions || []).map((transaction) => [transaction.id, transaction]));
+
   return (state.salesReports || []).map((report) => {
+    const reportLines = (report.reportLines || []).length
+      ? report.reportLines
+      : (report.transactionIds || [])
+        .map((transactionId) => transactionMap.get(transactionId))
+        .filter(Boolean)
+        .map((transaction) => repTransactionLine(transaction, state));
+    const linePreview = reportLines
+      .slice(0, 2)
+      .map((line) => `${line.customerName} - ${line.productName}`)
+      .join(", ");
     const searchIndex = [
       report.repName,
       report.reportDate,
       report.status,
-      report.reviewNote
+      report.reviewNote,
+      ...reportLines.flatMap((line) => [line.customerName, line.productName])
     ].join(" ").toLowerCase();
 
     return `
@@ -1328,7 +1361,7 @@ function renderManagerReportRows(state) {
         </td>
         <td>
           ${escapeHtml(report.reviewNote || "No query")}
-          <div class="muted">${formatNumber((report.transactionIds || []).length)} linked record${(report.transactionIds || []).length === 1 ? "" : "s"}</div>
+          <div class="muted">${linePreview ? escapeHtml(linePreview) : `${formatNumber((report.transactionIds || []).length)} linked record${(report.transactionIds || []).length === 1 ? "" : "s"}`}</div>
         </td>
         <td>
           <div class="row-actions">
@@ -1518,14 +1551,14 @@ function renderRepQuickLog(state, assignments) {
     <section class="panel rep-action-panel">
       ${panelHeader("Quick log", "")}
       <form id="rep-log-form" class="rep-log-form" novalidate>
-        <fieldset class="rep-type-toggle" aria-label="Choose sale or return">
+        <fieldset class="rep-type-toggle" aria-label="Choose sale or customer return">
           <label>
             <input type="radio" name="transactionType" value="sale" checked>
             <span>Sale</span>
           </label>
           <label>
             <input type="radio" name="transactionType" value="return">
-            <span>Return</span>
+            <span>Customer return</span>
           </label>
         </fieldset>
 
@@ -1565,22 +1598,24 @@ function renderRepQuickLog(state, assignments) {
   `;
 }
 
-function renderRepActivity(transactions) {
+function renderRepActivity(transactions, state) {
   if (!transactions.length) {
     return '<div class="empty-state">No sales yet today</div>';
   }
 
+  const lines = repTransactionLines(transactions, state);
+
   return `
     <div class="rep-activity-list">
-      ${transactions.map((transaction) => `
-        <article class="rep-activity-item" data-search-index="${escapeHtml(`${transaction.type} ${transaction.partyName} ${transaction.paymentType}`.toLowerCase())}">
+      ${lines.map((line) => `
+        <article class="rep-activity-item" data-search-index="${escapeHtml(`${line.type} ${line.customerName} ${line.productName} ${line.paymentType}`.toLowerCase())}">
           <div>
-            <strong>${escapeHtml(transaction.type === "return" ? "Return" : "Sale")}</strong>
-            <span>${escapeHtml(transaction.partyName)}</span>
+            <strong>${escapeHtml(line.productName)}</strong>
+            <span>${escapeHtml(line.customerName)}</span>
           </div>
           <div>
-            <strong>${formatCurrency(transaction.amount)}</strong>
-            <span>${formatNumber(transaction.quantity)} units - ${escapeHtml(transaction.paymentType)}</span>
+            <strong>${formatCurrency(line.amount)}</strong>
+            <span>${escapeHtml(line.type)} - ${formatNumber(line.quantity)} units - ${escapeHtml(line.paymentType)}</span>
           </div>
         </article>
       `).join("")}
@@ -1588,7 +1623,32 @@ function renderRepActivity(transactions) {
   `;
 }
 
-function renderRepReportPanel(repName, transactions, summary, existingReport) {
+function renderRepReportLines(transactions, state) {
+  if (!transactions.length) {
+    return '<div class="empty-state">No lines to report yet</div>';
+  }
+
+  const lines = repTransactionLines(transactions, state);
+
+  return `
+    <div class="rep-report-lines" aria-label="Daily report lines">
+      ${lines.map((line) => `
+        <article class="rep-report-line">
+          <div>
+            <strong>${escapeHtml(line.productName)}</strong>
+            <span>${escapeHtml(line.customerName)}</span>
+          </div>
+          <div>
+            <strong>${formatNumber(line.quantity)}</strong>
+            <span>${escapeHtml(line.type)} - ${formatCurrency(line.amount)}</span>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderRepReportPanel(repName, transactions, summary, existingReport, state) {
   const hasActivity = transactions.length > 0;
   const existingIds = (existingReport?.transactionIds || []).join(",");
   const currentIds = summary.transactionIds.join(",");
@@ -1617,6 +1677,7 @@ function renderRepReportPanel(repName, transactions, summary, existingReport) {
           <strong>${formatCurrency(summary.returnAmount)}</strong>
         </div>
       </div>
+      ${renderRepReportLines(transactions, state)}
       <button
         class="button primary js-submit-rep-report"
         type="button"
@@ -1633,6 +1694,21 @@ function renderRepReportPanel(repName, transactions, summary, existingReport) {
       >
         <span>${escapeHtml(buttonLabel)}</span>
       </button>
+    </section>
+  `;
+}
+
+function renderRepCreditPanel(creditLimit, creditUsage) {
+  return `
+    <section class="panel rep-credit-panel">
+      ${panelHeader("Credit", creditLimit ? `${formatCurrency(creditLimit.balance)} of ${formatCurrency(creditLimit.limit)}` : "No limit set")}
+      <div class="stock-line rep-credit-line">
+        <div class="stock-meta">
+          <span>${formatPercent(creditUsage)} used</span>
+          <span>${formatCurrency(Math.max(0, Number(creditLimit?.limit || 0) - Number(creditLimit?.balance || 0)))} left</span>
+        </div>
+        ${progressBar(creditUsage, creditUsage >= 100 ? "danger" : creditUsage >= 85 ? "warning" : "good")}
+      </div>
     </section>
   `;
 }
@@ -1674,18 +1750,11 @@ function renderSalesRepDashboard(state) {
       </section>
 
       <div class="rep-main-grid">
-        ${renderRepQuickLog(state, assignments)}
-        <section class="panel">
-          ${panelHeader("Credit", creditLimit ? `${formatCurrency(creditLimit.balance)} of ${formatCurrency(creditLimit.limit)}` : "No limit set")}
-          <div class="stock-line rep-credit-line">
-            <div class="stock-meta">
-              <span>${formatPercent(creditUsage)} used</span>
-              <span>${formatCurrency(Math.max(0, Number(creditLimit?.limit || 0) - Number(creditLimit?.balance || 0)))} left</span>
-            </div>
-            ${progressBar(creditUsage, creditUsage >= 100 ? "danger" : creditUsage >= 85 ? "warning" : "good")}
-          </div>
-        </section>
-        ${renderRepReportPanel(repName, transactions, summary, existingReport)}
+        <div class="rep-side-stack">
+          ${renderRepQuickLog(state, assignments)}
+          ${renderRepCreditPanel(creditLimit, creditUsage)}
+        </div>
+        ${renderRepReportPanel(repName, transactions, summary, existingReport, state)}
       </div>
 
       <section class="panel">
@@ -1695,7 +1764,7 @@ function renderSalesRepDashboard(state) {
 
       <section class="panel">
         ${panelHeader("Saved today", `${formatNumber(summary.unitsSold)} sold - ${formatNumber(summary.unitsReturned)} returned`)}
-        ${renderRepActivity(transactions)}
+        ${renderRepActivity(transactions, state)}
       </section>
     </section>
   `;
@@ -2238,12 +2307,20 @@ function bindSalesRepDashboard({ root, store }) {
       transactionType,
       paymentType,
       repName,
-      message: transactionType === "return" ? "Return saved" : "Sale saved"
+      message: transactionType === "return" ? "Customer return saved" : "Sale saved"
     });
   });
 
   qsa(".js-submit-rep-report", root).forEach((button) => {
     button.addEventListener("click", () => {
+      const state = store.getState();
+      const transactionIds = String(button.dataset.transactionIds || "").split(",").filter(Boolean);
+      const transactionMap = new Map((state.stockTransactions || []).map((transaction) => [transaction.id, transaction]));
+      const reportLines = transactionIds
+        .map((transactionId) => transactionMap.get(transactionId))
+        .filter(Boolean)
+        .map((transaction) => repTransactionLine(transaction, state));
+
       store.dispatch({
         type: "SUBMIT_REP_REPORT",
         repName: button.dataset.repName,
@@ -2254,7 +2331,8 @@ function bindSalesRepDashboard({ root, store }) {
         returnAmount: Number(button.dataset.returnAmount || 0),
         unitsSold: Number(button.dataset.unitsSold || 0),
         unitsReturned: Number(button.dataset.unitsReturned || 0),
-        transactionIds: String(button.dataset.transactionIds || "").split(",").filter(Boolean),
+        transactionIds,
+        reportLines,
         message: "Sales report submitted"
       });
     });

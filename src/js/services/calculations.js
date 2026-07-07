@@ -253,9 +253,21 @@ export function calculateVisionMetrics(state) {
 
 export function buildRepLedger(state) {
   const ledger = new Map();
+  const validRepNames = new Set((state.accounts || [])
+    .filter((account) => {
+      const role = String(account.role || "").trim().toLowerCase();
+      return role === "sales_rep" || role.includes("sales rep") || role.includes("sales representative");
+    })
+    .map((account) => String(account.name || "").trim().toLowerCase())
+    .filter(Boolean));
+  const shouldFilterByAccounts = validRepNames.size > 0;
 
   (state.stockAssignments || []).forEach((assignment) => {
     const key = assignment.repName || "Unassigned";
+    const normalizedKey = String(key).trim().toLowerCase();
+
+    if (shouldFilterByAccounts && !validRepNames.has(normalizedKey)) return;
+
     const row = ledger.get(key) || {
       repName: key,
       assignments: 0,

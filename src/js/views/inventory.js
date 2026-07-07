@@ -14,7 +14,7 @@ import {
   formatPercent,
   statusText
 } from "../services/formatters.js";
-import { currentUserPermissions } from "../services/rbac.js";
+import { currentUserPermissions, salesRepresentativeNames } from "../services/rbac.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -297,11 +297,13 @@ function renderStockProductModal(state, permissions) {
 }
 
 function managerRepOptions(state) {
-  const names = new Set([
-    ...(state.accounts || []).filter((account) => account.role === "sales_rep").map((account) => account.name),
-    ...(state.routes || []).map((route) => route.driver),
-    ...(state.stockAssignments || []).map((assignment) => assignment.repName)
-  ].filter(Boolean));
+  const accountNames = salesRepresentativeNames(state);
+
+  if (accountNames.length) {
+    return accountNames;
+  }
+
+  const names = new Set((state.stockAssignments || []).map((assignment) => assignment.repName).filter(Boolean));
 
   return [...names].sort();
 }
@@ -444,11 +446,10 @@ function currentStaffName(state) {
 }
 
 function recipientOptions(state) {
-  const representatives = new Set([
-    ...(state.accounts || []).filter((account) => account.role === "sales_rep").map((account) => account.name),
-    ...(state.routes || []).map((route) => route.driver),
-    ...(state.stockAssignments || []).map((assignment) => assignment.repName)
-  ].filter(Boolean));
+  const accountNames = salesRepresentativeNames(state);
+  const representatives = new Set(accountNames.length
+    ? accountNames
+    : (state.stockAssignments || []).map((assignment) => assignment.repName).filter(Boolean));
 
   return [
     ...[...representatives].sort().map((name) => ({ type: "Sales Representative", name })),

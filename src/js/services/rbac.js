@@ -137,6 +137,17 @@ export function roleLabel(role) {
   return ROLE_OPTIONS.find((item) => item.value === normalizedRole)?.label || "Sales Representative";
 }
 
+export function salesRepresentativeAccounts(state) {
+  return (state.accounts || []).filter((account) => normalizeRole(account.role) === "sales_rep");
+}
+
+export function salesRepresentativeNames(state) {
+  return salesRepresentativeAccounts(state)
+    .map((account) => String(account.name || "").trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+}
+
 export function roleDescription(role) {
   const normalizedRole = normalizeRole(role);
   return ROLE_OPTIONS.find((item) => item.value === normalizedRole)?.description || "";
