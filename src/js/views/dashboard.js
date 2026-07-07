@@ -584,9 +584,11 @@ function renderCeoSupermarketRows(supermarketRows) {
   return supermarketRows
     .sort((a, b) => b.balance - a.balance)
     .map((row) => {
+      const customerState = row.retailer.stateName || row.retailer.region || "";
+      const customerLocation = [row.retailer.city, customerState].filter(Boolean).join(" - ");
       const searchIndex = [
         row.retailer.name,
-        row.retailer.region,
+        customerState,
         row.status,
         row.productIds.join(" ")
       ].join(" ").toLowerCase();
@@ -602,7 +604,7 @@ function renderCeoSupermarketRows(supermarketRows) {
         >
           <td>
             <strong>${escapeHtml(row.retailer.name)}</strong>
-            <div class="muted">${escapeHtml(row.retailer.city)} - ${escapeHtml(row.retailer.region)}</div>
+            <div class="muted">${escapeHtml(customerLocation || "Location not set")}</div>
           </td>
           <td>
             ${formatNumber(row.orderCount)} order${row.orderCount === 1 ? "" : "s"}

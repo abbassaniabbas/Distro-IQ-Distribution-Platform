@@ -962,15 +962,18 @@ function reducer(currentState, action) {
       const retailerId = String(action.retailerId || "").trim();
       const existingRetailer = state.retailers.find((item) => item.id === retailerId);
       const previousName = existingRetailer?.name;
-      const nextName = String(action.name || existingRetailer?.name || "New supermarket").trim();
+      const nextName = String(action.name || existingRetailer?.name || "New customer").trim();
+      const stateName = String(action.stateName ?? action.region ?? existingRetailer?.stateName ?? existingRetailer?.region ?? "").trim();
       const retailer = {
         id: retailerId || createId("RTL"),
         name: nextName,
-        city: String(action.city || existingRetailer?.city || "").trim(),
-        region: String(action.region || existingRetailer?.region || "").trim(),
-        tier: String(action.tier || existingRetailer?.tier || "Standard").trim(),
-        channel: String(action.channel || existingRetailer?.channel || "Supermarket").trim(),
-        contact: String(action.contact || existingRetailer?.contact || "").trim(),
+        city: String(action.city ?? existingRetailer?.city ?? "").trim(),
+        region: stateName,
+        stateName,
+        address: String(action.address ?? existingRetailer?.address ?? "").trim(),
+        tier: String(action.tier ?? existingRetailer?.tier ?? "Standard").trim(),
+        channel: String(action.channel ?? existingRetailer?.channel ?? "Supermarket").trim(),
+        contact: String(action.contact ?? existingRetailer?.contact ?? "").trim(),
         fillRate: Math.max(0, Math.min(100, Number(action.fillRate ?? existingRetailer?.fillRate ?? 0))),
         outstanding: Math.max(0, Number(action.outstanding ?? existingRetailer?.outstanding ?? 0)),
         lastOrder: existingRetailer?.lastOrder || todayISO(),
@@ -999,7 +1002,7 @@ function reducer(currentState, action) {
         if (!creditLimit) {
           creditLimit = {
             id: createId("CRD"),
-            partyType: "Supermarket",
+            partyType: "Customer",
             partyName: nextName,
             limit: requestedLimit,
             balance: retailer.outstanding,
@@ -1033,7 +1036,7 @@ function reducer(currentState, action) {
             paymentPeriodDays,
             latePenaltyPercent,
             changedBy,
-            reason: "Supermarket relationship terms updated",
+            reason: "Customer payment terms updated",
             changedAt
           },
           ...(state.creditLimitHistory || [])

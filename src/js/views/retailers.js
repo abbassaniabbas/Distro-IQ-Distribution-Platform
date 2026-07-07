@@ -13,23 +13,27 @@ function renderSupermarketManager(state, permissions) {
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader("Supermarket relationship", "Add or update customer details, channel, territory, and credit terms")}
+      ${panelHeader("Customer relationship", "Add or update customer details, location, customer type, and payment terms")}
       <form id="retailer-form" class="manager-form-grid" novalidate>
         <input type="hidden" name="retailerId">
         <label class="field">
-          <span>Supermarket name</span>
+          <span>Customer name</span>
           <input name="name" placeholder="Customer outlet name" required>
         </label>
         <label class="field">
-          <span>City</span>
+          <span>City or town</span>
           <input name="city" placeholder="Lagos">
         </label>
         <label class="field">
-          <span>Territory</span>
-          <input name="region" placeholder="South West">
+          <span>State</span>
+          <input name="stateName" placeholder="Lagos">
         </label>
         <label class="field">
-          <span>Tier</span>
+          <span>Address</span>
+          <input name="address" placeholder="Street, area, or landmark">
+        </label>
+        <label class="field">
+          <span>Customer level</span>
           <select name="tier">
             <option value="Platinum">Platinum</option>
             <option value="Gold">Gold</option>
@@ -39,41 +43,50 @@ function renderSupermarketManager(state, permissions) {
           </select>
         </label>
         <label class="field">
-          <span>Channel</span>
-          <input name="channel" placeholder="Supermarket, Wholesale, Kiosk">
+          <span>Customer type</span>
+          <select name="channel">
+            <option value="Supermarket">Supermarket</option>
+            <option value="Wholesale">Wholesale</option>
+            <option value="Distributor">Distributor</option>
+            <option value="Mini mart">Mini mart</option>
+            <option value="Kiosk">Kiosk</option>
+            <option value="Restaurant / Hotel">Restaurant / Hotel</option>
+            <option value="School / Canteen">School / Canteen</option>
+            <option value="Other">Other</option>
+          </select>
         </label>
         <label class="field">
           <span>Contact person</span>
           <input name="contact" placeholder="Store manager">
         </label>
         <label class="field">
-          <span>Fill rate</span>
+          <span>Orders completed (%)</span>
           <input name="fillRate" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="90">
         </label>
         <label class="field">
-          <span>Outstanding balance</span>
+          <span>Amount owed</span>
           <input name="outstanding" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
         </label>
         <label class="field">
-          <span>Credit limit</span>
+          <span>Maximum credit allowed</span>
           <input name="creditLimit" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
         </label>
         <label class="field">
-          <span>Discount</span>
+          <span>Discount (%)</span>
           <input name="discountPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
         </label>
         <label class="field">
-          <span>Payment period</span>
+          <span>Days to pay</span>
           <input name="paymentPeriodDays" type="number" min="0" step="1" inputmode="numeric" placeholder="14">
         </label>
         <label class="field">
-          <span>Late penalty</span>
+          <span>Late payment penalty (%)</span>
           <input name="latePenaltyPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
         </label>
         <div class="manager-form-actions span-full">
           ${textButton({
             iconName: "check",
-            label: "Save supermarket",
+            label: "Save customer",
             className: "primary",
             type: "submit"
           })}
@@ -100,7 +113,9 @@ function renderRetailerCard(retailer, state, permissions) {
     retailer.id,
     retailer.name,
     retailer.city,
+    retailer.stateName,
     retailer.region,
+    retailer.address,
     retailer.tier,
     retailer.channel,
     retailer.contact,
@@ -125,8 +140,16 @@ function renderRetailerCard(retailer, state, permissions) {
 
       <div class="stack">
         <div class="split">
-          <span class="muted">Territory</span>
-          <strong>${escapeHtml(retailer.region)}</strong>
+          <span class="muted">State</span>
+          <strong>${escapeHtml(retailer.stateName || retailer.region || "Not set")}</strong>
+        </div>
+        <div class="split">
+          <span class="muted">Address</span>
+          <strong>${escapeHtml(retailer.address || "Not set")}</strong>
+        </div>
+        <div class="split">
+          <span class="muted">Customer type</span>
+          <strong>${escapeHtml(retailer.channel || "Not set")}</strong>
         </div>
         <div class="split">
           <span class="muted">Contact</span>
@@ -156,7 +179,7 @@ function renderRetailerCard(retailer, state, permissions) {
 
       <div class="stock-line">
         <div class="stock-meta">
-          <span>Fill rate</span>
+          <span>Orders completed</span>
           <span>${formatPercent(retailer.fillRate)}</span>
         </div>
         ${progressBar(retailer.fillRate, retailer.fillRate < 88 ? "warning" : "good")}
@@ -242,9 +265,12 @@ export function bindRetailers({ root, store }) {
     retailerForm.elements.retailerId.value = retailer.id;
     retailerForm.elements.name.value = retailer.name || "";
     retailerForm.elements.city.value = retailer.city || "";
-    retailerForm.elements.region.value = retailer.region || "";
+    retailerForm.elements.stateName.value = retailer.stateName || retailer.region || "";
+    retailerForm.elements.address.value = retailer.address || "";
     retailerForm.elements.tier.value = retailer.tier || "Standard";
-    retailerForm.elements.channel.value = retailer.channel || "";
+    const channelValue = retailer.channel || "Supermarket";
+    const hasChannelOption = [...retailerForm.elements.channel.options].some((option) => option.value === channelValue);
+    retailerForm.elements.channel.value = hasChannelOption ? channelValue : "Other";
     retailerForm.elements.contact.value = retailer.contact || "";
     retailerForm.elements.fillRate.value = retailer.fillRate || 0;
     retailerForm.elements.outstanding.value = creditLimit?.balance ?? retailer.outstanding ?? 0;
@@ -263,7 +289,7 @@ export function bindRetailers({ root, store }) {
     if (message) message.textContent = "";
 
     if (!String(formData.get("name") || "").trim()) {
-      if (message) message.textContent = "Supermarket name is required.";
+      if (message) message.textContent = "Customer name is required.";
       return;
     }
 
@@ -272,7 +298,8 @@ export function bindRetailers({ root, store }) {
       retailerId: formData.get("retailerId"),
       name: formData.get("name"),
       city: formData.get("city"),
-      region: formData.get("region"),
+      stateName: formData.get("stateName"),
+      address: formData.get("address"),
       tier: formData.get("tier"),
       channel: formData.get("channel"),
       contact: formData.get("contact"),
@@ -282,7 +309,7 @@ export function bindRetailers({ root, store }) {
       discountPercent: formData.get("discountPercent"),
       paymentPeriodDays: formData.get("paymentPeriodDays"),
       latePenaltyPercent: formData.get("latePenaltyPercent"),
-      message: "Supermarket relationship saved"
+      message: "Customer saved"
     });
   });
 
