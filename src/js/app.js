@@ -263,11 +263,16 @@ function renderNav(activeRouteId, state) {
 
   navRoot.innerHTML = visibleItems.map((item) => {
     const isActive = item.id === activeRouteId;
+    const label = role === "sales_rep" && item.id === "dashboard"
+      ? "My Day"
+      : role === "sales_rep" && item.id === "activity-log"
+        ? "Recent Activity"
+        : item.label;
 
     return `
       <a class="nav-link ${isActive ? "is-active" : ""}" href="#/${item.id}" aria-current="${isActive ? "page" : "false"}">
         ${icon(item.icon)}
-        <span>${escapeHtml(role === "sales_rep" && item.id === "dashboard" ? "My Day" : item.label)}</span>
+        <span>${escapeHtml(label)}</span>
       </a>
     `;
   }).join("");
@@ -362,7 +367,11 @@ function render() {
   renderNav(routeId, state);
   updateSidebar(state);
   updateTopbarUtilities(state, view);
-  viewTitle.textContent = currentUserRole(state) === "sales_rep" && routeId === "dashboard" ? "My Day" : view.title;
+  viewTitle.textContent = currentUserRole(state) === "sales_rep" && routeId === "dashboard"
+    ? "My Day"
+    : currentUserRole(state) === "sales_rep" && routeId === "activity-log"
+      ? "Recent Activity"
+      : view.title;
   globalSearch.disabled = Boolean(view.isSetup);
   signOutButton.hidden = !state.session;
   if (view.isSetup) {

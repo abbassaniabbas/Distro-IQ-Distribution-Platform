@@ -751,6 +751,31 @@
   gap: 10px;
 }
 
+.rep-log-sections {
+  display: grid;
+  gap: 12px;
+}
+
+.rep-log-card {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f8fbfd;
+}
+
+.rep-log-card-header {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rep-log-card-header strong {
+  font-size: 0.95rem;
+}
+
 .rep-type-toggle {
   display: grid;
   grid-column: 1 / -1;

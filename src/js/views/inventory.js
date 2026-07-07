@@ -448,18 +448,71 @@ function currentStaffName(state) {
   return account?.name || state.user?.user_metadata?.full_name || "Store Keeper";
 }
 
-function recipientOptions(state) {
+function dispatchRecipientOptions(state, recipientType) {
   const accountNames = salesRepresentativeNames(state);
   const representatives = new Set(accountNames.length
     ? accountNames
     : (state.stockAssignments || []).map((assignment) => assignment.repName).filter(Boolean));
+  const normalizedType = String(recipientType || "").toLowerCase();
 
+  if (normalizedType.includes("representative")) {
+    const options = [...representatives].sort().map((name) => ({ value: name, label: name }));
+
+    return options.length
+      ? options
+      : [{ value: "", label: "No saved sales representatives", disabled: true }];
+  }
+
+  if (normalizedType.includes("supermarket")) {
+    return [
+      ...(state.retailers || [])
+        .slice()
+        .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
+        .map((retailer) => ({
+          value: retailer.name,
+          label: [retailer.name, retailer.city || retailer.stateName || retailer.region].filter(Boolean).join(" - ")
+        })),
+      { value: "__other__", label: "Other customer / supermarket" }
+    ];
+  }
+
+  if (normalizedType.includes("internal")) {
+    return [
+      { value: "Production Line", label: "Production Line" },
+      { value: "Packaging Store", label: "Packaging Store" },
+      { value: "Finished Goods Store", label: "Finished Goods Store" },
+      { value: "Raw Materials Store", label: "Raw Materials Store" },
+      { value: "__other__", label: "Other internal location" }
+    ];
+  }
+
+  return [{ value: "__other__", label: "Other recipient" }];
+}
+
+function renderDispatchRecipientOptions(state, recipientType) {
   return [
-    ...[...representatives].sort().map((name) => ({ type: "Sales Representative", name })),
-    ...(state.retailers || []).map((retailer) => ({ type: "Supermarket", name: retailer.name })),
-    { type: "Internal Location", name: "Production Line" },
-    { type: "Internal Location", name: "Packaging Store" }
-  ];
+    '<option value="">Choose recipient</option>',
+    ...dispatchRecipientOptions(state, recipientType).map((option) => `
+      <option value="${escapeHtml(option.value)}" ${option.disabled ? "disabled" : ""}>${escapeHtml(option.label)}</option>
+    `)
+  ].join("");
+}
+
+function otherRecipientPlaceholder(recipientType) {
+  const normalizedType = String(recipientType || "").toLowerCase();
+
+  if (normalizedType.includes("supermarket")) return "Type customer or supermarket name";
+  if (normalizedType.includes("internal")) return "Type internal location";
+  return "Type recipient name";
+}
+
+function destinationPlaceholder(recipientType) {
+  const normalizedType = String(recipientType || "").toLowerCase();
+
+  if (normalizedType.includes("representative")) return "Van number, route, or run";
+  if (normalizedType.includes("supermarket")) return "Outlet branch, city, or delivery address";
+  if (normalizedType.includes("internal")) return "Store room, production line, or equipment bay";
+  return "Where the stock is going";
 }
 
 function renderDispatchForm(state, permissions) {
@@ -496,14 +549,14 @@ function renderDispatchForm(state, permissions) {
         </label>
         <label class="field">
           <span>Recipient</span>
-          <input name="recipientName" list="dispatch-recipient-list" placeholder="Name or outlet" required>
-          <datalist id="dispatch-recipient-list">
-            ${recipientOptions(state).map((option) => `<option value="${escapeHtml(option.name)}">${escapeHtml(option.type)}</option>`).join("")}
-          </datalist>
+          <select name="recipientNameChoice" data-dispatch-recipient-select required>
+            ${renderDispatchRecipientOptions(state, "Sales Representative")}
+          </select>
+          <input name="recipientNameOther" data-dispatch-recipient-other placeholder="Type recipient name" hidden>
         </label>
         <label class="field">
-          <span>Destination</span>
-          <input name="destination" placeholder="Van, supermarket, production line" required>
+          <span>Destination / drop-off point</span>
+          <input name="destination" placeholder="${escapeHtml(destinationPlaceholder("Sales Representative"))}" required>
         </label>
         <label class="field">
           <span>Date</span>
@@ -900,6 +953,10 @@ export function bindInventory({ root, store }) {
   const clearStockImageButton = qs("#clear-stock-image-file", root);
   const assignmentForm = qs("#manager-assignment-form", root);
   const dispatchForm = qs("#stock-dispatch-form", root);
+  const dispatchRecipientType = dispatchForm ? qs('select[name="recipientType"]', dispatchForm) : null;
+  const dispatchRecipientSelect = dispatchForm ? qs("[data-dispatch-recipient-select]", dispatchForm) : null;
+  const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
+  const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
   const routeParams = inventoryRouteParams();
   const requestedProductId = routeParams.get("product");
   const requestedStockType = routeParams.get("type");
@@ -1128,6 +1185,29 @@ export function bindInventory({ root, store }) {
     });
   });
 
+  function updateOtherRecipientField() {
+    if (!dispatchOtherRecipient || !dispatchRecipientSelect || !dispatchRecipientType) return;
+
+    const isOther = dispatchRecipientSelect.value === "__other__";
+    dispatchOtherRecipient.hidden = !isOther;
+    dispatchOtherRecipient.required = isOther;
+    dispatchOtherRecipient.placeholder = otherRecipientPlaceholder(dispatchRecipientType.value);
+    if (!isOther) dispatchOtherRecipient.value = "";
+  }
+
+  function updateDispatchRecipientOptions() {
+    if (!dispatchRecipientType || !dispatchRecipientSelect) return;
+
+    const recipientType = dispatchRecipientType.value;
+    dispatchRecipientSelect.innerHTML = renderDispatchRecipientOptions(store.getState(), recipientType);
+    if (dispatchDestinationInput) dispatchDestinationInput.placeholder = destinationPlaceholder(recipientType);
+    updateOtherRecipientField();
+  }
+
+  updateDispatchRecipientOptions();
+  dispatchRecipientType?.addEventListener("change", updateDispatchRecipientOptions);
+  dispatchRecipientSelect?.addEventListener("change", updateOtherRecipientField);
+
   dispatchForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     const state = store.getState();
@@ -1135,11 +1215,14 @@ export function bindInventory({ root, store }) {
     const productId = String(formData.get("productId") || "");
     const quantity = Number(formData.get("quantity") || 0);
     const product = state.products.find((item) => item.id === productId);
+    const recipientChoice = String(formData.get("recipientNameChoice") || "").trim();
+    const otherRecipient = String(formData.get("recipientNameOther") || "").trim();
+    const recipientName = recipientChoice === "__other__" ? otherRecipient : recipientChoice;
     const message = qs("#stock-dispatch-message", root);
 
     if (message) message.textContent = "";
 
-    if (!product || !quantity || quantity <= 0 || !formData.get("recipientName") || !formData.get("destination")) {
+    if (!product || !quantity || quantity <= 0 || !recipientName || !formData.get("destination")) {
       if (message) message.textContent = "Choose an item, quantity, recipient, and destination.";
       return;
     }
@@ -1154,7 +1237,7 @@ export function bindInventory({ root, store }) {
       productId,
       quantity,
       recipientType: formData.get("recipientType"),
-      recipientName: formData.get("recipientName"),
+      recipientName,
       destination: formData.get("destination"),
       dispatchDate: formData.get("dispatchDate"),
       staffName: formData.get("staffName"),
@@ -1164,6 +1247,7 @@ export function bindInventory({ root, store }) {
     dispatchForm.reset();
     dispatchForm.elements.dispatchDate.value = todayISO();
     dispatchForm.elements.staffName.value = currentStaffName(store.getState());
+    updateDispatchRecipientOptions();
   });
 
   qsa(".js-restock-product", root).forEach((button) => {

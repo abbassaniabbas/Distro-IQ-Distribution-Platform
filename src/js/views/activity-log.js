@@ -3,8 +3,8 @@ import {
   getScopedActivityLogs,
   recordTypeLabel
 } from "../services/activity.js";
-import { formatDateTime } from "../services/formatters.js";
-import { currentUserRole } from "../services/rbac.js";
+import { formatCurrency, formatDateTime, formatNumber } from "../services/formatters.js";
+import { accountForUser, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, table } from "../ui/components.js";
 
@@ -15,6 +15,174 @@ function entryDate(value) {
 
 function actorKey(entry) {
   return `${entry.actorName || "Team member"}|${entry.actorEmail || ""}`;
+}
+
+function normalized(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function formatActivityTime(value) {
+  if (!value) return "Just now";
+
+  return formatDateTime(String(value).includes("T") ? value : `${value}T12:00:00`);
+}
+
+function currentRepName(state) {
+  const account = accountForUser(state);
+
+  return (
+    account?.name ||
+    state.user?.user_metadata?.full_name ||
+    state.user?.email ||
+    "Sales Representative"
+  );
+}
+
+function returnDispositionLabel(value) {
+  if (value === "to_store") return "Returned to store stock";
+  if (value === "held_by_rep") return "Held by representative";
+  return "";
+}
+
+function productNameFor(state, productId) {
+  return (state.products || []).find((product) => product.id === productId)?.name || "Unknown snack";
+}
+
+function repRecentActivityRows(state) {
+  const repName = currentRepName(state);
+  const repKey = normalized(repName);
+  const transactions = (state.stockTransactions || [])
+    .filter((transaction) => {
+      const type = normalized(transaction.type);
+      return (type === "sale" || type === "return") && (!repKey || normalized(transaction.recordedBy) === repKey);
+    })
+    .map((transaction) => {
+      const isReturn = normalized(transaction.type) === "return";
+      const productName = productNameFor(state, transaction.productId);
+      const returnDisposition = isReturn ? returnDispositionLabel(transaction.returnDisposition) : "";
+      const details = [
+        `${formatNumber(transaction.quantity)} units`,
+        transaction.paymentType || "cash",
+        returnDisposition
+      ].filter(Boolean).join(" - ");
+
+      return {
+        id: transaction.id,
+        action: isReturn ? "return" : "sale",
+        actionLabel: isReturn ? "Customer return" : "Sale",
+        title: productName,
+        customerName: transaction.partyName || "Customer",
+        amount: formatCurrency(transaction.amount),
+        details,
+        when: transaction.createdAt || transaction.date,
+        search: [
+          isReturn ? "customer return" : "sale",
+          productName,
+          transaction.partyName,
+          transaction.paymentType,
+          returnDisposition
+        ].join(" ")
+      };
+    });
+  const reports = (state.salesReports || [])
+    .filter((report) => !repKey || normalized(report.repName) === repKey)
+    .map((report) => ({
+      id: report.id,
+      action: "report",
+      actionLabel: "Report submitted",
+      title: report.tripLabel || "Daily report",
+      customerName: "Manager review",
+      amount: formatCurrency(report.salesAmount),
+      details: `${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned`,
+      when: report.submittedAt || report.reportDate,
+      search: `report submitted ${report.tripLabel || ""} ${report.status || ""}`
+    }));
+
+  return [...transactions, ...reports]
+    .sort((a, b) => new Date(b.when || 0) - new Date(a.when || 0) || String(b.id).localeCompare(String(a.id)));
+}
+
+function renderRepActionOptions(rows) {
+  const actions = [...new Map(rows.map((row) => [row.action, row.actionLabel])).entries()]
+    .sort((a, b) => a[1].localeCompare(b[1]));
+
+  return actions
+    .map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`)
+    .join("");
+}
+
+function renderRepRecentRows(rows) {
+  return rows.map((row) => {
+    const searchIndex = [
+      row.actionLabel,
+      row.title,
+      row.customerName,
+      row.details,
+      row.amount
+    ].join(" ").toLowerCase();
+
+    return `
+      <tr
+        data-search-index="${escapeHtml(searchIndex)}"
+        data-action="${escapeHtml(row.action)}"
+        data-user="all"
+        data-date="${escapeHtml(entryDate(row.when))}"
+      >
+        <td>${escapeHtml(formatActivityTime(row.when))}</td>
+        <td><span class="activity-action">${escapeHtml(row.actionLabel)}</span></td>
+        <td>
+          <strong>${escapeHtml(row.title)}</strong>
+          <div class="muted">${escapeHtml(row.id)}</div>
+        </td>
+        <td>${escapeHtml(row.customerName)}</td>
+        <td>
+          <strong>${escapeHtml(row.amount)}</strong>
+          <div class="muted">${escapeHtml(row.details)}</div>
+        </td>
+      </tr>
+    `;
+  });
+}
+
+function renderSalesRepRecentActivity(state) {
+  const rows = repRecentActivityRows(state);
+
+  return `
+    <section class="view activity-log-view">
+      <section class="panel">
+        <div class="toolbar">
+          ${panelHeader("Recent activity", "Your logged sales, customer returns, and submitted reports")}
+          <div class="toolbar-group activity-filters">
+            <label class="field">
+              <span>Search</span>
+              <input id="activity-search" type="search" placeholder="Search activity">
+            </label>
+            <label class="field">
+              <span>Date from</span>
+              <input id="activity-date-from" type="date">
+            </label>
+            <label class="field">
+              <span>Date to</span>
+              <input id="activity-date-to" type="date">
+            </label>
+            <label class="field">
+              <span>Activity</span>
+              <select id="activity-action-filter">
+                <option value="all">All activity</option>
+                ${renderRepActionOptions(rows)}
+              </select>
+            </label>
+          </div>
+        </div>
+
+        ${table(
+          ["Time", "Activity", "Snack / Report", "Customer", "Details"],
+          renderRepRecentRows(rows),
+          "No recent activity yet"
+        )}
+      </section>
+    </section>
+  `;
 }
 
 function renderActionOptions(logs) {
@@ -95,8 +263,12 @@ export function renderActivityLog({ state }) {
     `;
   }
 
-  const logs = getScopedActivityLogs(state);
   const role = currentUserRole(state);
+  if (role === "sales_rep") {
+    return renderSalesRepRecentActivity(state);
+  }
+
+  const logs = getScopedActivityLogs(state);
   const isStoreKeeper = role === "store_keeper";
   const isAccountant = role === "accountant";
   const title = isStoreKeeper ? "Store activity log" : isAccountant ? "Finance activity log" : "Activity log";

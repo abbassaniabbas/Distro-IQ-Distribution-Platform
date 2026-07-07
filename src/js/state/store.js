@@ -1,6 +1,6 @@
 import seedData from "../data/seed-data.js";
 import { createActivityLog, getCurrentActor } from "../services/activity.js";
-import { getCreditGuardForOrder } from "../services/calculations.js";
+import { assignmentOutstanding, getCreditGuardForOrder } from "../services/calculations.js";
 import { salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
@@ -500,6 +500,9 @@ function reducer(currentState, action) {
       const transactionType = action.transactionType === "return" ? "return" : "sale";
       const amount = quantity * Number(product?.unitPrice || 0);
       const paymentType = action.paymentType || (transactionType === "return" ? "credit adjustment" : "cash");
+      const returnDisposition = transactionType === "return"
+        ? (action.returnDisposition === "to_store" ? "to_store" : "held_by_rep")
+        : "";
       const isCreditImpact = String(paymentType).toLowerCase().includes("credit");
       const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
       const repName = action.repName || assignment?.repName || currentActorName(state);
@@ -507,11 +510,21 @@ function reducer(currentState, action) {
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
 
       if (!assignment || !product || !quantity) return state;
+      if (transactionType === "sale" && quantity > assignmentOutstanding(assignment)) return state;
+      if (transactionType === "return" && quantity > Number(assignment.sold || 0)) return state;
 
       if (transactionType === "sale") {
         assignment.sold = Number(assignment.sold || 0) + quantity;
       } else {
-        assignment.returned = Number(assignment.returned || 0) + quantity;
+        assignment.sold = Math.max(0, Number(assignment.sold || 0) - quantity);
+
+        if (returnDisposition === "to_store") {
+          assignment.returned = Number(assignment.returned || 0) + quantity;
+          product.stock = Number(product.stock || 0) + quantity;
+          product.updatedAt = todayISO();
+        } else {
+          assignment.heldReturns = Number(assignment.heldReturns || 0) + quantity;
+        }
       }
 
       assignment.updatedAt = todayISO();
@@ -525,10 +538,17 @@ function reducer(currentState, action) {
           paymentType,
           partyType: customerType,
           partyName: customerName,
+          customerId: customer?.id || action.customerId || "",
           date: todayISO(),
+          createdAt: new Date().toISOString(),
           recordedBy: repName,
           creditImpact,
-          repUserId: state.user?.id || ""
+          repUserId: state.user?.id || "",
+          returnDisposition: transactionType === "return" ? returnDisposition : "",
+          returnDestination: transactionType === "return"
+            ? (returnDisposition === "to_store" ? "Store stock" : "Held by sales representative")
+            : "",
+          movementDirection: transactionType === "return" && returnDisposition === "to_store" ? "in" : ""
         },
         ...(state.stockTransactions || [])
       ];
@@ -541,8 +561,20 @@ function reducer(currentState, action) {
         actionType: transactionType === "sale" ? "sold" : "returned",
         recordType: "sale",
         recordLabel: product.name,
-        summary: `${repName} recorded ${quantity} ${transactionType === "sale" ? "sold" : "returned"}`
+        summary: transactionType === "sale"
+          ? `${repName} recorded ${quantity} sold`
+          : `${repName} recorded ${quantity} returned - ${returnDisposition === "to_store" ? "to store stock" : "held for resale"}`
       });
+
+      if (transactionType === "return" && returnDisposition === "to_store") {
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "returned",
+          recordType: "stock_movement",
+          recordLabel: product.id,
+          summary: `${quantity} ${product.name} returned to store stock by ${repName}`
+        });
+      }
 
       return state;
     }
@@ -569,7 +601,8 @@ function reducer(currentState, action) {
           customerName: String(line.customerName || "Customer"),
           quantity: Number(line.quantity || 0),
           amount: Number(line.amount || 0),
-          paymentType: String(line.paymentType || "cash")
+          paymentType: String(line.paymentType || "cash"),
+          returnDisposition: String(line.returnDisposition || "")
         })) : [],
         status: "submitted",
         reviewNote: "",

@@ -112,9 +112,16 @@ function repDaySummary(transactions) {
   });
 }
 
+function returnDispositionLabel(value) {
+  if (value === "to_store") return "Returned to store stock";
+  if (value === "held_by_rep") return "Held by representative";
+  return "";
+}
+
 function repTransactionLine(transaction, state) {
   const product = (state.products || []).find((item) => item.id === transaction.productId);
   const type = normalized(transaction.type) === "return" ? "Customer return" : "Sale";
+  const returnDisposition = type === "Customer return" ? returnDispositionLabel(transaction.returnDisposition) : "";
 
   return {
     transactionId: transaction.id,
@@ -124,7 +131,9 @@ function repTransactionLine(transaction, state) {
     customerName: transaction.partyName || "Customer",
     quantity: Number(transaction.quantity || 0),
     amount: Number(transaction.amount || 0),
-    paymentType: transaction.paymentType || "cash"
+    paymentType: transaction.paymentType || "cash",
+    returnDisposition,
+    createdAt: transaction.createdAt || transaction.date
   };
 }
 
@@ -1369,14 +1378,14 @@ function renderManagerReportRows(state) {
         .map((transaction) => repTransactionLine(transaction, state));
     const linePreview = reportLines
       .slice(0, 2)
-      .map((line) => `${line.customerName} - ${line.productName}`)
+      .map((line) => [line.customerName, line.productName, line.returnDisposition].filter(Boolean).join(" - "))
       .join(", ");
     const searchIndex = [
       report.repName,
       report.reportDate,
       report.status,
       report.reviewNote,
-      ...reportLines.flatMap((line) => [line.customerName, line.productName])
+      ...reportLines.flatMap((line) => [line.customerName, line.productName, line.returnDisposition])
     ].join(" ").toLowerCase();
 
     return `
@@ -1539,7 +1548,8 @@ function renderRepStockCards(assignments) {
           <div class="stock-line">
             <div class="stock-meta">
               <span>${formatNumber(assignment.sold)} sold</span>
-              <span>${formatNumber(assignment.returned)} returned</span>
+              <span>${formatNumber(assignment.returned)} to store</span>
+              ${Number(assignment.heldReturns || 0) ? `<span>${formatNumber(assignment.heldReturns)} held</span>` : ""}
             </div>
             ${progressBar(assignment.soldPercent, assignment.soldPercent < 60 ? "warning" : "good")}
           </div>
@@ -1556,12 +1566,28 @@ function renderRepStockCards(assignments) {
   `;
 }
 
-function renderRepCustomerField(customers) {
+function renderRepAssignmentOptions(assignments, mode = "sale") {
+  return assignments.map((assignment) => {
+    const available = mode === "return" ? Number(assignment.sold || 0) : assignment.outstanding;
+    const unitLabel = mode === "return" ? "sold" : "left";
+
+    return `
+      <option value="${escapeHtml(assignment.id)}" data-outstanding="${escapeHtml(assignment.outstanding)}" data-sold="${escapeHtml(assignment.sold || 0)}">
+        ${escapeHtml(assignment.product.name)} (${formatNumber(available)} ${unitLabel})
+      </option>
+    `;
+  }).join("");
+}
+
+function renderRepCustomerField(customers, prefix = "") {
+  const customerIdName = `${prefix}CustomerId`;
+  const customerNameName = `${prefix}CustomerName`;
+
   if (!customers.length) {
     return `
       <label class="field">
         <span>Customer</span>
-        <input name="customerName" type="text" placeholder="Customer or supermarket name" required>
+        <input name="${escapeHtml(customerNameName)}" type="text" placeholder="Customer or supermarket name" required>
       </label>
     `;
   }
@@ -1569,7 +1595,7 @@ function renderRepCustomerField(customers) {
   return `
     <label class="field">
       <span>Customer</span>
-      <select name="customerId" required>
+      <select name="${escapeHtml(customerIdName)}" required>
         <option value="">Pick customer</option>
         ${customers.map((customer) => `
           <option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>
@@ -1585,76 +1611,86 @@ function renderRepQuickLog(state, assignments) {
   return `
     <section class="panel rep-action-panel">
       ${panelHeader("Quick log", "")}
-      <form id="rep-log-form" class="rep-log-form" novalidate>
-        <fieldset class="rep-type-toggle" aria-label="Choose sale or customer return">
-          <label>
-            <input type="radio" name="transactionType" value="sale" checked>
-            <span>Sale</span>
+      <div class="rep-log-sections">
+        <form id="rep-sale-form" class="rep-log-form rep-log-card" novalidate>
+          <div class="rep-log-card-header">
+            <span class="eyebrow">Quick sale</span>
+            <strong>Sale</strong>
+          </div>
+
+          <label class="field">
+            <span>Snack</span>
+            <select name="saleAssignmentId" data-rep-assignment-select required>
+              <option value="">Pick snack</option>
+              ${renderRepAssignmentOptions(assignments, "sale")}
+            </select>
           </label>
-          <label>
-            <input type="radio" name="transactionType" value="return">
-            <span>Customer return</span>
+
+          <label class="field">
+            <span>How many?</span>
+            <input name="saleQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
           </label>
-        </fieldset>
 
-        <label class="field">
-          <span>Snack</span>
-          <select name="assignmentId" required>
-            <option value="">Pick snack</option>
-            ${assignments.map((assignment) => `
-              <option value="${escapeHtml(assignment.id)}" data-outstanding="${escapeHtml(assignment.outstanding)}">
-                ${escapeHtml(assignment.product.name)} (${formatNumber(assignment.outstanding)} left)
-              </option>
-            `).join("")}
-          </select>
-        </label>
+          ${renderRepCustomerField(customers, "sale")}
 
-        <label class="field">
-          <span>How many?</span>
-          <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
-        </label>
+          <label class="field">
+            <span>Payment</span>
+            <select name="salePaymentType">
+              <option value="cash">Cash</option>
+              <option value="credit">Credit</option>
+            </select>
+          </label>
 
-        ${renderRepCustomerField(customers)}
+          <span id="rep-sale-message" class="rep-form-message" role="status" aria-live="polite"></span>
+          <button class="button primary rep-save-button" type="submit">
+            <span>Save sale</span>
+          </button>
+        </form>
 
-        <label class="field">
-          <span>Payment</span>
-          <select name="paymentType">
-            <option value="cash">Cash</option>
-            <option value="credit">Credit</option>
-          </select>
-        </label>
+        <form id="rep-return-form" class="rep-log-form rep-log-card" novalidate>
+          <div class="rep-log-card-header">
+            <span class="eyebrow">Customer return</span>
+            <strong>Return</strong>
+          </div>
 
-        <span id="rep-log-message" class="rep-form-message" role="status" aria-live="polite"></span>
-        <button class="button primary rep-save-button" type="submit">
-          <span>Save</span>
-        </button>
-      </form>
+          <label class="field">
+            <span>Snack</span>
+            <select name="returnAssignmentId" data-rep-assignment-select required>
+              <option value="">Pick snack</option>
+              ${renderRepAssignmentOptions(assignments, "return")}
+            </select>
+          </label>
+
+          <label class="field">
+            <span>How many?</span>
+            <input name="returnQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+          </label>
+
+          ${renderRepCustomerField(customers, "return")}
+
+          <label class="field">
+            <span>Adjustment</span>
+            <select name="returnPaymentType">
+              <option value="credit adjustment">Reduce customer credit</option>
+              <option value="cash refund">Cash refund</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>Returned stock</span>
+            <select name="returnDisposition">
+              <option value="held_by_rep">Hold with me for resale</option>
+              <option value="to_store">Return to store stock</option>
+            </select>
+          </label>
+
+          <span id="rep-return-message" class="rep-form-message" role="status" aria-live="polite"></span>
+          <button class="button primary rep-save-button" type="submit">
+            <span>Save return</span>
+          </button>
+        </form>
+      </div>
     </section>
-  `;
-}
-
-function renderRepActivity(transactions, state) {
-  if (!transactions.length) {
-    return '<div class="empty-state">No sales yet today</div>';
-  }
-
-  const lines = repTransactionLines(transactions, state);
-
-  return `
-    <div class="rep-activity-list">
-      ${lines.map((line) => `
-        <article class="rep-activity-item" data-search-index="${escapeHtml(`${line.type} ${line.customerName} ${line.productName} ${line.paymentType}`.toLowerCase())}">
-          <div>
-            <strong>${escapeHtml(line.productName)}</strong>
-            <span>${escapeHtml(line.customerName)}</span>
-          </div>
-          <div>
-            <strong>${formatCurrency(line.amount)}</strong>
-            <span>${escapeHtml(line.type)} - ${formatNumber(line.quantity)} units - ${escapeHtml(line.paymentType)}</span>
-          </div>
-        </article>
-      `).join("")}
-    </div>
   `;
 }
 
@@ -1675,7 +1711,7 @@ function renderRepReportLines(transactions, state) {
           </div>
           <div>
             <strong>${formatNumber(line.quantity)}</strong>
-            <span>${escapeHtml(line.type)} - ${formatCurrency(line.amount)}</span>
+            <span>${escapeHtml([line.type, formatCurrency(line.amount), line.returnDisposition].filter(Boolean).join(" - "))}</span>
           </div>
         </article>
       `).join("")}
@@ -1797,10 +1833,6 @@ function renderSalesRepDashboard(state) {
           ${renderRepStockCards(assignments)}
         </section>
 
-      <section class="panel">
-        ${panelHeader("Saved today", `${formatNumber(summary.unitsSold)} sold - ${formatNumber(summary.unitsReturned)} returned`)}
-        ${renderRepActivity(transactions, state)}
-      </section>
     </section>
   `;
 }
@@ -2250,30 +2282,33 @@ function setRepMessage(messageEl, text, type = "") {
 }
 
 function bindSalesRepDashboard({ root, store }) {
-  const form = qs("#rep-log-form", root);
-  const message = qs("#rep-log-message", root);
-  const assignmentSelect = qs('select[name="assignmentId"]', root);
+  const saleForm = qs("#rep-sale-form", root);
+  const returnForm = qs("#rep-return-form", root);
+  const assignmentSelects = qsa("[data-rep-assignment-select]", root);
 
   qsa(".js-fill-rep-product", root).forEach((button) => {
     button.addEventListener("click", () => {
-      if (assignmentSelect) {
-        assignmentSelect.value = button.dataset.assignmentId;
-        assignmentSelect.focus();
-      }
+      assignmentSelects.forEach((select) => {
+        select.value = button.dataset.assignmentId;
+      });
+      assignmentSelects[0]?.focus();
     });
   });
 
-  form?.addEventListener("submit", (event) => {
+  function handleRepTransaction(event, transactionType) {
     event.preventDefault();
 
+    const form = event.currentTarget;
     const state = store.getState();
     const formData = new FormData(form);
-    const assignmentId = String(formData.get("assignmentId") || "");
-    const customerId = String(formData.get("customerId") || "");
-    const typedCustomerName = String(formData.get("customerName") || "").trim();
-    const quantity = Number(formData.get("quantity") || 0);
-    const transactionType = String(formData.get("transactionType") || "sale");
-    const paymentType = String(formData.get("paymentType") || "cash");
+    const prefix = transactionType === "return" ? "return" : "sale";
+    const message = qs(`#rep-${prefix}-message`, root);
+    const assignmentId = String(formData.get(`${prefix}AssignmentId`) || "");
+    const customerId = String(formData.get(`${prefix}CustomerId`) || "");
+    const typedCustomerName = String(formData.get(`${prefix}CustomerName`) || "").trim();
+    const quantity = Number(formData.get(`${prefix}Quantity`) || 0);
+    const paymentType = String(formData.get(`${prefix}PaymentType`) || "cash");
+    const returnDisposition = String(formData.get("returnDisposition") || "held_by_rep");
     const assignment = (state.stockAssignments || []).find((item) => item.id === assignmentId);
     const product = (state.products || []).find((item) => item.id === assignment?.productId);
     const customer = (state.retailers || []).find((item) => item.id === customerId);
@@ -2281,6 +2316,7 @@ function bindSalesRepDashboard({ root, store }) {
     const isCreditSale = transactionType === "sale" && normalized(paymentType).includes("credit");
     const repName = assignment?.repName || currentRepName(state);
     const outstanding = assignment ? assignmentOutstanding(assignment) : 0;
+    const soldForReturn = Number(assignment?.sold || 0);
     const amount = quantity * Number(product?.unitPrice || 0);
 
     setRepMessage(message, "");
@@ -2305,8 +2341,13 @@ function bindSalesRepDashboard({ root, store }) {
       return;
     }
 
-    if (quantity > outstanding) {
+    if (transactionType === "sale" && quantity > outstanding) {
       setRepMessage(message, `Only ${formatNumber(outstanding)} left for this snack.`, "error");
+      return;
+    }
+
+    if (transactionType === "return" && quantity > soldForReturn) {
+      setRepMessage(message, `Only ${formatNumber(soldForReturn)} sold units can be returned for this snack.`, "error");
       return;
     }
 
@@ -2341,9 +2382,18 @@ function bindSalesRepDashboard({ root, store }) {
       quantity,
       transactionType,
       paymentType,
+      returnDisposition: transactionType === "return" ? returnDisposition : "",
       repName,
       message: transactionType === "return" ? "Customer return saved" : "Sale saved"
     });
+  }
+
+  saleForm?.addEventListener("submit", (event) => {
+    handleRepTransaction(event, "sale");
+  });
+
+  returnForm?.addEventListener("submit", (event) => {
+    handleRepTransaction(event, "return");
   });
 
   qsa(".js-submit-rep-report", root).forEach((button) => {

@@ -37,7 +37,7 @@ const LEGACY_ROLE_MAP = {
 
 const ROLE_PERMISSIONS = {
   sales_rep: {
-    nav: ["dashboard", "retailers", "settings"],
+    nav: ["dashboard", "retailers", "activity-log", "settings"],
     canViewCompanyWide: false,
     canLogSalesReturns: true,
     canManageProducts: false,
