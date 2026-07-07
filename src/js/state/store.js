@@ -971,9 +971,11 @@ function reducer(currentState, action) {
         region: stateName,
         stateName,
         address: String(action.address ?? existingRetailer?.address ?? "").trim(),
-        tier: String(action.tier ?? existingRetailer?.tier ?? "Standard").trim(),
         channel: String(action.channel ?? existingRetailer?.channel ?? "Supermarket").trim(),
         contact: String(action.contact ?? existingRetailer?.contact ?? "").trim(),
+        contactPhone: String(action.contactPhone ?? existingRetailer?.contactPhone ?? "").trim(),
+        assignedRepUserId: String(action.assignedRepUserId ?? existingRetailer?.assignedRepUserId ?? "").trim(),
+        assignedRepName: String(action.assignedRepName ?? existingRetailer?.assignedRepName ?? "").trim(),
         fillRate: Math.max(0, Math.min(100, Number(action.fillRate ?? existingRetailer?.fillRate ?? 0))),
         outstanding: Math.max(0, Number(action.outstanding ?? existingRetailer?.outstanding ?? 0)),
         lastOrder: existingRetailer?.lastOrder || todayISO(),
@@ -984,6 +986,7 @@ function reducer(currentState, action) {
 
       if (existingRetailer) {
         Object.assign(existingRetailer, retailer);
+        delete existingRetailer.tier;
       } else {
         state.retailers = [retailer, ...state.retailers];
       }
@@ -1048,7 +1051,7 @@ function reducer(currentState, action) {
         actionType: existingRetailer ? "updated" : "created",
         recordType: "retailer",
         recordLabel: retailer.name,
-        summary: `${existingRetailer ? "Updated" : "Added"} supermarket relationship`
+        summary: `${existingRetailer ? "Updated" : "Added"} customer profile`
       });
 
       return state;

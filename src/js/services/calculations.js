@@ -56,6 +56,54 @@ export function getCreditLimitForParty(creditLimits = [], partyName = "") {
   )) || null;
 }
 
+function boundedScore(value) {
+  return Math.max(0, Math.min(100, Number(value || 0)));
+}
+
+export function getCustomerRating(retailer, state = {}) {
+  const orders = (state.orders || []).filter((order) => order.retailerId === retailer?.id);
+  const invoices = (state.invoices || []).filter((invoice) => invoice.retailerId === retailer?.id);
+  const creditLimit = getCreditLimitForParty(state.creditLimits || [], retailer?.name);
+  const balance = Number(creditLimit?.balance ?? retailer?.outstanding ?? 0);
+  const limit = Number(creditLimit?.limit || 0);
+  const creditUsage = limit ? (balance / limit) * 100 : balance > 0 ? 100 : 0;
+  const ordersCompletedScore = boundedScore(retailer?.fillRate ?? 0);
+  const paidInvoices = invoices.filter((invoice) => String(invoice.status || "").toLowerCase() === "paid").length;
+  const paymentScore = invoices.length ? (paidInvoices / invoices.length) * 100 : balance > 0 ? 100 - creditUsage : 70;
+  const orderScore = boundedScore(orders.length * 15);
+
+  if (!orders.length && !invoices.length && balance <= 0) {
+    return {
+      label: "New customer",
+      status: "new_customer",
+      score: 0,
+      orderCount: 0,
+      creditUsage
+    };
+  }
+
+  const score = Math.round(
+    ordersCompletedScore * 0.3 +
+    boundedScore(paymentScore) * 0.3 +
+    boundedScore(100 - creditUsage) * 0.25 +
+    orderScore * 0.15
+  );
+
+  if (score >= 85) {
+    return { label: "Excellent customer", status: "excellent_customer", score, orderCount: orders.length, creditUsage };
+  }
+
+  if (score >= 70) {
+    return { label: "Good customer", status: "good_customer", score, orderCount: orders.length, creditUsage };
+  }
+
+  if (score >= 50) {
+    return { label: "Needs attention", status: "needs_attention", score, orderCount: orders.length, creditUsage };
+  }
+
+  return { label: "High risk", status: "high_risk", score, orderCount: orders.length, creditUsage };
+}
+
 export function creditUsageTone(percent) {
   if (percent >= 100) return "danger";
   if (percent >= 85) return "warning";

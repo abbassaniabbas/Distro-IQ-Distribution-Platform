@@ -8,6 +8,7 @@ import {
 } from "../services/calculations.js";
 import {
   formatCurrency,
+  currencySymbolFor,
   formatDate,
   formatDateTime,
   formatNumber,
@@ -200,6 +201,8 @@ function renderProductImage(product) {
 function renderStockProductModal(state, permissions) {
   if (!permissions.canManageProducts) return "";
 
+  const moneySymbol = currencySymbolFor(state.client);
+
   return `
     <div id="stock-product-modal" class="stock-modal-backdrop" hidden>
       <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="stock-product-modal-title">
@@ -245,11 +248,11 @@ function renderStockProductModal(state, permissions) {
           <input name="reorderPoint" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
         </label>
         <label class="field">
-          <span>Cost price</span>
+          <span>Cost price (${escapeHtml(moneySymbol)})</span>
           <input name="unitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
         </label>
         <label class="field">
-          <span>Selling price</span>
+          <span>Selling price (${escapeHtml(moneySymbol)})</span>
           <input name="unitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
         </label>
         <label class="field">

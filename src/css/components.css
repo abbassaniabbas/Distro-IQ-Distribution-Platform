@@ -423,6 +423,8 @@
 .status-pill.printed,
 .status-pill.cash,
 .status-pill.top-performer,
+.status-pill.excellent-customer,
+.status-pill.good-customer,
 .status-pill.credit-clear {
   background: rgba(25, 185, 133, 0.12);
   color: var(--green);
@@ -439,6 +441,7 @@
 .status-pill.pending,
 .status-pill.open,
 .status-pill.flagged,
+.status-pill.new-customer,
 .status-pill.supply,
 .status-pill.not-required {
   background: rgba(20, 54, 95, 0.1);
@@ -449,6 +452,7 @@
 .status-pill.partial,
 .status-pill.internal-movement,
 .status-pill.pending-signature,
+.status-pill.needs-attention,
 .status-pill.credit-watch {
   background: rgba(180, 122, 17, 0.12);
   color: var(--amber);
@@ -463,6 +467,7 @@
 .status-pill.variance,
 .status-pill.return,
 .status-pill.write-off,
+.status-pill.high-risk,
 .status-pill.credit-hold,
 .status-pill.blocked {
   background: rgba(207, 77, 67, 0.1);

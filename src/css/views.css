@@ -1204,6 +1204,95 @@
   margin-top: auto;
 }
 
+.retailer-list {
+  display: grid;
+  gap: 10px;
+}
+
+.retailer-list-item {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgba(7, 26, 47, 0.03);
+}
+
+.retailer-list-main {
+  display: grid;
+  width: 100%;
+  grid-template-columns: minmax(190px, 1.4fr) repeat(4, minmax(120px, 0.8fr)) auto;
+  align-items: center;
+  gap: 14px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 14px 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.retailer-list-main:hover,
+.retailer-list-main:focus-visible {
+  background: #f7fbfa;
+  outline: none;
+}
+
+.retailer-list-main > span {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.retailer-list-main strong,
+.retailer-list-main small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.retailer-list-main small {
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.retailer-list-status {
+  justify-items: end;
+}
+
+.customer-details-modal {
+  width: min(100%, 760px);
+}
+
+.customer-detail-summary {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.customer-detail-summary h3 {
+  margin: 4px 0 4px;
+  font-size: 1.3rem;
+}
+
+.customer-detail-summary p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.customer-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+  gap: 12px 18px;
+}
+
+.customer-detail-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .setup-card {
   display: grid;
   gap: 16px;
@@ -1706,6 +1795,14 @@
     grid-template-columns: repeat(3, minmax(130px, 1fr));
   }
 
+  .retailer-list-main {
+    grid-template-columns: minmax(180px, 1.2fr) repeat(2, minmax(120px, 0.8fr));
+  }
+
+  .retailer-list-status {
+    justify-items: start;
+  }
+
   .ceo-filter-reset {
     justify-content: center;
   }
@@ -1726,6 +1823,15 @@
   .accountant-export-actions,
   .accountant-filter-foot {
     align-items: stretch;
+    flex-direction: column;
+  }
+
+  .retailer-list-main,
+  .customer-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .customer-detail-summary {
     flex-direction: column;
   }
 

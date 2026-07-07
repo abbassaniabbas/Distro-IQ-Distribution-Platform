@@ -5,6 +5,7 @@ import {
   calculateMetrics,
   calculateVisionMetrics,
   getCreditLimitForParty,
+  getCustomerRating,
   getLowStockProducts,
   getOrdersWithTotals,
   getProductMap,
@@ -362,6 +363,7 @@ function buildCeoSupermarketRows(state) {
       ...orders.map((order) => order.createdAt || order.dueAt),
       creditLimit?.changedAt
     ]);
+    const rating = getCustomerRating(retailer, state);
 
     return {
       retailer,
@@ -372,6 +374,7 @@ function buildCeoSupermarketRows(state) {
       limit,
       usagePercent,
       latestActivity,
+      rating,
       status: usagePercent >= 100 ? "credit_hold" : usagePercent >= 85 ? "credit_watch" : "credit_clear"
     };
   });
@@ -589,6 +592,7 @@ function renderCeoSupermarketRows(supermarketRows) {
       const searchIndex = [
         row.retailer.name,
         customerState,
+        row.rating?.label,
         row.status,
         row.productIds.join(" ")
       ].join(" ").toLowerCase();
@@ -605,6 +609,7 @@ function renderCeoSupermarketRows(supermarketRows) {
           <td>
             <strong>${escapeHtml(row.retailer.name)}</strong>
             <div class="muted">${escapeHtml(customerLocation || "Location not set")}</div>
+            <div class="muted">${escapeHtml(row.rating?.label || "New customer")}</div>
           </td>
           <td>
             ${formatNumber(row.orderCount)} order${row.orderCount === 1 ? "" : "s"}
@@ -802,11 +807,34 @@ function renderCeoProductFocus(productRows) {
   `;
 }
 
+function renderCeoCustomerRatings(supermarketRows) {
+  const rows = [...supermarketRows]
+    .sort((a, b) => (a.rating?.score ?? 0) - (b.rating?.score ?? 0))
+    .slice(0, 4);
+
+  if (!rows.length) {
+    return '<div class="empty-state">No customers added yet</div>';
+  }
+
+  return `
+    <div class="bar-list">
+      ${rows.map((row) => `
+        <div class="bar-row" data-search-index="${escapeHtml(`${row.retailer.name} ${row.rating?.label}`.toLowerCase())}">
+          <strong>${escapeHtml(row.retailer.name)}</strong>
+          <span class="muted">${formatNumber(row.rating?.score || 0)} / 100 - ${formatNumber(row.rating?.orderCount || 0)} orders</span>
+          ${statusPill(row.rating?.status || "new_customer")}
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderCeoDashboard(state) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
   const freshness = buildCeoFreshness(state);
   const productRows = buildCeoProductPerformance(state);
+  const supermarketRows = buildCeoSupermarketRows(state);
   const riskRows = buildCeoRiskRows(state);
   const trend = buildCeoSalesTrend(state);
   const riskyAccountCount = riskRows.filter((row) => row.status !== "credit_clear").length;
@@ -881,6 +909,11 @@ function renderCeoDashboard(state) {
         <section class="panel">
           ${panelHeader("Product focus", "Best seller and slow mover")}
           ${renderCeoProductFocus(productRows)}
+        </section>
+
+        <section class="panel">
+          ${panelHeader("Customer ratings", "Automatically based on orders, payments, and balance owed")}
+          ${renderCeoCustomerRatings(supermarketRows)}
         </section>
       </div>
     </section>
@@ -1275,7 +1308,7 @@ function renderManagerControlPanel(state, vision) {
     {
       label: "Supermarkets",
       value: formatNumber(state.retailers?.length || 0),
-      body: "Manage supermarket profiles, contacts, tiers, and terms.",
+      body: "Manage customer profiles, contacts, ratings, and payment terms.",
       href: "#/retailers"
     },
     {

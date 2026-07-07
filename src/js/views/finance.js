@@ -6,7 +6,7 @@ import {
   getProductMap,
   getRetailerMap
 } from "../services/calculations.js";
-import { formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
+import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -117,6 +117,8 @@ function renderCreditExposureRows(state) {
 function renderCreditLimitManager(state, permissions) {
   if (!permissions.canSetCreditLimits) return "";
 
+  const moneySymbol = currencySymbolFor(state.client);
+
   return `
     <section class="panel manager-tool-panel">
       ${panelHeader("Credit terms manager", "Set limit, discount, payment period, and late-payment penalty with retained history")}
@@ -131,11 +133,11 @@ function renderCreditLimitManager(state, permissions) {
           </select>
         </label>
         <label class="field">
-          <span>New limit</span>
+          <span>New limit (${escapeHtml(moneySymbol)})</span>
           <input name="limit" type="number" min="1" step="1000" inputmode="numeric" placeholder="0" required>
         </label>
         <label class="field">
-          <span>Discount</span>
+          <span>Discount (%)</span>
           <input name="discountPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
         </label>
         <label class="field">
@@ -143,7 +145,7 @@ function renderCreditLimitManager(state, permissions) {
           <input name="paymentPeriodDays" type="number" min="0" step="1" inputmode="numeric" placeholder="14">
         </label>
         <label class="field">
-          <span>Late penalty</span>
+          <span>Late payment penalty (%)</span>
           <input name="latePenaltyPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
         </label>
         <label class="field span-full">

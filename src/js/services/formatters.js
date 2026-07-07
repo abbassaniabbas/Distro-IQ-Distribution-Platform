@@ -4,6 +4,12 @@ let currencyFormatter = new Intl.NumberFormat("en-NG", {
   maximumFractionDigits: 0
 });
 
+const currencySymbols = {
+  NGN: "₦",
+  USD: "$",
+  GBP: "£"
+};
+
 const compactFormatter = new Intl.NumberFormat("en", {
   notation: "compact",
   maximumFractionDigits: 1
@@ -24,6 +30,10 @@ const dateTimeFormatter = new Intl.DateTimeFormat("en", {
 
 export function formatCurrency(value) {
   return currencyFormatter.format(Number(value || 0));
+}
+
+export function currencySymbolFor(client) {
+  return client?.currencySymbol || currencySymbols[client?.currency] || currencySymbols.NGN;
 }
 
 export function setCurrencySettings(client) {

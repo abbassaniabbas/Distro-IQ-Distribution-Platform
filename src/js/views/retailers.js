@@ -1,19 +1,26 @@
-import { creditUsageTone, getCreditLimitForParty } from "../services/calculations.js";
-import { formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
-import { currentUserPermissions } from "../services/rbac.js";
+import { creditUsageTone, getCreditLimitForParty, getCustomerRating } from "../services/calculations.js";
+import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
+import { accountForUser, currentUserPermissions } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
+import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
 
 function formatTermPercent(value) {
   return `${new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(Number(value || 0))}%`;
 }
 
 function renderSupermarketManager(state, permissions) {
-  if (!permissions.canManageCustomers) return "";
+  if (!permissions.canManageCustomers && !permissions.canAddCustomers) return "";
+
+  const moneySymbol = currencySymbolFor(state.client);
+  const canManagePaymentTerms = permissions.canManageCustomers;
+  const title = canManagePaymentTerms ? "Customer relationship" : "Add customer";
+  const subtitle = canManagePaymentTerms
+    ? "Add or update customer details, location, customer type, and payment terms"
+    : "Create a customer outlet for sales logging";
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader("Customer relationship", "Add or update customer details, location, customer type, and payment terms")}
+      ${panelHeader(title, subtitle)}
       <form id="retailer-form" class="manager-form-grid" novalidate>
         <input type="hidden" name="retailerId">
         <label class="field">
@@ -33,16 +40,6 @@ function renderSupermarketManager(state, permissions) {
           <input name="address" placeholder="Street, area, or landmark">
         </label>
         <label class="field">
-          <span>Customer level</span>
-          <select name="tier">
-            <option value="Platinum">Platinum</option>
-            <option value="Gold">Gold</option>
-            <option value="Silver">Silver</option>
-            <option value="Bronze">Bronze</option>
-            <option value="Standard">Standard</option>
-          </select>
-        </label>
-        <label class="field">
           <span>Customer type</span>
           <select name="channel">
             <option value="Supermarket">Supermarket</option>
@@ -60,29 +57,37 @@ function renderSupermarketManager(state, permissions) {
           <input name="contact" placeholder="Store manager">
         </label>
         <label class="field">
-          <span>Orders completed (%)</span>
-          <input name="fillRate" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="90">
+          <span>Phone number</span>
+          <input name="contactPhone" type="tel" inputmode="tel" placeholder="0800 000 0000">
         </label>
-        <label class="field">
-          <span>Amount owed</span>
-          <input name="outstanding" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
-        </label>
-        <label class="field">
-          <span>Maximum credit allowed</span>
-          <input name="creditLimit" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
-        </label>
-        <label class="field">
-          <span>Discount (%)</span>
-          <input name="discountPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
-        </label>
-        <label class="field">
-          <span>Days to pay</span>
-          <input name="paymentPeriodDays" type="number" min="0" step="1" inputmode="numeric" placeholder="14">
-        </label>
-        <label class="field">
-          <span>Late payment penalty (%)</span>
-          <input name="latePenaltyPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
-        </label>
+        ${canManagePaymentTerms
+          ? `
+            <label class="field">
+              <span>Orders completed (%)</span>
+              <input name="fillRate" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="90">
+            </label>
+            <label class="field">
+              <span>Amount owed (${escapeHtml(moneySymbol)})</span>
+              <input name="outstanding" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
+            </label>
+            <label class="field">
+              <span>Maximum credit allowed (${escapeHtml(moneySymbol)})</span>
+              <input name="creditLimit" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
+            </label>
+            <label class="field">
+              <span>Discount (%)</span>
+              <input name="discountPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
+            </label>
+            <label class="field">
+              <span>Days to pay</span>
+              <input name="paymentPeriodDays" type="number" min="0" step="1" inputmode="numeric" placeholder="14">
+            </label>
+            <label class="field">
+              <span>Late payment penalty (%)</span>
+              <input name="latePenaltyPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
+            </label>
+          `
+          : ""}
         <div class="manager-form-actions span-full">
           ${textButton({
             iconName: "check",
@@ -102,13 +107,25 @@ function renderSupermarketManager(state, permissions) {
   `;
 }
 
-function renderRetailerCard(retailer, state, permissions) {
-  const canLogContact = permissions.canManageCustomers || permissions.canLogSalesReturns;
+function customerCreditSummary(retailer, state) {
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], retailer.name);
   const balance = Number(creditLimit?.balance ?? retailer.outstanding ?? 0);
   const limit = Number(creditLimit?.limit || 0);
   const creditUsage = limit ? (balance / limit) * 100 : 100;
   const creditStatus = creditUsage >= 100 ? "credit_hold" : creditUsage >= 85 ? "credit_watch" : "credit_clear";
+
+  return {
+    creditLimit,
+    balance,
+    limit,
+    creditUsage,
+    creditStatus
+  };
+}
+
+function renderRetailerListItem(retailer, state) {
+  const { balance, limit, creditStatus } = customerCreditSummary(retailer, state);
+  const rating = getCustomerRating(retailer, state);
   const searchIndex = [
     retailer.id,
     retailer.name,
@@ -116,9 +133,10 @@ function renderRetailerCard(retailer, state, permissions) {
     retailer.stateName,
     retailer.region,
     retailer.address,
-    retailer.tier,
     retailer.channel,
     retailer.contact,
+    retailer.contactPhone,
+    rating.label,
     creditStatus
   ]
     .join(" ")
@@ -126,99 +144,138 @@ function renderRetailerCard(retailer, state, permissions) {
 
   return `
     <article
-      class="retailer-card"
-      data-tier="${escapeHtml(retailer.tier)}"
+      class="retailer-list-item"
+      data-rating="${escapeHtml(rating.status)}"
       data-search-index="${escapeHtml(searchIndex)}"
     >
-      <header>
-        <div>
+      <button class="retailer-list-main js-view-retailer" type="button" data-retailer-id="${escapeHtml(retailer.id)}">
+        <span>
           <span class="eyebrow">${escapeHtml(retailer.id)}</span>
-          <h3>${escapeHtml(retailer.name)}</h3>
-        </div>
-        ${statusPill(creditStatus)}
-      </header>
-
-      <div class="stack">
-        <div class="split">
-          <span class="muted">State</span>
-          <strong>${escapeHtml(retailer.stateName || retailer.region || "Not set")}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Address</span>
-          <strong>${escapeHtml(retailer.address || "Not set")}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Customer type</span>
+          <strong>${escapeHtml(retailer.name)}</strong>
+          <small>${escapeHtml([retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</small>
+        </span>
+        <span>
+          <span class="muted">Type</span>
           <strong>${escapeHtml(retailer.channel || "Not set")}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Contact</span>
-          <strong>${escapeHtml(retailer.contact)}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Customer tier</span>
-          <strong>${escapeHtml(retailer.tier)}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Balance owed</span>
+        </span>
+        <span>
+          <span class="muted">Rating</span>
+          <strong>${escapeHtml(rating.label)}</strong>
+        </span>
+        <span>
+          <span class="muted">Balance</span>
           <strong>${formatCurrency(balance)}</strong>
-        </div>
-        <div class="split">
+        </span>
+        <span>
           <span class="muted">Credit limit</span>
           <strong>${limit ? formatCurrency(limit) : "Not set"}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Payment terms</span>
-          <strong>${formatNumber(creditLimit?.paymentPeriodDays ?? 14)} days</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Discount / penalty</span>
-          <strong>${formatTermPercent(creditLimit?.discountPercent)} / ${formatTermPercent(creditLimit?.latePenaltyPercent)}</strong>
-        </div>
-      </div>
-
-      <div class="stock-line">
-        <div class="stock-meta">
-          <span>Orders completed</span>
-          <span>${formatPercent(retailer.fillRate)}</span>
-        </div>
-        ${progressBar(retailer.fillRate, retailer.fillRate < 88 ? "warning" : "good")}
-      </div>
-
-      <div class="stock-line">
-        <div class="stock-meta">
-          <span>Credit usage</span>
-          <span>${limit ? formatPercent(creditUsage) : "No limit"}</span>
-        </div>
-        ${progressBar(creditUsage, creditUsageTone(creditUsage))}
-      </div>
-
-      <footer>
-        <span class="muted">Last sale ${formatDate(retailer.lastOrder)}</span>
-        <div class="row-actions">
-          ${permissions.canManageCustomers
-            ? textButton({
-                iconName: "settings",
-                label: "Edit",
-                className: "js-edit-retailer",
-                data: { "retailer-id": retailer.id }
-              })
-            : ""}
-          ${textButton({
-            iconName: "userCheck",
-            label: "Contacted",
-            className: "js-log-touch",
-            disabled: !canLogContact,
-            data: { "retailer-id": retailer.id }
-          })}
-        </div>
-      </footer>
+        </span>
+        <span class="retailer-list-status">
+          ${statusPill(creditStatus)}
+        </span>
+      </button>
     </article>
   `;
 }
 
+function detailItem(label, value) {
+  return `
+    <div class="split">
+      <span class="muted">${escapeHtml(label)}</span>
+      <strong>${escapeHtml(value)}</strong>
+    </div>
+  `;
+}
+
+function renderCustomerDetails(retailer, state, permissions) {
+  const { creditLimit, balance, limit, creditUsage, creditStatus } = customerCreditSummary(retailer, state);
+  const rating = getCustomerRating(retailer, state);
+
+  return `
+    <div class="customer-detail-summary">
+      <div>
+        <span class="eyebrow">${escapeHtml(retailer.id)}</span>
+        <h3>${escapeHtml(retailer.name)}</h3>
+        <p>${escapeHtml([retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</p>
+      </div>
+      <div class="row-actions">
+        ${statusPill(rating.status)}
+        ${statusPill(creditStatus)}
+      </div>
+    </div>
+
+    <div class="customer-detail-grid">
+      ${detailItem("Customer type", retailer.channel || "Not set")}
+      ${detailItem("Contact person", retailer.contact || "Not set")}
+      ${detailItem("Phone", retailer.contactPhone || "Not set")}
+      ${detailItem("Address", retailer.address || "Not set")}
+      ${detailItem("Customer rating", rating.label)}
+      ${detailItem("Rating basis", `${formatNumber(rating.score)} / 100`)}
+      ${detailItem("Orders completed", formatPercent(retailer.fillRate))}
+      ${detailItem("Last sale", formatDate(retailer.lastOrder))}
+      ${detailItem("Last contact", formatDate(retailer.lastContact))}
+      ${detailItem("Balance owed", formatCurrency(balance))}
+      ${detailItem("Credit limit", limit ? formatCurrency(limit) : "Not set")}
+      ${detailItem("Credit usage", limit ? formatPercent(creditUsage) : "No limit set")}
+      ${detailItem("Days to pay", `${formatNumber(creditLimit?.paymentPeriodDays ?? 14)} days`)}
+      ${detailItem("Discount / late penalty", `${formatTermPercent(creditLimit?.discountPercent)} / ${formatTermPercent(creditLimit?.latePenaltyPercent)}`)}
+    </div>
+
+    <div class="stock-line">
+      <div class="stock-meta">
+        <span>Orders completed</span>
+        <span>${formatPercent(retailer.fillRate)}</span>
+      </div>
+      ${progressBar(retailer.fillRate, retailer.fillRate < 88 ? "warning" : "good")}
+    </div>
+
+    <div class="stock-line">
+      <div class="stock-meta">
+        <span>Credit usage</span>
+        <span>${limit ? formatPercent(creditUsage) : "No limit"}</span>
+      </div>
+      ${progressBar(creditUsage, creditUsageTone(creditUsage))}
+    </div>
+
+    <footer class="customer-detail-actions">
+      ${permissions.canManageCustomers
+        ? textButton({
+            iconName: "settings",
+            label: "Edit customer",
+            className: "primary js-modal-edit-retailer",
+            data: { "retailer-id": retailer.id }
+          })
+        : ""}
+    </footer>
+  `;
+}
+
+function renderCustomerDetailsModal() {
+  return `
+    <div id="customer-details-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal customer-details-modal" role="dialog" aria-modal="true" aria-labelledby="customer-details-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Customer outlet</span>
+            <h2 id="customer-details-title">Customer details</h2>
+          </div>
+          ${iconButton({
+            iconName: "x",
+            label: "Close customer details",
+            className: "js-close-customer-modal"
+          })}
+        </header>
+        <div id="customer-details-content" class="customer-details-content"></div>
+      </section>
+    </div>
+  `;
+}
+
 export function renderRetailers({ state }) {
-  const tiers = [...new Set(state.retailers.map((retailer) => retailer.tier))].sort();
+  const ratings = [...new Map(state.retailers
+    .map((retailer) => getCustomerRating(retailer, state))
+    .map((rating) => [rating.status, rating])).values()]
+    .sort((a, b) => a.label.localeCompare(b.label));
   const permissions = currentUserPermissions(state);
 
   return `
@@ -229,32 +286,56 @@ export function renderRetailers({ state }) {
           ${panelHeader("Customer outlets", "Supermarkets, kiosks, wholesalers, contacts, and balances owed")}
           <div class="toolbar-group">
             <label class="field">
-              <span class="sr-only">Filter by tier</span>
-              <select id="retailer-tier-filter">
-                <option value="all">All tiers</option>
-                ${tiers.map((tier) => `<option value="${escapeHtml(tier)}">${escapeHtml(tier)}</option>`).join("")}
+              <span class="sr-only">Filter by customer rating</span>
+              <select id="retailer-rating-filter">
+                <option value="all">All ratings</option>
+                ${ratings.map((rating) => `<option value="${escapeHtml(rating.status)}">${escapeHtml(rating.label)}</option>`).join("")}
               </select>
             </label>
           </div>
         </div>
 
-        <div class="retailer-grid">
-          ${state.retailers.map((retailer) => renderRetailerCard(retailer, state, permissions)).join("")}
-        </div>
+        ${state.retailers.length
+          ? `<div class="retailer-list">${state.retailers.map((retailer) => renderRetailerListItem(retailer, state)).join("")}</div>`
+          : '<div class="empty-state">No customers added yet</div>'}
       </section>
+      ${renderCustomerDetailsModal()}
     </section>
   `;
 }
 
 export function bindRetailers({ root, store }) {
-  const tierFilter = qs("#retailer-tier-filter", root);
+  const ratingFilter = qs("#retailer-rating-filter", root);
   const retailerForm = qs("#retailer-form", root);
+  const customerModal = qs("#customer-details-modal", root);
+  const customerModalContent = qs("#customer-details-content", root);
 
-  tierFilter.addEventListener("change", () => {
-    qsa(".retailer-card", root).forEach((card) => {
-      card.hidden = tierFilter.value !== "all" && card.dataset.tier !== tierFilter.value;
+  ratingFilter?.addEventListener("change", () => {
+    qsa(".retailer-list-item", root).forEach((card) => {
+      card.hidden = ratingFilter.value !== "all" && card.dataset.rating !== ratingFilter.value;
     });
   });
+
+  function closeCustomerModal() {
+    if (customerModal) customerModal.hidden = true;
+  }
+
+  function openCustomerModal(retailerId) {
+    const state = store.getState();
+    const retailer = (state.retailers || []).find((item) => item.id === retailerId);
+    const permissions = currentUserPermissions(state);
+
+    if (!customerModal || !customerModalContent || !retailer) return;
+
+    customerModalContent.innerHTML = renderCustomerDetails(retailer, state, permissions);
+    customerModal.hidden = false;
+    customerModal.focus();
+
+    qs(".js-modal-edit-retailer", customerModal)?.addEventListener("click", () => {
+      closeCustomerModal();
+      fillRetailerForm(retailer.id);
+    });
+  }
 
   function fillRetailerForm(retailerId) {
     const state = store.getState();
@@ -267,17 +348,17 @@ export function bindRetailers({ root, store }) {
     retailerForm.elements.city.value = retailer.city || "";
     retailerForm.elements.stateName.value = retailer.stateName || retailer.region || "";
     retailerForm.elements.address.value = retailer.address || "";
-    retailerForm.elements.tier.value = retailer.tier || "Standard";
     const channelValue = retailer.channel || "Supermarket";
     const hasChannelOption = [...retailerForm.elements.channel.options].some((option) => option.value === channelValue);
     retailerForm.elements.channel.value = hasChannelOption ? channelValue : "Other";
     retailerForm.elements.contact.value = retailer.contact || "";
-    retailerForm.elements.fillRate.value = retailer.fillRate || 0;
-    retailerForm.elements.outstanding.value = creditLimit?.balance ?? retailer.outstanding ?? 0;
-    retailerForm.elements.creditLimit.value = creditLimit?.limit || 0;
-    retailerForm.elements.discountPercent.value = creditLimit?.discountPercent || 0;
-    retailerForm.elements.paymentPeriodDays.value = creditLimit?.paymentPeriodDays ?? 14;
-    retailerForm.elements.latePenaltyPercent.value = creditLimit?.latePenaltyPercent || 0;
+    retailerForm.elements.contactPhone.value = retailer.contactPhone || "";
+    if (retailerForm.elements.fillRate) retailerForm.elements.fillRate.value = retailer.fillRate || 0;
+    if (retailerForm.elements.outstanding) retailerForm.elements.outstanding.value = creditLimit?.balance ?? retailer.outstanding ?? 0;
+    if (retailerForm.elements.creditLimit) retailerForm.elements.creditLimit.value = creditLimit?.limit || 0;
+    if (retailerForm.elements.discountPercent) retailerForm.elements.discountPercent.value = creditLimit?.discountPercent || 0;
+    if (retailerForm.elements.paymentPeriodDays) retailerForm.elements.paymentPeriodDays.value = creditLimit?.paymentPeriodDays ?? 14;
+    if (retailerForm.elements.latePenaltyPercent) retailerForm.elements.latePenaltyPercent.value = creditLimit?.latePenaltyPercent || 0;
     retailerForm.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
@@ -285,8 +366,17 @@ export function bindRetailers({ root, store }) {
     event.preventDefault();
     const formData = new FormData(retailerForm);
     const message = qs("#retailer-form-message", root);
+    const currentState = store.getState();
+    const permissions = currentUserPermissions(currentState);
+    const isRepCustomerAdd = permissions.canAddCustomers && !permissions.canManageCustomers;
+    const account = accountForUser(currentState);
 
     if (message) message.textContent = "";
+
+    if (isRepCustomerAdd && String(formData.get("retailerId") || "").trim()) {
+      if (message) message.textContent = "Sales representatives can add new customers, but existing customer changes go to a manager.";
+      return;
+    }
 
     if (!String(formData.get("name") || "").trim()) {
       if (message) message.textContent = "Customer name is required.";
@@ -300,15 +390,17 @@ export function bindRetailers({ root, store }) {
       city: formData.get("city"),
       stateName: formData.get("stateName"),
       address: formData.get("address"),
-      tier: formData.get("tier"),
       channel: formData.get("channel"),
       contact: formData.get("contact"),
+      contactPhone: formData.get("contactPhone"),
       fillRate: formData.get("fillRate"),
       outstanding: formData.get("outstanding"),
       creditLimit: formData.get("creditLimit"),
       discountPercent: formData.get("discountPercent"),
       paymentPeriodDays: formData.get("paymentPeriodDays"),
       latePenaltyPercent: formData.get("latePenaltyPercent"),
+      assignedRepUserId: isRepCustomerAdd ? currentState.user?.id : "",
+      assignedRepName: isRepCustomerAdd ? account?.name || currentState.user?.user_metadata?.full_name || currentState.user?.email || "" : "",
       message: "Customer saved"
     });
   });
@@ -324,13 +416,21 @@ export function bindRetailers({ root, store }) {
     });
   });
 
-  qsa(".js-log-touch", root).forEach((button) => {
+  qsa(".js-view-retailer", root).forEach((button) => {
     button.addEventListener("click", () => {
-      store.dispatch({
-        type: "LOG_RETAILER_TOUCH",
-        retailerId: button.dataset.retailerId,
-        message: "Customer contact logged"
-      });
+      openCustomerModal(button.dataset.retailerId);
     });
+  });
+
+  customerModal?.addEventListener("click", (event) => {
+    if (event.target === customerModal || event.target.closest(".js-close-customer-modal")) {
+      closeCustomerModal();
+    }
+  });
+
+  customerModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      closeCustomerModal();
+    }
   });
 }
