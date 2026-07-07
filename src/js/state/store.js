@@ -492,6 +492,8 @@ function reducer(currentState, action) {
       const isCreditImpact = String(paymentType).toLowerCase().includes("credit");
       const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
       const repName = action.repName || assignment?.repName || currentActorName(state);
+      const customerName = customer?.name || action.customerName || "Walk-in customer";
+      const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
 
       if (!assignment || !product || !quantity) return state;
 
@@ -510,8 +512,8 @@ function reducer(currentState, action) {
           quantity,
           amount,
           paymentType,
-          partyType: customer?.channel || "Customer",
-          partyName: customer?.name || action.customerName || "Walk-in customer",
+          partyType: customerType,
+          partyName: customerName,
           date: todayISO(),
           recordedBy: repName,
           creditImpact,
@@ -521,7 +523,7 @@ function reducer(currentState, action) {
       ];
 
       updateCreditBalance(state, repName, creditImpact);
-      updateCreditBalance(state, customer?.name, creditImpact);
+      updateCreditBalance(state, customerName, creditImpact);
 
       appendActivityLog(state, {
         clientId: state.client?.id,
@@ -592,7 +594,7 @@ function reducer(currentState, action) {
         dailyVelocity: Math.max(0, Number(action.dailyVelocity ?? existingProduct?.dailyVelocity ?? 0)),
         unitCost: Math.max(0, Number(action.unitCost ?? existingProduct?.unitCost ?? 0)),
         unitPrice: Math.max(0, Number(action.unitPrice ?? existingProduct?.unitPrice ?? 0)),
-        imageUrl: String(action.imageUrl || existingProduct?.imageUrl || "").trim(),
+        imageUrl: String(action.imageUrl ?? existingProduct?.imageUrl ?? "").trim(),
         status,
         equipmentStatus: stockCategory === "equipment" ? (existingProduct?.equipmentStatus || "in_stock") : undefined,
         updatedAt: todayISO()
@@ -1088,7 +1090,7 @@ export function createStore() {
       clearStoredState();
       notify({
         type: "RESET_DATA",
-        message: "Demo data reset"
+        message: "Workspace data cleared"
       });
     }
   };

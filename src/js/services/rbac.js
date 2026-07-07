@@ -185,19 +185,28 @@ export function scopeStateForCurrentRole(state) {
   const assignedOrderIds = new Set(assignedRoutes.flatMap((route) => route.orderIds || []));
   const orders = (state.orders || []).filter((order) => assignedOrderIds.has(order.id) || order.repUserId === userId);
   const customerIds = new Set(orders.map((order) => order.retailerId));
-  const productIds = new Set(orders.flatMap((order) => (order.items || []).map((item) => item.productId)));
+  const stockAssignments = (state.stockAssignments || []).filter((assignment) => {
+    const repName = String(assignment.repName || "").trim().toLowerCase();
+    return assignment.repUserId === userId || (actorName && repName === actorName);
+  });
+  const assignedProductIds = new Set(stockAssignments.map((assignment) => assignment.productId));
+  const productIds = new Set([
+    ...orders.flatMap((order) => (order.items || []).map((item) => item.productId)),
+    ...assignedProductIds
+  ]);
+  const retailers = (state.retailers || []).filter((retailer) => {
+    const assignedRepUserId = String(retailer.assignedRepUserId || "");
+    return customerIds.has(retailer.id) || assignedRepUserId === userId || !assignedRepUserId;
+  });
 
   return {
     ...state,
     products: (state.products || []).filter((product) => productIds.has(product.id) || product.assignedRepUserId === userId),
-    retailers: (state.retailers || []).filter((retailer) => customerIds.has(retailer.id) || retailer.assignedRepUserId === userId),
+    retailers,
     orders,
     routes: assignedRoutes,
     invoices: (state.invoices || []).filter((invoice) => customerIds.has(invoice.retailerId) || invoice.repUserId === userId),
-    stockAssignments: (state.stockAssignments || []).filter((assignment) => {
-      const repName = String(assignment.repName || "").trim().toLowerCase();
-      return assignment.repUserId === userId || (actorName && repName === actorName);
-    }),
+    stockAssignments,
     stockTransactions: (state.stockTransactions || []).filter((transaction) => {
       const partyName = String(transaction.partyName || "").trim().toLowerCase();
       const recordedBy = String(transaction.recordedBy || "").trim().toLowerCase();

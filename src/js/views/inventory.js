@@ -15,8 +15,10 @@ import {
   statusText
 } from "../services/formatters.js";
 import { currentUserPermissions } from "../services/rbac.js";
+import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
+import { icon } from "../ui/icons.js";
 
 const DEFAULT_STOCK_TAB = "stock-health";
 
@@ -257,10 +259,23 @@ function renderStockProductModal(state, permissions) {
             <option value="inactive">Hidden</option>
           </select>
         </label>
-        <label class="field span-full">
-          <span>Image URL</span>
-          <input name="imageUrl" type="url" placeholder="https://...">
-        </label>
+        <div class="field span-full file-field" id="stock-image-upload-field">
+          <span>Stock picture</span>
+          <div class="file-upload-row">
+            <input class="file-input sr-only" id="stock-image-input" name="imageFile" type="file" accept="${LOGO_ACCEPT}">
+            <label class="file-dropzone" for="stock-image-input">
+              <span class="file-upload-icon">${icon("upload")}</span>
+              <span class="file-upload-copy">
+                <strong id="stock-image-upload-title">Choose picture file</strong>
+                <small id="stock-image-file-name">${escapeHtml(LOGO_HELP_TEXT)}</small>
+              </span>
+              <span class="file-upload-action">Browse</span>
+            </label>
+            <button class="icon-button clear-file-button" id="clear-stock-image-file" type="button" title="Clear selected picture" aria-label="Clear selected picture" hidden>
+              ${icon("x")}
+            </button>
+          </div>
+        </div>
         <div class="manager-form-actions span-full">
           ${textButton({
             iconName: "check",
@@ -874,12 +889,18 @@ export function bindInventory({ root, store }) {
   const stockModalTitle = qs("#stock-product-modal-title", root);
   const productForm = qs("#manager-product-form", root);
   const productMessage = qs("#manager-product-message", root);
+  const stockImageUploadField = qs("#stock-image-upload-field", root);
+  const stockImageInput = qs("#stock-image-input", root);
+  const stockImageUploadTitle = qs("#stock-image-upload-title", root);
+  const stockImageFileName = qs("#stock-image-file-name", root);
+  const clearStockImageButton = qs("#clear-stock-image-file", root);
   const assignmentForm = qs("#manager-assignment-form", root);
   const dispatchForm = qs("#stock-dispatch-form", root);
   const routeParams = inventoryRouteParams();
   const requestedProductId = routeParams.get("product");
   const requestedStockType = routeParams.get("type");
   const requestedAction = routeParams.get("action");
+  let stockImageDataUrl = "";
 
   function applyStockTypeFilter() {
     qsa(".product-card", root).forEach((card) => {
@@ -894,11 +915,39 @@ export function bindInventory({ root, store }) {
     applyStockTypeFilter();
   }
 
+  function setStockImageUploadState({ fileName = "", error = "" } = {}) {
+    if (!stockImageUploadField) return;
+
+    stockImageUploadField.classList.toggle("has-file", Boolean(fileName || stockImageDataUrl));
+    stockImageUploadField.classList.toggle("has-error", Boolean(error));
+
+    if (stockImageUploadTitle) {
+      stockImageUploadTitle.textContent = error
+        ? "Picture not accepted"
+        : fileName
+          ? "Picture selected"
+          : stockImageDataUrl
+            ? "Picture is set"
+            : "Choose picture file";
+    }
+
+    if (stockImageFileName) {
+      stockImageFileName.textContent = error || fileName || LOGO_HELP_TEXT;
+    }
+
+    if (clearStockImageButton) {
+      clearStockImageButton.hidden = !stockImageDataUrl && !fileName;
+    }
+  }
+
   function resetProductForm() {
     if (!productForm) return;
 
     productForm.reset();
     productForm.elements.productId.value = "";
+    stockImageDataUrl = "";
+    if (stockImageInput) stockImageInput.value = "";
+    setStockImageUploadState();
     if (stockModalTitle) stockModalTitle.textContent = "Add stock";
     if (productMessage) productMessage.textContent = "";
   }
@@ -913,6 +962,46 @@ export function bindInventory({ root, store }) {
   function closeStockModal() {
     if (stockModal) stockModal.hidden = true;
   }
+
+  stockImageInput?.addEventListener("change", async () => {
+    const file = stockImageInput.files?.[0];
+
+    if (!file) {
+      stockImageDataUrl = "";
+      setStockImageUploadState();
+      return;
+    }
+
+    const fileError = validateLogoFile(file).replace("logo", "picture");
+
+    if (fileError) {
+      stockImageDataUrl = "";
+      stockImageInput.value = "";
+      setStockImageUploadState({
+        error: fileError
+      });
+      return;
+    }
+
+    try {
+      stockImageDataUrl = await readLogoFile(file);
+      setStockImageUploadState({
+        fileName: file.name
+      });
+    } catch (error) {
+      stockImageDataUrl = "";
+      stockImageInput.value = "";
+      setStockImageUploadState({
+        error: error.message.replace("Logo", "Picture")
+      });
+    }
+  });
+
+  clearStockImageButton?.addEventListener("click", () => {
+    stockImageDataUrl = "";
+    if (stockImageInput) stockImageInput.value = "";
+    setStockImageUploadState();
+  });
 
   productForm?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -932,7 +1021,7 @@ export function bindInventory({ root, store }) {
       unitCost: Number(formData.get("unitCost") || 0),
       unitPrice: Number(formData.get("unitPrice") || 0),
       status: formData.get("status"),
-      imageUrl: formData.get("imageUrl"),
+      imageUrl: stockImageDataUrl,
       message: existingProductId ? "Stock updated" : "Stock added"
     });
 
@@ -959,7 +1048,9 @@ export function bindInventory({ root, store }) {
     productForm.elements.unitCost.value = product.unitCost || 0;
     productForm.elements.unitPrice.value = product.unitPrice || 0;
     productForm.elements.status.value = product.status || "active";
-    productForm.elements.imageUrl.value = product.imageUrl || "";
+    stockImageDataUrl = product.imageUrl || "";
+    if (stockImageInput) stockImageInput.value = "";
+    setStockImageUploadState();
     openStockModal();
     return true;
   }

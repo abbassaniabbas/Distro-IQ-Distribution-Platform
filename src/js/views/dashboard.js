@@ -1448,7 +1448,7 @@ function renderManagerReportReview(state) {
 
 function renderRepStockCards(assignments) {
   if (!assignments.length) {
-    return '<div class="empty-state">No stock assigned yet</div>';
+    return '<div class="empty-state">No assigned stock yet</div>';
   }
 
   return `
@@ -1457,7 +1457,7 @@ function renderRepStockCards(assignments) {
         <article class="rep-stock-card" data-search-index="${escapeHtml(`${assignment.product.name} ${assignment.repName}`.toLowerCase())}">
           <header>
             <div>
-              <span class="eyebrow">${escapeHtml(assignment.product.id)}</span>
+              <span class="eyebrow">Assigned stock - ${escapeHtml(assignment.product.id)}</span>
               <h3>${escapeHtml(assignment.product.name)}</h3>
             </div>
             ${statusPill(assignment.outstanding > 0 ? "in_hand" : "done")}
@@ -1477,7 +1477,7 @@ function renderRepStockCards(assignments) {
           </div>
 
           <footer>
-            <span class="muted">${formatNumber(assignment.assigned)} loaded</span>
+            <span class="muted">${formatNumber(assignment.assigned)} assigned</span>
             <button class="button js-fill-rep-product" type="button" data-assignment-id="${escapeHtml(assignment.id)}">
               <span>Use this</span>
             </button>
@@ -1485,6 +1485,29 @@ function renderRepStockCards(assignments) {
         </article>
       `).join("")}
     </div>
+  `;
+}
+
+function renderRepCustomerField(customers) {
+  if (!customers.length) {
+    return `
+      <label class="field">
+        <span>Customer</span>
+        <input name="customerName" type="text" placeholder="Customer or supermarket name" required>
+      </label>
+    `;
+  }
+
+  return `
+    <label class="field">
+      <span>Customer</span>
+      <select name="customerId" required>
+        <option value="">Pick customer</option>
+        ${customers.map((customer) => `
+          <option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>
+        `).join("")}
+      </select>
+    </label>
   `;
 }
 
@@ -1523,15 +1546,7 @@ function renderRepQuickLog(state, assignments) {
           <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
         </label>
 
-        <label class="field">
-          <span>Customer</span>
-          <select name="customerId" required>
-            <option value="">Pick customer</option>
-            ${customers.map((customer) => `
-              <option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>
-            `).join("")}
-          </select>
-        </label>
+        ${renderRepCustomerField(customers)}
 
         <label class="field">
           <span>Payment</span>
@@ -1674,9 +1689,9 @@ function renderSalesRepDashboard(state) {
       </div>
 
       <section class="panel">
-        ${panelHeader("Stock in hand", "")}
-        ${renderRepStockCards(assignments)}
-      </section>
+          ${panelHeader("Assigned stock", "Stock currently loaded to you")}
+          ${renderRepStockCards(assignments)}
+        </section>
 
       <section class="panel">
         ${panelHeader("Saved today", `${formatNumber(summary.unitsSold)} sold - ${formatNumber(summary.unitsReturned)} returned`)}
@@ -2151,12 +2166,15 @@ function bindSalesRepDashboard({ root, store }) {
     const formData = new FormData(form);
     const assignmentId = String(formData.get("assignmentId") || "");
     const customerId = String(formData.get("customerId") || "");
+    const typedCustomerName = String(formData.get("customerName") || "").trim();
     const quantity = Number(formData.get("quantity") || 0);
     const transactionType = String(formData.get("transactionType") || "sale");
     const paymentType = String(formData.get("paymentType") || "cash");
     const assignment = (state.stockAssignments || []).find((item) => item.id === assignmentId);
     const product = (state.products || []).find((item) => item.id === assignment?.productId);
     const customer = (state.retailers || []).find((item) => item.id === customerId);
+    const customerName = customer?.name || typedCustomerName;
+    const isCreditSale = transactionType === "sale" && normalized(paymentType).includes("credit");
     const repName = assignment?.repName || currentRepName(state);
     const outstanding = assignment ? assignmentOutstanding(assignment) : 0;
     const amount = quantity * Number(product?.unitPrice || 0);
@@ -2168,8 +2186,13 @@ function bindSalesRepDashboard({ root, store }) {
       return;
     }
 
-    if (!customer) {
-      setRepMessage(message, "Pick a customer.", "error");
+    if (customerId && !customer) {
+      setRepMessage(message, "Pick a valid customer.", "error");
+      return;
+    }
+
+    if (!customerName) {
+      setRepMessage(message, "Enter the customer name.", "error");
       return;
     }
 
@@ -2183,7 +2206,12 @@ function bindSalesRepDashboard({ root, store }) {
       return;
     }
 
-    if (transactionType === "sale" && normalized(paymentType).includes("credit")) {
+    if (isCreditSale && !customer) {
+      setRepMessage(message, "Credit sales need a saved customer.", "error");
+      return;
+    }
+
+    if (isCreditSale) {
       const repLimit = getCreditLimitForParty(state.creditLimits || [], repName);
       const customerLimit = getCreditLimitForParty(state.creditLimits || [], customer.name);
       const repProjected = Number(repLimit?.balance || 0) + amount;
@@ -2204,6 +2232,8 @@ function bindSalesRepDashboard({ root, store }) {
       type: "LOG_REP_TRANSACTION",
       assignmentId,
       customerId,
+      customerName,
+      customerType: customer?.channel || customer?.type || "Customer",
       quantity,
       transactionType,
       paymentType,

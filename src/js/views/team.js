@@ -1,7 +1,6 @@
 import {
   ROLE_OPTIONS,
   getScopedAccounts,
-  getScopedInvites,
   validateAccountForm
 } from "../services/tenant.js";
 import { inviteAccount } from "../services/backend.js";
@@ -204,22 +203,6 @@ function renderAccountCard(account) {
   `;
 }
 
-function renderInvitePreview(invite) {
-  return `
-    <article class="invite-preview" data-search-index="${escapeHtml(`${invite.to} ${invite.subject}`.toLowerCase())}">
-      <div class="split">
-        <strong>${escapeHtml(invite.to)}</strong>
-        ${statusPill(invite.status)}
-      </div>
-      <span class="muted">Temporary login details are shown in a secure modal when the member is created.</span>
-      <div class="client-id-box">
-        <span class="eyebrow">Sign-in email</span>
-        <strong>${escapeHtml(invite.to)}</strong>
-      </div>
-    </article>
-  `;
-}
-
 export function renderTeam({ state }) {
   const client = state.client;
 
@@ -235,7 +218,6 @@ export function renderTeam({ state }) {
   }
 
   const accounts = getScopedAccounts(state);
-  const invites = getScopedInvites(state);
   const permissions = currentUserPermissions(state);
 
   if (!permissions.canManageUsers) {
@@ -301,15 +283,6 @@ export function renderTeam({ state }) {
           accounts.length
             ? `<div class="account-grid">${accounts.map(renderAccountCard).join("")}</div>`
             : '<div class="empty-state">No accounts have been created for this factory yet</div>'
-        }
-      </section>
-
-      <section class="panel team-layout">
-        ${panelHeader("Temporary passwords", "Shown after member creation")}
-        ${
-          invites.length
-            ? `<div class="stack">${invites.map(renderInvitePreview).join("")}</div>`
-            : '<div class="empty-state">Temporary passwords will appear after member creation</div>'
         }
       </section>
     </section>

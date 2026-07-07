@@ -18,7 +18,7 @@ function renderSupermarketManager(state, permissions) {
         <input type="hidden" name="retailerId">
         <label class="field">
           <span>Supermarket name</span>
-          <input name="name" placeholder="Lekki Family Mart" required>
+          <input name="name" placeholder="Customer outlet name" required>
         </label>
         <label class="field">
           <span>City</span>

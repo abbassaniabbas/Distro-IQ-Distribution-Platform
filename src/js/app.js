@@ -137,7 +137,6 @@ const navRoot = qs("#primary-nav");
 const viewRoot = qs("#view-root");
 const viewTitle = qs("#view-title");
 const globalSearch = qs("#global-search");
-const resetButton = qs("#reset-demo-data");
 const signOutButton = qs("#sign-out");
 const dashboardDispatchCount = qs("#dashboard-dispatch-count");
 const sidebarRoleLabel = qs("#sidebar-role-label");
@@ -365,7 +364,6 @@ function render() {
   updateTopbarUtilities(state, view);
   viewTitle.textContent = currentUserRole(state) === "sales_rep" && routeId === "dashboard" ? "My Day" : view.title;
   globalSearch.disabled = Boolean(view.isSetup);
-  resetButton.hidden = Boolean(state.backend.configured) || Boolean(view.isSetup);
   signOutButton.hidden = !state.session;
   if (view.isSetup) {
     globalSearch.value = "";
@@ -377,10 +375,6 @@ function render() {
 
 globalSearch.addEventListener("input", () => {
   applySearchFilter(viewRoot, globalSearch.value);
-});
-
-resetButton.addEventListener("click", () => {
-  store.reset();
 });
 
 notificationsButton?.addEventListener("click", () => {

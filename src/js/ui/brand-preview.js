@@ -25,12 +25,12 @@ export function renderDeliveryNotePreview(client) {
   const companyName = client?.companyName || "DistroIQ";
   const sampleRows = [
     {
-      item: "Crunchy Plantain Chips 50g",
+      item: "Finished Snack 50g",
       quantity: 240,
       amount: 72000
     },
     {
-      item: "Cheese Corn Puffs 35g",
+      item: "Assorted Snack Pack",
       quantity: 180,
       amount: 39600
     }
@@ -56,8 +56,8 @@ export function renderDeliveryNotePreview(client) {
 
       <div class="delivery-note-party">
         <span class="eyebrow">Deliver to</span>
-        <strong>Lekki Family Mart</strong>
-        <span class="muted">Lagos, South West</span>
+        <strong>Customer Outlet</strong>
+        <span class="muted">Delivery region</span>
       </div>
 
       <div class="delivery-note-lines">

@@ -1319,16 +1319,6 @@
   font-weight: 900;
 }
 
-.invite-preview {
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: #f8fbfd;
-}
-
-.invite-preview code,
 .client-id-box code {
   color: var(--teal-dark);
   font-weight: 850;
