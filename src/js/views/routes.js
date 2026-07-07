@@ -1,8 +1,19 @@
 import { assignmentOutstanding, buildRepLedger, creditUsageTone } from "../services/calculations.js";
 import { formatCurrency, formatNumber, formatPercent, statusText } from "../services/formatters.js";
-import { currentUserPermissions } from "../services/rbac.js";
+import { currentUserPermissions, salesRepresentativeNames } from "../services/rbac.js";
 import { escapeHtml, qsa } from "../ui/dom.js";
 import { panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
+
+function routeRepresentativeName(route, state) {
+  const accountNames = salesRepresentativeNames(state);
+  const driverName = String(route.driver || "").trim();
+
+  if (!accountNames.length) return driverName || "Unassigned representative";
+
+  return accountNames.some((name) => name.toLowerCase() === driverName.toLowerCase())
+    ? driverName
+    : "Unassigned representative";
+}
 
 function renderRouteMap() {
   return `
@@ -20,6 +31,7 @@ function renderRouteMap() {
 
 function renderRouteCard(route, state, permissions) {
   const canAdvanceRun = permissions.canDispatchStock || permissions.canAssignStock;
+  const repName = routeRepresentativeName(route, state);
   const routeAssignments = (state.stockAssignments || []).filter((assignment) => assignment.routeId === route.id);
   const assignedUnits = routeAssignments.reduce((total, assignment) => total + Number(assignment.assigned || 0), 0);
   const soldUnits = routeAssignments.reduce((total, assignment) => total + Number(assignment.sold || 0), 0);
@@ -32,7 +44,7 @@ function renderRouteCard(route, state, permissions) {
   const searchIndex = [
     route.id,
     route.name,
-    route.driver,
+    repName,
     route.vehicle,
     route.region,
     statusText(route.status)
@@ -53,7 +65,7 @@ function renderRouteCard(route, state, permissions) {
       <div class="stack">
         <div class="split">
           <span class="muted">Sales representative</span>
-          <strong>${escapeHtml(route.driver)}</strong>
+          <strong>${escapeHtml(repName)}</strong>
         </div>
         <div class="split">
           <span class="muted">Assigned van</span>
