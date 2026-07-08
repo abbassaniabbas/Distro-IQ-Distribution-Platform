@@ -17,11 +17,6 @@ export const NAV_ITEMS = [
     icon: "inventory"
   },
   {
-    id: "routes",
-    label: "Representative Runs",
-    icon: "routes"
-  },
-  {
     id: "retailers",
     label: "Customers",
     icon: "retailers"

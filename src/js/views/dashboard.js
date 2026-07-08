@@ -4,6 +4,7 @@ import {
   buildRegionalSummary,
   calculateMetrics,
   calculateVisionMetrics,
+  getFinancialSalesLines,
   getCreditLimitForParty,
   getCustomerRating,
   getLowStockProducts,
@@ -1392,7 +1393,7 @@ function renderManagerReportRows(state) {
       <tr data-search-index="${escapeHtml(searchIndex)}">
         <td>
           <strong>${escapeHtml(report.repName)}</strong>
-          <div class="muted">${formatDate(report.reportDate)} - ${escapeHtml(report.tripLabel || "Trip")}</div>
+          <div class="muted">${formatDate(report.reportDate)} - ${escapeHtml(report.tripLabel || "Daily report")}</div>
         </td>
         <td>${statusPill(report.status)}</td>
         <td>
@@ -1879,46 +1880,8 @@ function renderSalesRepDashboard(state) {
   `;
 }
 
-function buildAccountantRouteMap(routes = []) {
-  const routeMap = new Map();
-
-  routes.forEach((route) => {
-    (route.orderIds || []).forEach((orderId) => {
-      routeMap.set(orderId, route);
-    });
-  });
-
-  return routeMap;
-}
-
 function getAccountantFinancialLines(state) {
-  const productMap = getProductMap(state.products || []);
-  const retailerMap = getRetailerMap(state.retailers || []);
-  const routeMap = buildAccountantRouteMap(state.routes || []);
-
-  return (state.orders || []).flatMap((order) => {
-    const route = routeMap.get(order.id);
-    const retailer = retailerMap.get(order.retailerId);
-
-    return (order.items || []).map((item) => {
-      const product = productMap.get(item.productId);
-      const quantity = Number(item.quantity || 0);
-      const revenue = quantity * Number(product?.unitPrice || 0);
-      const cost = quantity * Number(product?.unitCost || 0);
-
-      return {
-        productId: item.productId,
-        productName: product?.name || "Unknown product",
-        repName: route?.driver || "Unassigned",
-        customerName: retailer?.name || "Unknown customer",
-        date: order.createdAt,
-        quantity,
-        revenue,
-        cost,
-        profit: revenue - cost
-      };
-    });
-  });
+  return getFinancialSalesLines(state);
 }
 
 function buildAccountantSnapshot(state) {

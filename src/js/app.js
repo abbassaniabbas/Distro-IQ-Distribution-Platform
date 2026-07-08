@@ -25,7 +25,6 @@ import { renderOrders, bindOrders } from "./views/orders.js";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
 import { renderRetailers, bindRetailers } from "./views/retailers.js";
-import { renderRoutes, bindRoutes } from "./views/routes.js";
 import { renderSettings, bindSettings } from "./views/settings.js";
 import { renderTeam, bindTeam } from "./views/team.js";
 
@@ -80,11 +79,6 @@ const routes = {
     title: "Stock",
     render: renderInventory,
     bind: bindInventory
-  },
-  routes: {
-    title: "Representative Runs",
-    render: renderRoutes,
-    bind: bindRoutes
   },
   retailers: {
     title: "Customers",
@@ -306,7 +300,12 @@ function updateSidebar(state) {
     return;
   }
 
-  const activeDispatches = state.routes.filter((route) => ["scheduled", "in_transit"].includes(route.status)).length;
+  const today = new Date().toISOString().slice(0, 10);
+  const activeDispatches = (state.stockTransactions || []).filter((transaction) => (
+    transaction.date === today &&
+    String(transaction.movementDirection || "").toLowerCase() === "out" &&
+    String(transaction.type || "").toLowerCase() !== "write off"
+  )).length;
   if (dashboardDispatchCount) dashboardDispatchCount.textContent = `${activeDispatches} dispatch${activeDispatches === 1 ? "" : "es"}`;
 }
 

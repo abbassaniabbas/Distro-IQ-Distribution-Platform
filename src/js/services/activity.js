@@ -1,5 +1,6 @@
 import { createId } from "./tenant.js";
 import { currentUserRole } from "./rbac.js";
+import { formatCurrency, formatNumber } from "./formatters.js";
 
 export const ACTION_LABELS = {
   created: "Created",
@@ -28,7 +29,7 @@ export const RECORD_LABELS = {
   order: "Sales Order",
   inventory: "Stock",
   stock_movement: "Stock Movement",
-  route: "Representative Run",
+  route: "Dispatch",
   retailer: "Customer",
   invoice: "Invoice",
   credit_limit: "Credit Limit",
@@ -160,6 +161,50 @@ function stockMovementActivityLogs(state, existingLogs) {
     .filter(Boolean);
 }
 
+function financialTransactionActivityLogs(state) {
+  if (!state.client?.id) return [];
+
+  const productMap = new Map((state.products || []).map((product) => [product.id, product]));
+
+  return (state.stockTransactions || [])
+    .filter((transaction) => {
+      const type = String(transaction.type || "").toLowerCase();
+      return type === "sale" || type === "return" || type === "write off";
+    })
+    .map((transaction) => {
+      const product = productMap.get(transaction.productId);
+      const productName = product?.name || transaction.productId || "Stock item";
+      const type = String(transaction.type || "").toLowerCase();
+      const isSale = type === "sale";
+      const isReturn = type === "return";
+      const quantity = Number(transaction.quantity || 0);
+      const amount = isSale || isReturn
+        ? Number(transaction.amount || 0)
+        : quantity * Number(product?.unitCost || product?.unitPrice || 0);
+      const actionType = isSale ? "sold" : isReturn ? "returned" : "reduced";
+      const recordType = isSale || isReturn ? "sale" : "stock_movement";
+      const actorName = transaction.recordedBy || transaction.staffResponsible || "Team member";
+      const summary = isSale
+        ? `${actorName} sold ${formatNumber(quantity)} ${productName} to ${transaction.partyName || "customer"} for ${formatCurrency(amount)} (${transaction.paymentType || "cash"})`
+        : isReturn
+          ? `${actorName} logged a ${formatCurrency(amount)} return from ${transaction.partyName || "customer"} for ${formatNumber(quantity)} ${productName}`
+          : `${actorName} wrote off ${formatNumber(quantity)} ${productName}; estimated loss ${formatCurrency(amount)}`;
+
+      return {
+        id: `FIN-ACT-${transaction.id}`,
+        clientId: state.client.id,
+        actionType,
+        recordType,
+        recordLabel: isSale || isReturn ? productName : transaction.productId || transaction.id,
+        actorUserId: transaction.repUserId || "",
+        actorName,
+        actorEmail: "",
+        summary,
+        createdAt: transactionCreatedAt(transaction)
+      };
+    });
+}
+
 export function getScopedActivityLogs(state) {
   if (!state.client?.id) return [];
 
@@ -178,8 +223,18 @@ export function getScopedActivityLogs(state) {
   }
 
   if (role === "accountant") {
-    return logs
-      .filter((entry) => ["sale", "invoice", "credit_limit", "report"].includes(entry.recordType))
+    const accountantSavedLogs = savedLogs.filter((entry) => (
+      !(entry.recordType === "sale" && ["sold", "returned"].includes(entry.actionType))
+    ));
+
+    return [
+      ...accountantSavedLogs,
+      ...financialTransactionActivityLogs(state)
+    ]
+      .filter((entry) => (
+        ["sale", "invoice", "credit_limit", "report", "order"].includes(entry.recordType) ||
+        (entry.recordType === "stock_movement" && entry.actionType === "reduced")
+      ))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 

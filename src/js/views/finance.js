@@ -2,8 +2,8 @@ import {
   calculateMetrics,
   calculateVisionMetrics,
   creditUsageTone,
+  getFinancialSalesLines,
   getInvoiceAging,
-  getProductMap,
   getRetailerMap
 } from "../services/calculations.js";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
@@ -11,6 +11,62 @@ import { currentUserPermissions, currentUserRole, salesRepresentativeNames } fro
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+
+const DEFAULT_FINANCE_TAB = "overview";
+
+function financeRouteParams() {
+  if (typeof window === "undefined") return new URLSearchParams();
+
+  const query = window.location.hash.split("?")[1] || "";
+  return new URLSearchParams(query);
+}
+
+function financeTabHref(tabId) {
+  return `#/finance?tab=${encodeURIComponent(tabId)}`;
+}
+
+function financeTabs() {
+  return [
+    {
+      id: "overview",
+      label: "Overview"
+    },
+    {
+      id: "sales-reports",
+      label: "Sales reports"
+    },
+    {
+      id: "product-revenue",
+      label: "Product revenue"
+    },
+    {
+      id: "credit-risk",
+      label: "Credit & risk"
+    }
+  ];
+}
+
+function activeFinanceTabId() {
+  const requestedTab = financeRouteParams().get("tab") || DEFAULT_FINANCE_TAB;
+
+  return financeTabs().some((tab) => tab.id === requestedTab) ? requestedTab : DEFAULT_FINANCE_TAB;
+}
+
+function renderFinanceSubtabs(activeTabId) {
+  return `
+    <nav class="subtab-nav finance-subtabs" aria-label="Finance pages">
+      ${financeTabs().map((tab) => `
+        <a
+          class="subtab-link ${tab.id === activeTabId ? "is-active" : ""}"
+          href="${escapeHtml(financeTabHref(tab.id))}"
+          aria-current="${tab.id === activeTabId ? "page" : "false"}"
+        >
+          ${escapeHtml(tab.label)}
+        </a>
+      `).join("")}
+    </nav>
+  `;
+}
 
 function renderAgingRows(invoices) {
   return getInvoiceAging(invoices)
@@ -202,62 +258,19 @@ function dateOnly(value) {
   return String(value || "").slice(0, 10);
 }
 
-function marginPercent(revenue, profit) {
-  return revenue ? (Number(profit || 0) / Number(revenue || 0)) * 100 : 0;
-}
-
-function getOrderRouteMap(routes = []) {
-  const routeMap = new Map();
-
-  routes.forEach((route) => {
-    (route.orderIds || []).forEach((orderId) => {
-      routeMap.set(orderId, route);
-    });
-  });
-
-  return routeMap;
-}
-
 function getAccountantSalesLines(state) {
-  const productMap = getProductMap(state.products || []);
-  const retailerMap = getRetailerMap(state.retailers || []);
-  const routeMap = getOrderRouteMap(state.routes || []);
-
-  return (state.orders || []).flatMap((order) => {
-    const route = routeMap.get(order.id);
-    const retailer = retailerMap.get(order.retailerId);
-
-    return (order.items || []).map((item) => {
-      const product = productMap.get(item.productId);
-      const quantity = Number(item.quantity || 0);
-      const revenue = quantity * Number(product?.unitPrice || 0);
-      const cost = quantity * Number(product?.unitCost || 0);
-      const profit = revenue - cost;
-
-      return {
-        id: `${order.id}-${item.productId}`,
-        recordId: order.id,
-        date: dateOnly(order.createdAt),
-        productId: item.productId,
-        productName: product?.name || "Unknown product",
-        repName: route?.driver || "Unassigned",
-        customerName: retailer?.name || "Unknown customer",
-        quantity,
-        revenue,
-        cost,
-        profit,
-        margin: marginPercent(revenue, profit),
-        status: order.status,
-        paymentType: order.paymentType
-      };
-    });
-  });
+  return getFinancialSalesLines(state);
 }
 
 function getReportProductIds(report, transactionMap) {
-  return (report.transactionIds || [])
+  const lineProductIds = (report.reportLines || [])
+    .map((line) => line.productId)
+    .filter(Boolean);
+  const transactionProductIds = (report.transactionIds || [])
     .map((transactionId) => transactionMap.get(transactionId)?.productId)
     .filter(Boolean);
+
+  return [...new Set([...lineProductIds, ...transactionProductIds])];
 }
 
 function getAccountantSummary(state) {
@@ -266,12 +279,26 @@ function getAccountantSummary(state) {
   const revenue = salesLines.reduce((total, line) => total + line.revenue, 0);
   const cost = salesLines.reduce((total, line) => total + line.cost, 0);
   const profit = salesLines.reduce((total, line) => total + line.profit, 0);
+  const cashIn = salesLines.reduce((total, line) => total + Number(line.cashAmount || 0), 0);
+  const creditOwed = (state.creditLimits || []).reduce((total, limit) => total + Number(limit.balance || 0), 0);
+  const returns = salesLines.reduce((total, line) => total + Number(line.returnAmount || 0), 0);
+  const productMap = new Map((state.products || []).map((product) => [product.id, product]));
+  const stockLoss = (state.stockTransactions || [])
+    .filter((transaction) => String(transaction.type || "").toLowerCase() === "write off")
+    .reduce((total, transaction) => {
+      const product = productMap.get(transaction.productId);
+      return total + Number(transaction.quantity || 0) * Number(product?.unitCost || product?.unitPrice || 0);
+    }, 0);
 
   return {
     reportedSales,
+    cashIn,
     revenue,
     cost,
-    profit
+    profit,
+    creditOwed,
+    returns,
+    stockLoss
   };
 }
 
@@ -294,25 +321,18 @@ function renderAccountantSummaryCards(summary) {
   return `
     <div class="finance-kpis accountant-kpis">
       ${accountantMetricCard({
-        label: "Reported sales",
-        value: formatCurrency(summary.reportedSales),
-        meta: "Submitted sales reports",
+        label: "Cash in",
+        value: formatCurrency(summary.cashIn),
+        meta: "Cash sales collected",
         iconName: "finance",
-        summaryKey: "reportedSales"
+        summaryKey: "cashIn"
       })}
       ${accountantMetricCard({
-        label: "Revenue",
+        label: "Product revenue",
         value: formatCurrency(summary.revenue),
-        meta: "Priced sales order lines",
+        meta: "Orders and rep quick sales",
         iconName: "orders",
         summaryKey: "revenue"
-      })}
-      ${accountantMetricCard({
-        label: "Cost",
-        value: formatCurrency(summary.cost),
-        meta: "Product cost basis",
-        iconName: "package",
-        summaryKey: "cost"
       })}
       ${accountantMetricCard({
         label: "Gross profit",
@@ -320,6 +340,27 @@ function renderAccountantSummaryCards(summary) {
         meta: "Revenue less product cost",
         iconName: "wallet",
         summaryKey: "profit"
+      })}
+      ${accountantMetricCard({
+        label: "Credit owed",
+        value: formatCurrency(summary.creditOwed),
+        meta: "Open balances that can hurt cash flow",
+        iconName: "alert",
+        summaryKey: "creditOwed"
+      })}
+      ${accountantMetricCard({
+        label: "Returns",
+        value: formatCurrency(summary.returns),
+        meta: "Customer returns reducing sales",
+        iconName: "refresh",
+        summaryKey: "returns"
+      })}
+      ${accountantMetricCard({
+        label: "Stock loss",
+        value: formatCurrency(summary.stockLoss),
+        meta: "Written-off stock at cost value",
+        iconName: "package",
+        summaryKey: "stockLoss"
       })}
     </div>
   `;
@@ -340,6 +381,14 @@ function renderAccountantFilters(state) {
       }
     });
   }
+
+  (state.stockTransactions || []).forEach((transaction) => {
+    const type = String(transaction.type || "").toLowerCase();
+    if (type === "sale" || type === "return") {
+      repNames.add(transaction.recordedBy);
+    }
+  });
+  (state.orders || []).forEach((order) => repNames.add(order.repName));
 
   const representatives = [...repNames].filter(Boolean).sort((a, b) => a.localeCompare(b));
 
@@ -447,6 +496,7 @@ function renderAccountantProductRows(state) {
         line.productName,
         line.repName,
         line.customerName,
+        line.source,
         line.status,
         line.paymentType
       ].join(" ").toLowerCase();
@@ -462,16 +512,20 @@ function renderAccountantProductRows(state) {
           data-revenue="${line.revenue}"
           data-cost="${line.cost}"
           data-profit="${line.profit}"
+          data-cash="${line.cashAmount || 0}"
+          data-credit="${line.creditAmount || 0}"
+          data-return="${line.returnAmount || 0}"
           data-search-index="${escapeHtml(searchIndex)}"
         >
           <td>
             ${formatDate(line.date)}
-            <div class="muted">${escapeHtml(line.recordId)}</div>
+            <div class="muted">${escapeHtml(line.source || line.recordId)}</div>
           </td>
           <td>${escapeHtml(line.productName)}</td>
           <td>${escapeHtml(line.repName)}</td>
           <td>${escapeHtml(line.customerName)}</td>
           <td>${formatNumber(line.quantity)}</td>
+          <td>${escapeHtml(line.paymentType || line.source || "cash")}</td>
           <td>${formatCurrency(line.revenue)}</td>
           <td>${formatCurrency(line.cost)}</td>
           <td>${formatCurrency(line.profit)}</td>
@@ -529,14 +583,49 @@ function renderAccountantCreditRows(state) {
     });
 }
 
-function renderAccountantFinance({ state }) {
-  const summary = getAccountantSummary(state);
+function renderAccountantProductRevenue(state) {
+  const rowsByProduct = new Map();
 
-  return `
-    <section class="view finance-view accountant-finance">
-      ${renderAccountantSummaryCards(summary)}
+  getAccountantSalesLines(state).forEach((line) => {
+    const row = rowsByProduct.get(line.productId) || {
+      productName: line.productName,
+      revenue: 0,
+      profit: 0,
+      quantity: 0
+    };
+
+    row.revenue += Number(line.revenue || 0);
+    row.profit += Number(line.profit || 0);
+    row.quantity += Number(line.quantity || 0);
+    rowsByProduct.set(line.productId, row);
+  });
+
+  const rows = [...rowsByProduct.values()]
+    .sort((a, b) => b.revenue - a.revenue)
+    .slice(0, 6);
+  const highestRevenue = Math.max(...rows.map((row) => Math.max(0, row.revenue)), 1);
+
+  if (!rows.length) {
+    return `<div class="empty-state">No product revenue available yet</div>`;
+  }
+
+  return rows.map((row) => {
+    const percent = (Math.max(0, row.revenue) / highestRevenue) * 100;
+
+    return `
+      <div class="bar-row" data-search-index="${escapeHtml(row.productName.toLowerCase())}">
+        <strong>${escapeHtml(row.productName)}</strong>
+        ${progressBar(percent, row.profit < 0 ? "danger" : "good")}
+        <span class="strong">${formatCurrency(row.revenue)}</span>
+      </div>
+    `;
+  }).join("");
+}
+
+function renderAccountantFinanceTab(activeTabId, state, summary) {
+  if (activeTabId === "sales-reports") {
+    return `
       ${renderAccountantFilters(state)}
-
       <section class="panel" data-export-table="true" data-export-title="Sales reports">
         ${panelHeader("Sales reports", "Read-only submitted sales activity")}
         ${table(
@@ -545,16 +634,30 @@ function renderAccountantFinance({ state }) {
           "No sales reports available"
         )}
       </section>
+    `;
+  }
 
+  if (activeTabId === "product-revenue") {
+    return `
+      ${renderAccountantFilters(state)}
+      <section class="panel">
+        ${panelHeader("Product revenue", "Top product lines by sales value")}
+        <div class="bar-list">${renderAccountantProductRevenue(state)}</div>
+      </section>
       <section class="panel" data-export-table="true" data-export-title="Revenue cost and profit">
         ${panelHeader("Revenue, cost, and profit", "Product-level financial summary")}
         ${table(
-          ["Date", "Product", "Sales representative", "Customer", "Qty", "Revenue", "Cost", "Profit", "Margin"],
+          ["Date", "Product", "Sales representative", "Customer", "Qty", "Payment", "Revenue", "Cost", "Profit", "Margin"],
           renderAccountantProductRows(state),
           "No product financial records available"
         )}
       </section>
+    `;
+  }
 
+  if (activeTabId === "credit-risk") {
+    return `
+      ${renderAccountantFilters(state)}
       <section class="panel" data-export-table="true" data-export-title="Credit reports">
         ${panelHeader("Credit reports", "Read-only balances and approved limits")}
         ${table(
@@ -563,6 +666,26 @@ function renderAccountantFinance({ state }) {
           "No credit reports available"
         )}
       </section>
+    `;
+  }
+
+  return `
+    ${renderAccountantSummaryCards(summary)}
+    <section class="panel">
+      ${panelHeader("Product revenue", "Top product lines by sales value")}
+      <div class="bar-list">${renderAccountantProductRevenue(state)}</div>
+    </section>
+  `;
+}
+
+function renderAccountantFinance({ state }) {
+  const summary = getAccountantSummary(state);
+  const activeTabId = activeFinanceTabId();
+
+  return `
+    <section class="view finance-view accountant-finance">
+      ${renderFinanceSubtabs(activeTabId)}
+      ${renderAccountantFinanceTab(activeTabId, state, summary)}
     </section>
   `;
 }
@@ -687,17 +810,26 @@ function rowMatchesPeriod(rowDateValue, period, fromValue, toValue) {
 }
 
 function updateAccountantSummary(root) {
-  const visibleRows = qsa("[data-accountant-row]", root).filter((row) => !row.hidden);
+  const allRows = qsa("[data-accountant-row]", root);
+  if (!allRows.length) return;
+
+  const visibleRows = allRows.filter((row) => !row.hidden);
   const visibleSalesRows = visibleRows.filter((row) => row.dataset.reportType === "sales");
   const visibleFinancialRows = visibleRows.filter((row) => row.dataset.reportType === "financial");
+  const visibleCreditRows = visibleRows.filter((row) => row.dataset.reportType === "credit");
   const totals = {
     reportedSales: visibleSalesRows.reduce((total, row) => total + Number(row.dataset.sales || 0), 0),
     revenue: visibleFinancialRows.reduce((total, row) => total + Number(row.dataset.revenue || 0), 0),
     cost: visibleFinancialRows.reduce((total, row) => total + Number(row.dataset.cost || 0), 0),
-    profit: visibleFinancialRows.reduce((total, row) => total + Number(row.dataset.profit || 0), 0)
+    profit: visibleFinancialRows.reduce((total, row) => total + Number(row.dataset.profit || 0), 0),
+    cashIn: visibleFinancialRows.reduce((total, row) => total + Number(row.dataset.cash || 0), 0),
+    creditOwed: visibleCreditRows.reduce((total, row) => total + Number(row.dataset.balance || 0), 0),
+    returns: visibleFinancialRows.reduce((total, row) => total + Number(row.dataset.return || 0), 0)
   };
 
   qsa("[data-summary]", root).forEach((target) => {
+    if (target.dataset.summary === "stockLoss") return;
+
     target.textContent = formatCurrency(totals[target.dataset.summary] || 0);
   });
 

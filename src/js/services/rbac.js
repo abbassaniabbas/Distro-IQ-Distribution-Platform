@@ -57,7 +57,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false
   },
   manager: {
-    nav: ["dashboard", "orders", "inventory", "routes", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
@@ -77,7 +77,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: true
   },
   store_keeper: {
-    nav: ["dashboard", "inventory", "routes", "activity-log", "settings"],
+    nav: ["dashboard", "inventory", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -117,7 +117,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false
   },
   ceo: {
-    nav: ["dashboard", "orders", "inventory", "routes", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: true,
@@ -199,12 +199,10 @@ export function scopeStateForCurrentRole(state) {
   const account = accountForUser(state);
   const actorName = String(account?.name || state.user?.user_metadata?.full_name || "").trim().toLowerCase();
   const userId = state.user?.id || "";
-  const assignedRoutes = (state.routes || []).filter((route) => {
-    const repName = String(route.driver || "").trim().toLowerCase();
-    return route.repUserId === userId || (actorName && repName === actorName);
+  const orders = (state.orders || []).filter((order) => {
+    const repName = String(order.repName || "").trim().toLowerCase();
+    return order.repUserId === userId || (actorName && repName === actorName);
   });
-  const assignedOrderIds = new Set(assignedRoutes.flatMap((route) => route.orderIds || []));
-  const orders = (state.orders || []).filter((order) => assignedOrderIds.has(order.id) || order.repUserId === userId);
   const customerIds = new Set(orders.map((order) => order.retailerId));
   const stockAssignments = (state.stockAssignments || []).filter((assignment) => {
     const repName = String(assignment.repName || "").trim().toLowerCase();
@@ -229,7 +227,7 @@ export function scopeStateForCurrentRole(state) {
     )),
     retailers,
     orders,
-    routes: assignedRoutes,
+    routes: [],
     invoices: (state.invoices || []).filter((invoice) => customerIds.has(invoice.retailerId) || invoice.repUserId === userId),
     stockAssignments,
     stockTransactions: (state.stockTransactions || []).filter((transaction) => {

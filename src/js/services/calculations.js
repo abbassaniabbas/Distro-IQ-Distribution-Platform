@@ -21,10 +21,112 @@ export function stockCategoryIdForProduct(product) {
 export function getOrderTotal(order, products) {
   const productMap = Array.isArray(products) ? getProductMap(products) : products;
 
-  return order.items.reduce((total, item) => {
+  return (order.items || []).reduce((total, item) => {
     const product = productMap.get(item.productId);
     return total + (product?.unitPrice || 0) * item.quantity;
   }, 0);
+}
+
+function dateOnly(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function marginPercent(revenue, profit) {
+  return revenue ? (Number(profit || 0) / Number(revenue || 0)) * 100 : 0;
+}
+
+function getOrderRouteMap(routes = []) {
+  const routeMap = new Map();
+
+  routes.forEach((route) => {
+    (route.orderIds || []).forEach((orderId) => {
+      routeMap.set(orderId, route);
+    });
+  });
+
+  return routeMap;
+}
+
+export function getFinancialSalesLines(state) {
+  const productMap = getProductMap(state.products || []);
+  const retailerMap = getRetailerMap(state.retailers || []);
+  const routeMap = getOrderRouteMap(state.routes || []);
+  const orderLines = (state.orders || [])
+    .filter((order) => order.source !== "quick_sale")
+    .flatMap((order) => {
+      const route = routeMap.get(order.id);
+      const retailer = retailerMap.get(order.retailerId);
+
+      return (order.items || []).map((item) => {
+        const product = productMap.get(item.productId);
+        const quantity = Number(item.quantity || 0);
+        const revenue = quantity * Number(product?.unitPrice || 0);
+        const cost = quantity * Number(product?.unitCost || 0);
+        const profit = revenue - cost;
+
+        return {
+          id: `${order.id}-${item.productId}`,
+          recordId: order.id,
+          source: "Sales order",
+          date: dateOnly(order.createdAt || order.updatedAt || order.dueAt),
+          productId: item.productId,
+          productName: product?.name || "Unknown product",
+          repName: route?.driver || order.repName || "Unassigned",
+          customerName: retailer?.name || order.customerName || "Unknown customer",
+          quantity,
+          revenue,
+          cost,
+          profit,
+          margin: marginPercent(revenue, profit),
+          status: order.status,
+          paymentType: order.paymentType,
+          cashAmount: String(order.paymentType || "").toLowerCase().includes("credit") ? 0 : revenue,
+          creditAmount: String(order.paymentType || "").toLowerCase().includes("credit") ? revenue : 0,
+          returnAmount: 0
+        };
+      });
+    });
+  const transactionLines = (state.stockTransactions || [])
+    .filter((transaction) => {
+      const type = String(transaction.type || "").toLowerCase();
+      return type === "sale" || type === "return";
+    })
+    .map((transaction) => {
+      const product = productMap.get(transaction.productId);
+      const type = String(transaction.type || "").toLowerCase();
+      const isReturn = type === "return";
+      const quantity = Number(transaction.quantity || 0);
+      const signedQuantity = isReturn ? -quantity : quantity;
+      const grossAmount = Number(transaction.amount || quantity * Number(product?.unitPrice || 0));
+      const revenue = isReturn ? -grossAmount : grossAmount;
+      const cost = signedQuantity * Number(product?.unitCost || 0);
+      const profit = revenue - cost;
+      const paymentType = transaction.paymentType || (isReturn ? "return" : "cash");
+      const isCredit = String(paymentType || "").toLowerCase().includes("credit");
+
+      return {
+        id: transaction.id,
+        recordId: transaction.orderId || transaction.id,
+        source: isReturn ? "Customer return" : "Rep quick sale",
+        date: dateOnly(transaction.date || transaction.createdAt),
+        productId: transaction.productId,
+        productName: product?.name || "Unknown product",
+        repName: transaction.recordedBy || "Sales Representative",
+        customerName: transaction.partyName || "Customer",
+        quantity: signedQuantity,
+        revenue,
+        cost,
+        profit,
+        margin: marginPercent(revenue, profit),
+        status: isReturn ? "returned" : "sold",
+        paymentType,
+        cashAmount: !isReturn && !isCredit ? grossAmount : 0,
+        creditAmount: !isReturn && isCredit ? grossAmount : 0,
+        returnAmount: isReturn ? grossAmount : 0
+      };
+    });
+
+  return [...orderLines, ...transactionLines];
 }
 
 export function calculateMetrics(state) {
@@ -113,7 +215,10 @@ export function creditUsageTone(percent) {
 export function getCreditGuardForOrder(order, state) {
   const productMap = getProductMap(state.products || []);
   const retailerMap = getRetailerMap(state.retailers || []);
-  const retailer = retailerMap.get(order.retailerId);
+  const retailer = retailerMap.get(order.retailerId) || {
+    name: order.customerName || "",
+    outstanding: 0
+  };
   const limit = getCreditLimitForParty(state.creditLimits || [], retailer?.name);
   const orderTotal = getOrderTotal(order, productMap);
   const paymentType = String(order.paymentType || "credit").toLowerCase();
@@ -421,7 +526,9 @@ export function getOrdersWithTotals(state) {
 
   return state.orders.map((order) => ({
     ...order,
-    retailer: retailerMap.get(order.retailerId),
+    retailer: retailerMap.get(order.retailerId) || {
+      name: order.customerName || "Walk-in customer"
+    },
     total: getOrderTotal(order, productMap)
   }));
 }

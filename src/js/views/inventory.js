@@ -628,13 +628,6 @@ function renderDispatchForm(state, permissions) {
           </select>
           <input name="recipientNameOther" data-dispatch-recipient-other placeholder="Type recipient name" hidden>
         </label>
-        <label class="field" data-dispatch-run-field>
-          <span>Delivery trip (optional)</span>
-          <select name="routeId">
-            <option value="">No trip selected</option>
-            ${state.routes.map((route) => `<option value="${escapeHtml(route.id)}">${escapeHtml(route.name)}</option>`).join("")}
-          </select>
-        </label>
         <label class="field">
           <span>Destination / drop-off point</span>
           <input name="destination" placeholder="${escapeHtml(destinationPlaceholder("Sales Representative"))}" required>
@@ -1054,8 +1047,6 @@ export function bindInventory({ root, store }) {
   const dispatchRecipientSelect = dispatchForm ? qs("[data-dispatch-recipient-select]", dispatchForm) : null;
   const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
   const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
-  const dispatchRunField = dispatchForm ? qs("[data-dispatch-run-field]", dispatchForm) : null;
-  const dispatchRunSelect = dispatchForm ? qs('select[name="routeId"]', dispatchForm) : null;
   const routeParams = inventoryRouteParams();
   const requestedProductId = routeParams.get("product");
   const requestedStockType = routeParams.get("type");
@@ -1411,11 +1402,8 @@ export function bindInventory({ root, store }) {
     if (!dispatchRecipientType || !dispatchRecipientSelect) return;
 
     const recipientType = dispatchRecipientType.value;
-    const isRepresentative = String(recipientType || "").toLowerCase().includes("representative");
     dispatchRecipientSelect.innerHTML = renderDispatchRecipientOptions(store.getState(), recipientType);
     if (dispatchDestinationInput) dispatchDestinationInput.placeholder = destinationPlaceholder(recipientType);
-    if (dispatchRunField) dispatchRunField.hidden = !isRepresentative;
-    if (!isRepresentative && dispatchRunSelect) dispatchRunSelect.value = "";
     updateOtherRecipientField();
   }
 
@@ -1453,7 +1441,6 @@ export function bindInventory({ root, store }) {
       quantity,
       recipientType: formData.get("recipientType"),
       recipientName,
-      routeId: formData.get("routeId"),
       destination: formData.get("destination"),
       dispatchDate: formData.get("dispatchDate"),
       staffName: formData.get("staffName"),

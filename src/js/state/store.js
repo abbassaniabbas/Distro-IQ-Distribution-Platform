@@ -67,10 +67,69 @@ function normalizedPaymentPeriod(value, fallback = 14) {
   return Math.max(0, Number.isFinite(nextValue) ? Math.round(nextValue) : fallback);
 }
 
+function quickSaleOrderId(transaction) {
+  return transaction.orderId || `ORD-${String(transaction.id || "SALE").replace(/[^a-z0-9]+/gi, "-")}`.toUpperCase();
+}
+
+function orderFromSaleTransaction(transaction, state) {
+  const customer = (state.retailers || []).find((item) => item.id === transaction.customerId);
+  const paymentType = transaction.paymentType || "cash";
+  const paymentLabel = String(paymentType).toLowerCase();
+  const date = String(transaction.date || transaction.createdAt || todayISO()).slice(0, 10);
+
+  return {
+    id: quickSaleOrderId(transaction),
+    clientId: state.client?.id || transaction.clientId || "",
+    source: "quick_sale",
+    transactionId: transaction.id,
+    retailerId: customer?.id || transaction.customerId || "",
+    customerName: customer?.name || transaction.partyName || "Walk-in customer",
+    customerType: customer?.channel || transaction.partyType || "Customer",
+    region: customer?.stateName || customer?.region || "Direct sales",
+    priority: "Normal",
+    status: "delivered",
+    paymentType,
+    paymentStatus: paymentLabel.includes("credit") ? "open" : "paid",
+    deliveryNoteStatus: "ready",
+    signatureStatus: "pending_signature",
+    dueAt: date,
+    createdAt: date,
+    updatedAt: date,
+    repName: transaction.recordedBy || "Sales Representative",
+    repUserId: transaction.repUserId || "",
+    items: [
+      {
+        productId: transaction.productId,
+        quantity: Number(transaction.quantity || 0)
+      }
+    ]
+  };
+}
+
+function ensureQuickSaleOrders(state) {
+  const existingOrderIds = new Set((state.orders || []).map((order) => order.id));
+  const existingTransactionIds = new Set((state.orders || []).map((order) => order.transactionId).filter(Boolean));
+  const generatedOrders = (state.stockTransactions || [])
+    .filter((transaction) => String(transaction.type || "").toLowerCase() === "sale")
+    .filter((transaction) => transaction.id && !existingTransactionIds.has(transaction.id))
+    .map((transaction) => orderFromSaleTransaction(transaction, state))
+    .filter((order) => order.items[0]?.productId && order.items[0]?.quantity > 0 && !existingOrderIds.has(order.id));
+
+  if (!generatedOrders.length) return state;
+
+  return {
+    ...state,
+    orders: [
+      ...generatedOrders,
+      ...(state.orders || [])
+    ]
+  };
+}
+
 function ensureStateShape(value) {
   const state = clone(value || seedData);
 
-  return {
+  return ensureQuickSaleOrders({
     ...clone(seedData),
     ...state,
     client: state.client || null,
@@ -96,7 +155,7 @@ function ensureStateShape(value) {
     user: null,
     platformAdmin: false,
     platformOverview: Array.isArray(state.platformOverview) ? state.platformOverview : []
-  };
+  });
 }
 
 function getPersistableState(state) {
@@ -187,6 +246,82 @@ function appendActivityLog(state, activity) {
     }),
     ...state.activityLogs
   ];
+}
+
+function refreshAssignmentCompletion(state, assignment) {
+  if (!assignment) return;
+
+  const outstanding = assignmentOutstanding(assignment);
+  const assigned = Number(assignment.assigned || 0);
+
+  if (assigned > 0 && outstanding <= 0) {
+    if (assignment.status !== "reconciled") {
+      assignment.status = "reconciled";
+      assignment.reconciledAt = new Date().toISOString();
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "reconciled",
+        recordType: "inventory",
+        recordLabel: assignment.id,
+        summary: `${assignment.repName} assignment automatically reconciled`
+      });
+    }
+
+    return;
+  }
+
+  if (assignment.status === "reconciled" && !assignment.varianceFlagged) {
+    assignment.status = "open";
+    assignment.reconciledAt = "";
+  }
+}
+
+function createQuickSaleOrder(state, {
+  transactionId,
+  product,
+  customer,
+  customerName,
+  customerType,
+  quantity,
+  paymentType,
+  repName
+}) {
+  const paymentLabel = String(paymentType || "cash").toLowerCase();
+  const today = todayISO();
+  const orderId = createId("ORD");
+
+  state.orders = [
+    {
+      id: orderId,
+      clientId: state.client?.id || "",
+      source: "quick_sale",
+      transactionId,
+      retailerId: customer?.id || "",
+      customerName: customer?.name || customerName || "Walk-in customer",
+      customerType: customer?.channel || customerType || "Customer",
+      region: customer?.stateName || customer?.region || "Direct sales",
+      priority: "Normal",
+      status: "delivered",
+      paymentType,
+      paymentStatus: paymentLabel.includes("credit") ? "open" : "paid",
+      deliveryNoteStatus: "ready",
+      signatureStatus: "pending_signature",
+      dueAt: today,
+      createdAt: today,
+      updatedAt: today,
+      repName,
+      repUserId: state.user?.id || "",
+      items: [
+        {
+          productId: product.id,
+          quantity
+        }
+      ]
+    },
+    ...(state.orders || [])
+  ];
+
+  return orderId;
 }
 
 function reducer(currentState, action) {
@@ -528,9 +663,24 @@ function reducer(currentState, action) {
       }
 
       assignment.updatedAt = todayISO();
+      refreshAssignmentCompletion(state, assignment);
+      const transactionId = createId("TXN");
+      const orderId = transactionType === "sale"
+        ? createQuickSaleOrder(state, {
+            transactionId,
+            product,
+            customer,
+            customerName,
+            customerType,
+            quantity,
+            paymentType,
+            repName
+          })
+        : "";
+
       state.stockTransactions = [
         {
-          id: createId("TXN"),
+          id: transactionId,
           type: transactionType,
           productId: assignment.productId,
           quantity,
@@ -548,7 +698,8 @@ function reducer(currentState, action) {
           returnDestination: transactionType === "return"
             ? (returnDisposition === "to_store" ? "Store stock" : "Held by sales representative")
             : "",
-          movementDirection: transactionType === "return" && returnDisposition === "to_store" ? "in" : ""
+          movementDirection: transactionType === "return" && returnDisposition === "to_store" ? "in" : "",
+          orderId
         },
         ...(state.stockTransactions || [])
       ];
@@ -562,9 +713,19 @@ function reducer(currentState, action) {
         recordType: "sale",
         recordLabel: product.name,
         summary: transactionType === "sale"
-          ? `${repName} recorded ${quantity} sold`
-          : `${repName} recorded ${quantity} returned - ${returnDisposition === "to_store" ? "to store stock" : "held for resale"}`
+          ? `${repName} sold ${quantity} ${product.name} to ${customerName} for ${amount} (${paymentType})`
+          : `${repName} recorded ${quantity} ${product.name} returned by ${customerName} - ${returnDisposition === "to_store" ? "to store stock" : "held for resale"}`
       });
+
+      if (orderId) {
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "created",
+          recordType: "order",
+          recordLabel: orderId,
+          summary: `${orderId} created from ${repName}'s sale to ${customerName}`
+        });
+      }
 
       if (transactionType === "return" && returnDisposition === "to_store") {
         appendActivityLog(state, {
@@ -780,7 +941,7 @@ function reducer(currentState, action) {
     case "RECONCILE_ASSIGNMENT": {
       const assignment = state.stockAssignments.find((item) => item.id === action.assignmentId);
       if (assignment) {
-        const outstanding = Math.max(0, Number(assignment.assigned || 0) - Number(assignment.sold || 0) - Number(assignment.returned || 0));
+        const outstanding = assignmentOutstanding(assignment);
         if (outstanding > 0 && !assignment.varianceFlagged) return state;
 
         assignment.status = "reconciled";
@@ -968,7 +1129,7 @@ function reducer(currentState, action) {
           actionType: "updated",
           recordType: "route",
           recordLabel: route.id,
-          summary: `${route.name} representative run moved to ${textLabel(route.status)}`
+          summary: `${route.name} dispatch moved to ${textLabel(route.status)}`
         });
       }
       return state;
