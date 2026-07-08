@@ -964,6 +964,44 @@
   font-weight: 850;
 }
 
+.rep-catalogue-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.rep-catalogue-card {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  min-height: 92px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.rep-catalogue-card > div:last-child {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.rep-catalogue-card strong,
+.rep-catalogue-card span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rep-catalogue-card span:last-child {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 750;
+}
+
 .manager-command-panel,
 .manager-tool-panel {
   display: grid;
@@ -1504,6 +1542,13 @@
   color: var(--teal-dark);
   font-size: 0.74rem;
   font-weight: 900;
+}
+
+.activity-readonly-note {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
 }
 
 .client-id-box code {

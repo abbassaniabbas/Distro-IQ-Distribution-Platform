@@ -938,17 +938,16 @@ function reducer(currentState, action) {
 
     case "RESTOCK_PRODUCT": {
       const product = state.products.find((item) => item.id === action.productId);
-      if (product) {
-        const previousStock = Number(product.stock || 0);
-        const targetStock = Math.max(product.reorderPoint * 2, product.stock + product.reorderPoint);
-        product.stock = targetStock;
+      const quantity = Math.max(0, Number(action.quantity || 0));
+      if (product && quantity > 0) {
+        product.stock = Number(product.stock || 0) + quantity;
         product.updatedAt = todayISO();
         state.stockTransactions = [
           {
             id: createId("TXN"),
             type: "internal movement",
             productId: product.id,
-            quantity: Math.max(0, targetStock - previousStock),
+            quantity,
             amount: 0,
             paymentType: "none",
             partyType: "Factory",
@@ -968,7 +967,7 @@ function reducer(currentState, action) {
           actionType: "restocked",
           recordType: "inventory",
           recordLabel: product.id,
-          summary: `${product.name} stock replenished`
+          summary: `${product.name} restocked by ${quantity}`
         });
       }
       return state;

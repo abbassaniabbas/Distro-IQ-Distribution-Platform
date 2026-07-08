@@ -41,6 +41,7 @@ const ROLE_PERMISSIONS = {
     canViewCompanyWide: false,
     canLogSalesReturns: true,
     canManageProducts: false,
+    canAddStock: false,
     canAssignStock: false,
     canReconcileStock: false,
     canSetCreditLimits: false,
@@ -60,6 +61,7 @@ const ROLE_PERMISSIONS = {
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
+    canAddStock: true,
     canAssignStock: true,
     canReconcileStock: true,
     canSetCreditLimits: true,
@@ -79,6 +81,7 @@ const ROLE_PERMISSIONS = {
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
+    canAddStock: true,
     canAssignStock: true,
     canReconcileStock: true,
     canSetCreditLimits: false,
@@ -98,6 +101,7 @@ const ROLE_PERMISSIONS = {
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
+    canAddStock: false,
     canAssignStock: false,
     canReconcileStock: false,
     canSetCreditLimits: false,
@@ -117,6 +121,7 @@ const ROLE_PERMISSIONS = {
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: true,
+    canAddStock: true,
     canAssignStock: false,
     canReconcileStock: false,
     canSetCreditLimits: false,
@@ -217,7 +222,11 @@ export function scopeStateForCurrentRole(state) {
 
   return {
     ...state,
-    products: (state.products || []).filter((product) => productIds.has(product.id) || product.assignedRepUserId === userId),
+    products: (state.products || []).filter((product) => (
+      productIds.has(product.id) ||
+      product.assignedRepUserId === userId ||
+      product.status !== "inactive"
+    )),
     retailers,
     orders,
     routes: assignedRoutes,

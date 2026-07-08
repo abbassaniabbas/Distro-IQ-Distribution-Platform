@@ -190,6 +190,21 @@ function productUnit(product) {
   return product.unit || (stockCategoryIdForProduct(product) === "raw_materials" ? "kg" : "unit");
 }
 
+function normalizedProductName(value) {
+  return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function duplicateProductName(state, name, productId = "") {
+  const nextName = normalizedProductName(name);
+  const currentProductId = String(productId || "").trim();
+
+  if (!nextName) return false;
+
+  return (state.products || []).some((product) => (
+    product.id !== currentProductId && normalizedProductName(product.name) === nextName
+  ));
+}
+
 function renderProductImage(product) {
   if (product.imageUrl) {
     return `<img src="${escapeHtml(product.imageUrl)}" alt="">`;
@@ -199,7 +214,7 @@ function renderProductImage(product) {
 }
 
 function renderStockProductModal(state, permissions) {
-  if (!permissions.canManageProducts) return "";
+  if (!permissions.canManageProducts && !permissions.canAddStock) return "";
 
   const moneySymbol = currencySymbolFor(state.client);
 
@@ -225,11 +240,11 @@ function renderStockProductModal(state, permissions) {
         </label>
         <label class="field">
           <span>SKU</span>
-          <input name="sku" placeholder="SKU-1008">
+          <input name="sku" placeholder="SKU-1008" required>
         </label>
         <label class="field">
           <span>Category</span>
-          <select name="stockCategory">
+          <select name="stockCategory" required>
             ${state.stockCategories.map((category) => `
               <option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>
             `).join("")}
@@ -237,27 +252,27 @@ function renderStockProductModal(state, permissions) {
         </label>
         <label class="field">
           <span>Unit</span>
-          <input name="unit" placeholder="pack, carton, kg">
+          <input name="unit" placeholder="pack, carton, kg" required>
         </label>
         <label class="field">
           <span>Factory stock</span>
-          <input name="stock" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+          <input name="stock" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
         </label>
         <label class="field">
           <span>Reorder point</span>
-          <input name="reorderPoint" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+          <input name="reorderPoint" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
         </label>
         <label class="field">
           <span>Cost price (${escapeHtml(moneySymbol)})</span>
-          <input name="unitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+          <input name="unitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
         </label>
         <label class="field">
           <span>Selling price (${escapeHtml(moneySymbol)})</span>
-          <input name="unitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0">
+          <input name="unitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
         </label>
         <label class="field">
           <span>Catalogue status</span>
-          <select name="status">
+          <select name="status" required>
             <option value="active">Visible</option>
             <option value="inactive">Hidden</option>
           </select>
@@ -294,6 +309,49 @@ function renderStockProductModal(state, permissions) {
         </div>
         <span id="manager-product-message" class="field-error span-full" aria-live="polite"></span>
       </form>
+      </section>
+    </div>
+  `;
+}
+
+function renderRestockModal(permissions) {
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  if (!canRestock) return "";
+
+  return `
+    <div id="restock-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="restock-modal-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Restock</span>
+            <h2 id="restock-modal-title">Add stock quantity</h2>
+          </div>
+          ${textButton({
+            iconName: "x",
+            label: "Close",
+            className: "js-close-restock-modal"
+          })}
+        </header>
+        <form id="restock-form" class="manager-form-grid" novalidate>
+          <input type="hidden" name="productId">
+          <label class="field span-full">
+            <span>Stock item</span>
+            <input name="productName" disabled>
+          </label>
+          <label class="field">
+            <span>Quantity to add</span>
+            <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Enter amount" required>
+          </label>
+          <div class="manager-form-actions span-full">
+            ${textButton({
+              iconName: "plus",
+              label: "Add stock",
+              className: "primary",
+              type: "submit"
+            })}
+          </div>
+          <span id="restock-form-message" class="field-error span-full" aria-live="polite"></span>
+        </form>
       </section>
     </div>
   `;
@@ -838,12 +896,14 @@ function renderCreditRows(state) {
 }
 
 function renderStockHealthPage(state, permissions) {
+  const canAddStock = permissions.canManageProducts || permissions.canAddStock;
+
   return `
     <section class="panel inventory-layout">
       <div class="toolbar">
         ${panelHeader("Stock health", "Raw materials, finished goods, equipment, cover days, and replenishment risk")}
         <div class="toolbar-group">
-          ${permissions.canManageProducts
+          ${canAddStock
             ? textButton({
                 iconName: "plus",
                 label: "Add stock",
@@ -936,6 +996,7 @@ export function renderInventory({ state }) {
       ${renderStockSubtabs(activeTabId, permissions)}
       ${renderStockTabPage({ activeTabId, state, permissions, vision })}
       ${renderStockProductModal(state, permissions)}
+      ${renderRestockModal(permissions)}
     </section>
   `;
 }
@@ -944,6 +1005,9 @@ export function bindInventory({ root, store }) {
   const categoryFilter = qs("#inventory-category-filter", root);
   const stockModal = qs("#stock-product-modal", root);
   const stockModalTitle = qs("#stock-product-modal-title", root);
+  const restockModal = qs("#restock-modal", root);
+  const restockForm = qs("#restock-form", root);
+  const restockMessage = qs("#restock-form-message", root);
   const productForm = qs("#manager-product-form", root);
   const productMessage = qs("#manager-product-message", root);
   const stockImageUploadField = qs("#stock-image-upload-field", root);
@@ -1024,6 +1088,22 @@ export function bindInventory({ root, store }) {
     if (stockModal) stockModal.hidden = true;
   }
 
+  function closeRestockModal() {
+    if (restockModal) restockModal.hidden = true;
+  }
+
+  function openRestockModal(productId) {
+    const product = store.getState().products.find((item) => item.id === productId);
+    if (!restockModal || !restockForm || !product) return;
+
+    restockForm.reset();
+    restockForm.elements.productId.value = product.id;
+    restockForm.elements.productName.value = `${product.name} (${formatNumber(product.stock)} ${productUnit(product)} currently)`;
+    if (restockMessage) restockMessage.textContent = "";
+    restockModal.hidden = false;
+    restockForm.elements.quantity.focus();
+  }
+
   stockImageInput?.addEventListener("change", async () => {
     const file = stockImageInput.files?.[0];
 
@@ -1070,6 +1150,43 @@ export function bindInventory({ root, store }) {
     const sku = String(formData.get("sku") || "").trim();
     const existingProductId = String(formData.get("productId") || "").trim();
     const productId = String(existingProductId || sku).trim();
+    const requiredFields = [
+      ["name", "product name"],
+      ["sku", "SKU"],
+      ["stockCategory", "category"],
+      ["unit", "unit"],
+      ["stock", "factory stock"],
+      ["reorderPoint", "reorder point"],
+      ["unitCost", "cost price"],
+      ["unitPrice", "selling price"],
+      ["status", "catalogue status"]
+    ];
+    const missingFields = requiredFields
+      .filter(([fieldName]) => String(formData.get(fieldName) ?? "").trim() === "")
+      .map(([, label]) => label);
+    const numberFields = ["stock", "reorderPoint", "unitCost", "unitPrice"];
+    const invalidNumberField = numberFields.find((fieldName) => {
+      const rawValue = String(formData.get(fieldName) ?? "").trim();
+      const numberValue = Number(rawValue);
+      return rawValue !== "" && (!Number.isFinite(numberValue) || numberValue < 0);
+    });
+
+    if (productMessage) productMessage.textContent = "";
+
+    if (missingFields.length) {
+      if (productMessage) productMessage.textContent = `Fill in ${missingFields.join(", ")}. Only the picture is optional.`;
+      return;
+    }
+
+    if (invalidNumberField) {
+      if (productMessage) productMessage.textContent = "Stock quantities and prices must be zero or higher.";
+      return;
+    }
+
+    if (duplicateProductName(store.getState(), formData.get("name"), existingProductId)) {
+      if (productMessage) productMessage.textContent = "A product with this name already exists. Use a different product name.";
+      return;
+    }
 
     store.dispatch({
       type: "UPSERT_PRODUCT",
@@ -1134,8 +1251,38 @@ export function bindInventory({ root, store }) {
     button.addEventListener("click", closeStockModal);
   });
 
+  qsa(".js-close-restock-modal", root).forEach((button) => {
+    button.addEventListener("click", closeRestockModal);
+  });
+
   stockModal?.addEventListener("click", (event) => {
     if (event.target === stockModal) closeStockModal();
+  });
+
+  restockModal?.addEventListener("click", (event) => {
+    if (event.target === restockModal) closeRestockModal();
+  });
+
+  restockForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(restockForm);
+    const productId = String(formData.get("productId") || "");
+    const quantity = Number(formData.get("quantity") || 0);
+
+    if (restockMessage) restockMessage.textContent = "";
+
+    if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
+      if (restockMessage) restockMessage.textContent = "Enter the quantity you want to add.";
+      return;
+    }
+
+    store.dispatch({
+      type: "RESTOCK_PRODUCT",
+      productId,
+      quantity,
+      message: "Stock quantity added"
+    });
+    closeRestockModal();
   });
 
   qsa(".js-edit-product", root).forEach((button) => {
@@ -1252,11 +1399,7 @@ export function bindInventory({ root, store }) {
 
   qsa(".js-restock-product", root).forEach((button) => {
     button.addEventListener("click", () => {
-      store.dispatch({
-        type: "RESTOCK_PRODUCT",
-        productId: button.dataset.productId,
-        message: "Snack stock replenished"
-      });
+      openRestockModal(button.dataset.productId);
     });
   });
 

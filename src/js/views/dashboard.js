@@ -1566,6 +1566,43 @@ function renderRepStockCards(assignments) {
   `;
 }
 
+function repProductUnit(product) {
+  return product.unit || (stockCategoryIdForProduct(product) === "raw_materials" ? "kg" : "unit");
+}
+
+function renderRepProductImage(product) {
+  if (product.imageUrl) {
+    return `<img src="${escapeHtml(product.imageUrl)}" alt="">`;
+  }
+
+  return `<span>${escapeHtml(String(product.name || "PR").slice(0, 2).toUpperCase())}</span>`;
+}
+
+function renderRepProductCatalogue(products) {
+  const catalogue = (products || [])
+    .filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === "finished_products")
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+  if (!catalogue.length) {
+    return '<div class="empty-state">No visible products yet</div>';
+  }
+
+  return `
+    <div class="rep-catalogue-grid">
+      ${catalogue.map((product) => `
+        <article class="rep-catalogue-card" data-search-index="${escapeHtml(`${product.name} ${product.category}`.toLowerCase())}">
+          <div class="product-media">${renderRepProductImage(product)}</div>
+          <div>
+            <span class="eyebrow">${escapeHtml(product.id)}</span>
+            <strong>${escapeHtml(product.name)}</strong>
+            <span>${escapeHtml(product.category)} - ${formatCurrency(product.unitPrice || 0)} / ${escapeHtml(repProductUnit(product))}</span>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
 function renderRepAssignmentOptions(assignments, mode = "sale") {
   return assignments.map((assignment) => {
     const available = mode === "return" ? Number(assignment.sold || 0) : assignment.outstanding;
@@ -1832,6 +1869,11 @@ function renderSalesRepDashboard(state) {
           ${panelHeader("Assigned stock", "Stock currently loaded to you")}
           ${renderRepStockCards(assignments)}
         </section>
+
+      <section class="panel">
+        ${panelHeader("Product catalogue", "Visible snacks from the factory")}
+        ${renderRepProductCatalogue(state.products)}
+      </section>
 
     </section>
   `;
@@ -2191,9 +2233,17 @@ export function bindDashboard({ root, store }) {
 
   qsa(".js-restock-product", root).forEach((button) => {
     button.addEventListener("click", () => {
+      const product = store.getState().products.find((item) => item.id === button.dataset.productId);
+      const rawQuantity = window.prompt(`How many ${product?.unit || "units"} do you want to add to ${product?.name || "this stock item"}?`, "");
+      if (rawQuantity === null) return;
+
+      const quantity = Number(rawQuantity);
+      if (!Number.isFinite(quantity) || quantity <= 0) return;
+
       store.dispatch({
         type: "RESTOCK_PRODUCT",
         productId: button.dataset.productId,
+        quantity,
         message: "Snack stock replenished"
       });
     });

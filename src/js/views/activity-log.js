@@ -193,6 +193,14 @@ function renderActionOptions(logs) {
     .join("");
 }
 
+function renderRecordOptions(logs) {
+  const records = [...new Set(logs.map((entry) => entry.recordType).filter(Boolean))].sort();
+
+  return records
+    .map((record) => `<option value="${escapeHtml(record)}">${escapeHtml(recordTypeLabel(record))}</option>`)
+    .join("");
+}
+
 function renderUserOptions(logs) {
   const users = new Map();
 
@@ -232,6 +240,7 @@ function renderRows(logs) {
       <tr
         data-search-index="${escapeHtml(searchIndex)}"
         data-action="${escapeHtml(entry.actionType)}"
+        data-record="${escapeHtml(entry.recordType)}"
         data-user="${escapeHtml(actorKey(entry))}"
         data-date="${escapeHtml(entryDate(entry.createdAt))}"
       >
@@ -310,6 +319,13 @@ export function renderActivityLog({ state }) {
                 ${renderActionOptions(logs)}
               </select>
             </label>
+            <label class="field">
+              <span>Record type</span>
+              <select id="activity-record-filter">
+                <option value="all">All records</option>
+                ${renderRecordOptions(logs)}
+              </select>
+            </label>
           </div>
         </div>
 
@@ -318,6 +334,7 @@ export function renderActivityLog({ state }) {
           renderRows(logs),
           "No activity has been recorded yet"
         )}
+        <p class="activity-readonly-note">Activity entries are read-only and cannot be edited or deleted.</p>
       </section>
     </section>
   `;
@@ -329,7 +346,8 @@ export function bindActivityLog({ root }) {
   const toFilter = qs("#activity-date-to", root);
   const userFilter = qs("#activity-user-filter", root);
   const actionFilter = qs("#activity-action-filter", root);
-  const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter].filter(Boolean);
+  const recordFilter = qs("#activity-record-filter", root);
+  const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter, recordFilter].filter(Boolean);
 
   function applyFilters() {
     const query = String(searchFilter?.value || "").trim().toLowerCase();
@@ -337,15 +355,17 @@ export function bindActivityLog({ root }) {
     const to = toFilter?.value || "";
     const user = userFilter?.value || "all";
     const action = actionFilter?.value || "all";
+    const record = recordFilter?.value || "all";
 
     qsa("tbody tr", root).forEach((row) => {
       const matchesDateFrom = !from || row.dataset.date >= from;
       const matchesDateTo = !to || row.dataset.date <= to;
       const matchesUser = user === "all" || row.dataset.user === user;
       const matchesAction = action === "all" || row.dataset.action === action;
+      const matchesRecord = record === "all" || row.dataset.record === record;
       const matchesSearch = !query || String(row.dataset.searchIndex || "").includes(query);
 
-      row.hidden = !matchesSearch || !matchesDateFrom || !matchesDateTo || !matchesUser || !matchesAction;
+      row.hidden = !matchesSearch || !matchesDateFrom || !matchesDateTo || !matchesUser || !matchesAction || !matchesRecord;
     });
   }
 
