@@ -451,7 +451,6 @@
 .status-pill.packed,
 .status-pill.partial,
 .status-pill.internal-movement,
-.status-pill.pending-signature,
 .status-pill.needs-attention,
 .status-pill.credit-watch {
   background: rgba(180, 122, 17, 0.12);

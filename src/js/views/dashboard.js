@@ -1136,7 +1136,6 @@ function renderAlerts(state, permissions) {
   const delayedOrders = state.orders.filter((order) => order.status === "delayed");
   const submittedReports = (state.salesReports || []).filter((report) => report.status === "submitted").slice(0, 2);
   const vision = calculateVisionMetrics(state);
-  const paperTrailPending = Math.max(0, vision.paperTrailOrders - vision.paperTrailReadyOrders);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
   const canAdvanceSales = permissions.canLogSalesReturns || permissions.canDispatchStock;
   const alerts = [
@@ -1146,14 +1145,6 @@ function renderAlerts(state, permissions) {
           title: `${formatNumber(vision.creditHoldOrders)} sales order${vision.creditHoldOrders === 1 ? "" : "s"} on credit hold`,
           detail: "Projected customer balance exceeds the approved limit",
           action: '<a class="button" href="#/orders"><span>Review orders</span></a>'
-        }]
-      : []),
-    ...(paperTrailPending
-      ? [{
-          id: "paper-trail",
-          title: `${formatNumber(paperTrailPending)} delivery note${paperTrailPending === 1 ? "" : "s"} need printing`,
-          detail: "Physical signature trail is not ready for every active delivery",
-          action: '<a class="button" href="#/orders"><span>Open orders</span></a>'
         }]
       : []),
     ...submittedReports.map((report) => ({
@@ -1247,6 +1238,7 @@ function renderRecentOrders(state, permissions) {
 }
 
 function renderFactoryCashControls(vision) {
+  const paymentCoveragePercent = vision.invoiceTotal ? vision.paymentCoveragePercent : 100;
   const controls = [
     {
       label: "Traceable records",
@@ -1261,16 +1253,16 @@ function renderFactoryCashControls(vision) {
       tone: vision.repSellThroughPercent < 65 ? "warning" : "good"
     },
     {
-      label: "Paper trail ready",
-      percent: vision.paperTrailReadyPercent,
-      value: `${formatNumber(vision.paperTrailReadyOrders)} of ${formatNumber(vision.paperTrailOrders)}`,
-      tone: vision.paperTrailReadyPercent < 100 ? "warning" : "good"
+      label: "Credit exposure",
+      percent: vision.creditExposurePercent,
+      value: `${formatCurrency(vision.creditBalanceTotal)} owed`,
+      tone: vision.creditExposurePercent >= 100 ? "danger" : vision.creditExposurePercent >= 85 ? "warning" : "good"
     },
     {
-      label: "Signed deliveries",
-      percent: vision.signatureCoveragePercent,
-      value: `${formatNumber(vision.signedOrders)} of ${formatNumber(vision.signatureEligibleOrders)}`,
-      tone: vision.signatureCoveragePercent < 100 ? "warning" : "good"
+      label: "Payment coverage",
+      percent: paymentCoveragePercent,
+      value: `${formatCurrency(vision.paidTotal)} collected`,
+      tone: paymentCoveragePercent < 80 ? "warning" : "good"
     }
   ];
 
@@ -1349,7 +1341,7 @@ function renderManagerOperationsLayout(state, permissions, vision) {
     <div class="manager-ops-layout">
       <div class="manager-ops-left">
         <section class="panel manager-half-panel">
-          ${panelHeader("Factory-to-cash controls", "Produced stock, custody, paper trails, signatures, and payment visibility")}
+          ${panelHeader("Factory-to-cash controls", "Produced stock, custody, credit exposure, and payment visibility")}
           <div class="bar-list">${renderFactoryCashControls(vision)}</div>
         </section>
 
@@ -2155,7 +2147,7 @@ export function renderDashboard({ state }) {
           </div>
 
           <section class="panel">
-            ${panelHeader("Factory-to-cash controls", "Produced stock, representative custody, paper trails, signatures, and payment visibility")}
+            ${panelHeader("Factory-to-cash controls", "Produced stock, representative custody, credit exposure, and payment visibility")}
             <div class="bar-list">${renderFactoryCashControls(vision)}</div>
           </section>
         `}

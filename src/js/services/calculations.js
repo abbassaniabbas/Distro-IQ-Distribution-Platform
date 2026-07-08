@@ -351,16 +351,6 @@ export function calculateVisionMetrics(state) {
     .filter((invoice) => invoice.status !== "paid")
     .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
   const paymentCoveragePercent = invoiceTotal ? (paidTotal / invoiceTotal) * 100 : 0;
-  const signatureEligibleOrders = orders.filter((order) => order.status === "delivered");
-  const signedOrders = signatureEligibleOrders.filter((order) => order.signatureStatus === "signed").length;
-  const signatureCoveragePercent = signatureEligibleOrders.length
-    ? (signedOrders / signatureEligibleOrders.length) * 100
-    : 100;
-  const paperTrailOrders = orders.filter((order) => ["packed", "in_transit", "delivered"].includes(order.status));
-  const paperTrailReadyOrders = paperTrailOrders.filter((order) => (
-    ["ready", "printed"].includes(order.deliveryNoteStatus)
-  )).length;
-  const paperTrailReadyPercent = paperTrailOrders.length ? (paperTrailReadyOrders / paperTrailOrders.length) * 100 : 100;
   const traceChecks = [
     ...products.map((product) => Boolean(product.id && product.stockCategory && product.warehouse)),
     ...assignments.map((assignment) => Boolean(assignment.id && assignment.routeId && assignment.productId && assignment.repName && assignment.assignedAt)),
@@ -392,12 +382,6 @@ export function calculateVisionMetrics(state) {
     invoiceTotal,
     receivables,
     paymentCoveragePercent,
-    signedOrders,
-    signatureEligibleOrders: signatureEligibleOrders.length,
-    signatureCoveragePercent,
-    paperTrailOrders: paperTrailOrders.length,
-    paperTrailReadyOrders,
-    paperTrailReadyPercent,
     traceableRecords,
     totalTraceableRecords: traceChecks.length,
     traceabilityPercent

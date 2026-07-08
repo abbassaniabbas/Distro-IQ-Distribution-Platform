@@ -19,16 +19,6 @@ function renderSummaryTiles(state) {
       value: formatNumber(vision.creditHoldOrders),
       status: vision.creditHoldOrders ? "credit_hold" : "ready"
     },
-    {
-      label: "Notes ready",
-      value: `${formatNumber(vision.paperTrailReadyOrders)} / ${formatNumber(vision.paperTrailOrders)}`,
-      status: vision.paperTrailReadyPercent === 100 ? "ready" : "pending"
-    },
-    {
-      label: "Signed deliveries",
-      value: `${formatNumber(vision.signedOrders)} / ${formatNumber(vision.signatureEligibleOrders)}`,
-      status: vision.signatureCoveragePercent === 100 ? "signed" : "pending_signature"
-    }
   ];
 
   return `
@@ -70,9 +60,7 @@ function renderOrderRows(orders, state, permissions) {
       order.region,
       order.priority,
       statusText(order.status),
-      statusText(creditGuard.status),
-      statusText(order.deliveryNoteStatus),
-      statusText(order.signatureStatus)
+      statusText(creditGuard.status)
     ]
       .join(" ")
       .toLowerCase();
@@ -95,10 +83,6 @@ function renderOrderRows(orders, state, permissions) {
         <td>
           ${statusPill(creditGuard.status)}
           <div class="muted">${escapeHtml(creditMeta)}</div>
-        </td>
-        <td>
-          ${statusPill(order.deliveryNoteStatus)}
-          <div class="muted">${escapeHtml(statusText(order.signatureStatus))}</div>
         </td>
         <td>${formatCurrency(order.total)}</td>
         <td>
@@ -135,7 +119,7 @@ export function renderOrders({ state }) {
 
       <section class="panel orders-layout">
         <div class="toolbar">
-          ${panelHeader("Sales order control", "Credit guard, delivery note, signature trail, and dispatch status for every snack order")}
+          ${panelHeader("Sales order control", "Order status and credit checks for every snack order")}
           <div class="toolbar-group">
             <label class="field">
               <span class="sr-only">Filter by status</span>
@@ -159,7 +143,7 @@ export function renderOrders({ state }) {
         </div>
 
         ${table(
-          ["Sales order", "Customer", "Status", "Credit guard", "Paper trail", "Value", ""],
+          ["Sales order", "Customer", "Status", "Credit guard", "Value", ""],
           renderOrderRows(orders, state, permissions),
           "No sales orders available"
         )}
