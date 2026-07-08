@@ -687,71 +687,13 @@ function reducer(currentState, action) {
       return state;
     }
 
-    case "LOAD_STOCK_ASSIGNMENT": {
-      const product = state.products.find((item) => item.id === action.productId);
-      const quantity = Math.max(0, Number(action.quantity || 0));
-      const repName = String(action.repName || "").trim();
-
-      if (!product || !quantity || Number(product.stock || 0) < quantity || !isSalesRepresentativeName(state, repName)) {
-        return state;
-      }
-
-      product.stock = Math.max(0, Number(product.stock || 0) - quantity);
-      product.updatedAt = todayISO();
-      state.stockAssignments = [
-        {
-          id: createId("ASN"),
-          routeId: action.routeId || "Factory load",
-          repName,
-          productId: product.id,
-          assignedAt: todayISO(),
-          assigned: quantity,
-          sold: 0,
-          returned: 0,
-          status: "open",
-          varianceFlagged: false,
-          varianceNote: ""
-        },
-        ...state.stockAssignments
-      ];
-      state.stockTransactions = [
-        {
-          id: createId("TXN"),
-          type: "supply",
-          productId: product.id,
-          quantity,
-          amount: quantity * Number(product.unitPrice || 0),
-          paymentType: "none",
-          partyType: "Sales Representative",
-          partyName: repName,
-          recipientName: repName,
-          dispatchDestination: action.routeId || "Representative run",
-          staffResponsible: currentActorName(state),
-          date: todayISO(),
-          recordedBy: currentActorName(state),
-          movementDirection: "out",
-          creditImpact: 0
-        },
-        ...(state.stockTransactions || [])
-      ];
-
-      appendActivityLog(state, {
-        clientId: state.client?.id,
-        actionType: "assigned",
-        recordType: "stock_movement",
-        recordLabel: product.id,
-        summary: `Loaded ${quantity} ${product.name} to ${repName}`
-      });
-
-      return state;
-    }
-
     case "RECORD_STOCK_DISPATCH": {
       const product = state.products.find((item) => item.id === action.productId);
       const quantity = Math.max(0, Number(action.quantity || 0));
       const recipientType = String(action.recipientType || "Recipient").trim();
       const recipientName = String(action.recipientName || "Recipient").trim();
       const destination = String(action.destination || recipientType).trim();
+      const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
       const dispatchDate = action.dispatchDate || todayISO();
 
@@ -770,7 +712,7 @@ function reducer(currentState, action) {
         state.stockAssignments = [
           {
             id: createId("ASN"),
-            routeId: destination || "Factory dispatch",
+            routeId: routeId || destination || "Factory dispatch",
             repName: recipientName,
             productId: product.id,
             assignedAt: dispatchDate,

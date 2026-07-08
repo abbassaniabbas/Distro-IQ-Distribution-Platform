@@ -44,10 +44,10 @@ function stockTabsForPermissions(permissions) {
       id: "stock-health",
       label: "Stock health"
     },
-    ...(permissions.canDispatchStock || permissions.canManageStockMovements
+    ...(permissions.canDispatchStock || permissions.canManageStockMovements || permissions.canAssignStock
       ? [{
           id: "dispatch",
-          label: "Dispatch"
+          label: "Factory dispatch"
         }]
       : []),
     {
@@ -56,7 +56,7 @@ function stockTabsForPermissions(permissions) {
     },
     {
       id: "assignments",
-      label: "Assignments"
+      label: "Rep stock ledger"
     },
     {
       id: "movement-history",
@@ -369,59 +369,6 @@ function managerRepOptions(state) {
   return [...names].sort();
 }
 
-function renderAssignmentConsole(state, permissions) {
-  if (!permissions.canAssignStock) return "";
-
-  const reps = managerRepOptions(state);
-  const assignableProducts = state.products.filter((product) => (
-    product.status !== "inactive" && stockCategoryIdForProduct(product) === "finished_products"
-  ));
-
-  return `
-    <section class="panel manager-tool-panel">
-      ${panelHeader("Stock assignment", "Load finished stock onto a representative and reconcile variances")}
-      <form id="manager-assignment-form" class="manager-form-grid" novalidate>
-        <label class="field">
-          <span>Sales representative</span>
-          <select name="repName" required>
-            <option value="">Choose representative</option>
-            ${reps.map((rep) => `<option value="${escapeHtml(rep)}">${escapeHtml(rep)}</option>`).join("")}
-          </select>
-        </label>
-        <label class="field">
-          <span>Representative run</span>
-          <select name="routeId">
-            <option value="">No run selected</option>
-            ${state.routes.map((route) => `<option value="${escapeHtml(route.id)}">${escapeHtml(route.name)}</option>`).join("")}
-          </select>
-        </label>
-        <label class="field">
-          <span>Product</span>
-          <select name="productId" required>
-            <option value="">Choose product</option>
-            ${assignableProducts.map((product) => `
-              <option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} (${formatNumber(product.stock)} ${escapeHtml(productUnit(product))})</option>
-            `).join("")}
-          </select>
-        </label>
-        <label class="field">
-          <span>Quantity</span>
-          <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
-        </label>
-        <div class="manager-form-actions span-full">
-          ${textButton({
-            iconName: "truck",
-            label: "Load stock",
-            className: "primary",
-            type: "submit"
-          })}
-        </div>
-        <span id="assignment-form-message" class="field-error span-full"></span>
-      </form>
-    </section>
-  `;
-}
-
 function renderProductCard(product, permissions) {
   const health = getStockHealth(product);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
@@ -574,7 +521,7 @@ function destinationPlaceholder(recipientType) {
 }
 
 function renderDispatchForm(state, permissions) {
-  if (!permissions.canDispatchStock && !permissions.canManageStockMovements) return "";
+  if (!permissions.canDispatchStock && !permissions.canManageStockMovements && !permissions.canAssignStock) return "";
 
   const dispatchableProducts = state.products.filter((product) => (
     product.status !== "inactive" && Number(product.stock || 0) > 0
@@ -611,6 +558,13 @@ function renderDispatchForm(state, permissions) {
             ${renderDispatchRecipientOptions(state, "Sales Representative")}
           </select>
           <input name="recipientNameOther" data-dispatch-recipient-other placeholder="Type recipient name" hidden>
+        </label>
+        <label class="field" data-dispatch-run-field>
+          <span>Representative run</span>
+          <select name="routeId">
+            <option value="">No run selected</option>
+            ${state.routes.map((route) => `<option value="${escapeHtml(route.id)}">${escapeHtml(route.name)}</option>`).join("")}
+          </select>
         </label>
         <label class="field">
           <span>Destination / drop-off point</span>
@@ -938,13 +892,12 @@ function renderOverviewPage(state, vision) {
 
 function renderAssignmentsPage(state, permissions) {
   return `
-    ${renderAssignmentConsole(state, permissions)}
     <section class="panel inventory-layout">
-      ${panelHeader("Representative stock assignments", "Assigned, sold, returned, and outstanding quantities by sales representative")}
+      ${panelHeader("Representative stock ledger", "Created automatically when factory dispatch goes to a sales representative")}
       ${table(
         ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status", ""],
         renderAssignmentRows(state, permissions),
-        "No stock assignments recorded"
+        "No representative stock ledger entries yet"
       )}
     </section>
   `;
@@ -1015,12 +968,13 @@ export function bindInventory({ root, store }) {
   const stockImageUploadTitle = qs("#stock-image-upload-title", root);
   const stockImageFileName = qs("#stock-image-file-name", root);
   const clearStockImageButton = qs("#clear-stock-image-file", root);
-  const assignmentForm = qs("#manager-assignment-form", root);
   const dispatchForm = qs("#stock-dispatch-form", root);
   const dispatchRecipientType = dispatchForm ? qs('select[name="recipientType"]', dispatchForm) : null;
   const dispatchRecipientSelect = dispatchForm ? qs("[data-dispatch-recipient-select]", dispatchForm) : null;
   const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
   const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
+  const dispatchRunField = dispatchForm ? qs("[data-dispatch-run-field]", dispatchForm) : null;
+  const dispatchRunSelect = dispatchForm ? qs('select[name="routeId"]', dispatchForm) : null;
   const routeParams = inventoryRouteParams();
   const requestedProductId = routeParams.get("product");
   const requestedStockType = routeParams.get("type");
@@ -1301,37 +1255,6 @@ export function bindInventory({ root, store }) {
     });
   });
 
-  assignmentForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const state = store.getState();
-    const formData = new FormData(assignmentForm);
-    const productId = String(formData.get("productId") || "");
-    const quantity = Number(formData.get("quantity") || 0);
-    const product = state.products.find((item) => item.id === productId);
-    const message = qs("#assignment-form-message", root);
-
-    if (message) message.textContent = "";
-
-    if (!product || !formData.get("repName") || !quantity || quantity <= 0) {
-      if (message) message.textContent = "Choose a representative, product, and quantity.";
-      return;
-    }
-
-    if (quantity > Number(product.stock || 0)) {
-      if (message) message.textContent = `Only ${formatNumber(product.stock)} available.`;
-      return;
-    }
-
-    store.dispatch({
-      type: "LOAD_STOCK_ASSIGNMENT",
-      repName: formData.get("repName"),
-      routeId: formData.get("routeId"),
-      productId,
-      quantity,
-      message: "Stock loaded to representative"
-    });
-  });
-
   function updateOtherRecipientField() {
     if (!dispatchOtherRecipient || !dispatchRecipientSelect || !dispatchRecipientType) return;
 
@@ -1346,8 +1269,11 @@ export function bindInventory({ root, store }) {
     if (!dispatchRecipientType || !dispatchRecipientSelect) return;
 
     const recipientType = dispatchRecipientType.value;
+    const isRepresentative = String(recipientType || "").toLowerCase().includes("representative");
     dispatchRecipientSelect.innerHTML = renderDispatchRecipientOptions(store.getState(), recipientType);
     if (dispatchDestinationInput) dispatchDestinationInput.placeholder = destinationPlaceholder(recipientType);
+    if (dispatchRunField) dispatchRunField.hidden = !isRepresentative;
+    if (!isRepresentative && dispatchRunSelect) dispatchRunSelect.value = "";
     updateOtherRecipientField();
   }
 
@@ -1385,6 +1311,7 @@ export function bindInventory({ root, store }) {
       quantity,
       recipientType: formData.get("recipientType"),
       recipientName,
+      routeId: formData.get("routeId"),
       destination: formData.get("destination"),
       dispatchDate: formData.get("dispatchDate"),
       staffName: formData.get("staffName"),

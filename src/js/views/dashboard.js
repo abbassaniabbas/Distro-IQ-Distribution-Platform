@@ -1303,10 +1303,10 @@ function renderManagerControlPanel(state, vision) {
       href: "#/inventory"
     },
     {
-      label: "Representative stock",
+      label: "Factory dispatch",
       value: formatNumber(openVariances),
-      body: "Load stock to representatives and close reconciliations.",
-      href: "#/inventory"
+      body: "Send stock out and track representative ledgers.",
+      href: "#/inventory?tab=dispatch"
     },
     {
       label: "Credit terms",
