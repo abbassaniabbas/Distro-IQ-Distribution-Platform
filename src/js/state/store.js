@@ -915,6 +915,49 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "REDUCE_PRODUCT_STOCK": {
+      const product = state.products.find((item) => item.id === action.productId);
+      const quantity = Math.max(0, Number(action.quantity || 0));
+      const reason = String(action.reason || "").trim();
+      const reasonDetails = String(action.reasonDetails || "").trim();
+      const reasonSummary = reasonDetails ? `${reason} - ${reasonDetails}` : reason;
+
+      if (product && quantity > 0 && quantity <= Number(product.stock || 0) && reason) {
+        product.stock = Math.max(0, Number(product.stock || 0) - quantity);
+        product.updatedAt = todayISO();
+        state.stockTransactions = [
+          {
+            id: createId("TXN"),
+            type: "write off",
+            productId: product.id,
+            quantity,
+            amount: 0,
+            paymentType: "none",
+            partyType: "Factory",
+            partyName: reason,
+            recipientName: "Factory stock",
+            dispatchDestination: product.warehouse || "Factory",
+            staffResponsible: currentActorName(state),
+            date: todayISO(),
+            recordedBy: currentActorName(state),
+            movementDirection: "out",
+            reason,
+            reasonDetails,
+            creditImpact: 0
+          },
+          ...(state.stockTransactions || [])
+        ];
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "reduced",
+          recordType: "inventory",
+          recordLabel: product.id,
+          summary: `${product.name} reduced by ${quantity}: ${reasonSummary}`
+        });
+      }
+      return state;
+    }
+
     case "ADVANCE_ROUTE": {
       const route = state.routes.find((item) => item.id === action.routeId);
       if (route) {

@@ -144,6 +144,16 @@ function renderRepRecentRows(rows) {
   });
 }
 
+function renderActivityPagination() {
+  return `
+    <div class="activity-pagination" data-activity-pagination hidden>
+      <button class="button" type="button" data-activity-page="prev">Previous</button>
+      <span data-activity-page-status>Page 1 of 1</span>
+      <button class="button" type="button" data-activity-page="next">Next</button>
+    </div>
+  `;
+}
+
 function renderSalesRepRecentActivity(state) {
   const rows = repRecentActivityRows(state);
 
@@ -180,6 +190,7 @@ function renderSalesRepRecentActivity(state) {
           renderRepRecentRows(rows),
           "No recent activity yet"
         )}
+        ${renderActivityPagination()}
       </section>
     </section>
   `;
@@ -282,7 +293,7 @@ export function renderActivityLog({ state }) {
   const isAccountant = role === "accountant";
   const title = isStoreKeeper ? "Store activity log" : isAccountant ? "Finance activity log" : "Activity log";
   const subtitle = isStoreKeeper
-    ? "Permanent searchable record of stock movements, representative assignments, and in-transit run updates"
+    ? "Permanent searchable record of stock added, reduced, dispatched, returned, and reconciled"
     : isAccountant
       ? "Permanent searchable record of sales, payments, credit balances, and submitted reports"
       : "Permanent searchable record of what changed, who changed it, and when";
@@ -334,6 +345,7 @@ export function renderActivityLog({ state }) {
           renderRows(logs),
           "No activity has been recorded yet"
         )}
+        ${renderActivityPagination()}
         <p class="activity-readonly-note">Activity entries are read-only and cannot be edited or deleted.</p>
       </section>
     </section>
@@ -341,12 +353,18 @@ export function renderActivityLog({ state }) {
 }
 
 export function bindActivityLog({ root }) {
+  const pageSize = 10;
+  let currentPage = 1;
   const searchFilter = qs("#activity-search", root);
   const fromFilter = qs("#activity-date-from", root);
   const toFilter = qs("#activity-date-to", root);
   const userFilter = qs("#activity-user-filter", root);
   const actionFilter = qs("#activity-action-filter", root);
   const recordFilter = qs("#activity-record-filter", root);
+  const pagination = qs("[data-activity-pagination]", root);
+  const pageStatus = qs("[data-activity-page-status]", root);
+  const previousButton = qs('[data-activity-page="prev"]', root);
+  const nextButton = qs('[data-activity-page="next"]', root);
   const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter, recordFilter].filter(Boolean);
 
   function applyFilters() {
@@ -357,7 +375,8 @@ export function bindActivityLog({ root }) {
     const action = actionFilter?.value || "all";
     const record = recordFilter?.value || "all";
 
-    qsa("tbody tr", root).forEach((row) => {
+    const rows = qsa("tbody tr", root);
+    const matchedRows = rows.filter((row) => {
       const matchesDateFrom = !from || row.dataset.date >= from;
       const matchesDateTo = !to || row.dataset.date <= to;
       const matchesUser = user === "all" || row.dataset.user === user;
@@ -365,10 +384,51 @@ export function bindActivityLog({ root }) {
       const matchesRecord = record === "all" || row.dataset.record === record;
       const matchesSearch = !query || String(row.dataset.searchIndex || "").includes(query);
 
-      row.hidden = !matchesSearch || !matchesDateFrom || !matchesDateTo || !matchesUser || !matchesAction || !matchesRecord;
+      return matchesSearch && matchesDateFrom && matchesDateTo && matchesUser && matchesAction && matchesRecord;
     });
+
+    const pageCount = Math.max(1, Math.ceil(matchedRows.length / pageSize));
+    currentPage = Math.min(currentPage, pageCount);
+    const pageStart = (currentPage - 1) * pageSize;
+    const visibleRows = new Set(matchedRows.slice(pageStart, pageStart + pageSize));
+
+    rows.forEach((row) => {
+      row.hidden = !visibleRows.has(row);
+    });
+
+    if (pagination) {
+      pagination.hidden = matchedRows.length <= pageSize;
+    }
+
+    if (pageStatus) {
+      pageStatus.textContent = `Page ${currentPage} of ${pageCount}`;
+    }
+
+    if (previousButton) {
+      previousButton.disabled = currentPage <= 1;
+    }
+
+    if (nextButton) {
+      nextButton.disabled = currentPage >= pageCount;
+    }
   }
 
-  filters.forEach((filter) => filter.addEventListener("input", applyFilters));
-  filters.forEach((filter) => filter.addEventListener("change", applyFilters));
+  function resetPageAndApplyFilters() {
+    currentPage = 1;
+    applyFilters();
+  }
+
+  previousButton?.addEventListener("click", () => {
+    currentPage = Math.max(1, currentPage - 1);
+    applyFilters();
+  });
+
+  nextButton?.addEventListener("click", () => {
+    currentPage += 1;
+    applyFilters();
+  });
+
+  filters.forEach((filter) => filter.addEventListener("input", resetPageAndApplyFilters));
+  filters.forEach((filter) => filter.addEventListener("change", resetPageAndApplyFilters));
+  applyFilters();
 }

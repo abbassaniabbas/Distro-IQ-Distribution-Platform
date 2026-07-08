@@ -1155,6 +1155,11 @@
   min-width: 190px;
 }
 
+.reconcile-action-wrap {
+  display: grid;
+  gap: 6px;
+}
+
 .table-note-input {
   width: 100%;
   min-height: 34px;
@@ -1165,6 +1170,19 @@
   padding: 0 10px;
   font: inherit;
   font-size: 0.78rem;
+}
+
+.assignment-action-hint {
+  display: none;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.reconcile-action-wrap:hover .assignment-action-hint,
+.reconcile-action-wrap:focus-within .assignment-action-hint {
+  display: block;
 }
 
 .rep-activity-list {
@@ -1542,6 +1560,20 @@
   color: var(--teal-dark);
   font-size: 0.74rem;
   font-weight: 900;
+}
+
+.activity-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.activity-pagination span {
+  color: var(--muted);
+  font-size: 0.84rem;
+  font-weight: 800;
 }
 
 .activity-readonly-note {

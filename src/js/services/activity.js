@@ -8,6 +8,7 @@ export const ACTION_LABELS = {
   completed: "Completed",
   delayed: "Delayed",
   restocked: "Restocked",
+  reduced: "Reduced",
   contacted: "Contacted",
   paid: "Paid",
   sold: "Sold",
@@ -78,11 +79,96 @@ export function createActivityLog({
   };
 }
 
+function transactionActionType(transaction) {
+  const type = String(transaction.type || "").toLowerCase();
+  const direction = String(transaction.movementDirection || "").toLowerCase();
+
+  if (type === "write off") return "reduced";
+  if (type === "sale") return "sold";
+  if (type === "return") return "returned";
+  if (direction === "in") return "restocked";
+  if (direction === "out") return "dispatched";
+  return "updated";
+}
+
+function transactionSummary(transaction, productName) {
+  const quantity = Number(transaction.quantity || 0);
+  const actionType = transactionActionType(transaction);
+
+  if (actionType === "reduced") {
+    const reason = [transaction.reason, transaction.reasonDetails].filter(Boolean).join(" - ");
+    return `${productName} reduced by ${quantity}${reason ? `: ${reason}` : ""}`;
+  }
+
+  if (actionType === "restocked") {
+    return `${productName} restocked by ${quantity}`;
+  }
+
+  if (actionType === "sold") {
+    return `${quantity} ${productName} sold to ${transaction.partyName || "customer"}`;
+  }
+
+  if (actionType === "returned") {
+    return `${quantity} ${productName} returned by ${transaction.partyName || "customer"}`;
+  }
+
+  return `Dispatched ${quantity} ${productName} to ${transaction.recipientName || transaction.partyName || "recipient"}`;
+}
+
+function transactionCreatedAt(transaction) {
+  if (transaction.createdAt) return transaction.createdAt;
+  if (transaction.date) return `${transaction.date}T12:00:00.000Z`;
+  return new Date().toISOString();
+}
+
+function activityKey(entry) {
+  return [
+    entry.actionType,
+    entry.recordType,
+    entry.recordLabel,
+    entry.summary,
+    String(entry.createdAt || "").slice(0, 10)
+  ].join("|");
+}
+
+function stockMovementActivityLogs(state, existingLogs) {
+  if (!state.client?.id) return [];
+
+  const existingKeys = new Set(existingLogs.map(activityKey));
+  const productMap = new Map((state.products || []).map((product) => [product.id, product]));
+
+  return (state.stockTransactions || [])
+    .map((transaction) => {
+      const product = productMap.get(transaction.productId);
+      const productName = product?.name || transaction.productId || "Stock item";
+      const actionType = transactionActionType(transaction);
+      const entry = {
+        id: `TXN-ACT-${transaction.id}`,
+        clientId: state.client.id,
+        actionType,
+        recordType: "stock_movement",
+        recordLabel: transaction.productId || transaction.id,
+        actorUserId: "",
+        actorName: transaction.staffResponsible || transaction.recordedBy || "Store Keeper",
+        actorEmail: "",
+        summary: transactionSummary(transaction, productName),
+        createdAt: transactionCreatedAt(transaction)
+      };
+
+      return existingKeys.has(activityKey(entry)) ? null : entry;
+    })
+    .filter(Boolean);
+}
+
 export function getScopedActivityLogs(state) {
   if (!state.client?.id) return [];
 
-  const logs = (state.activityLogs || [])
+  const savedLogs = (state.activityLogs || [])
     .filter((entry) => entry.clientId === state.client.id);
+  const logs = [
+    ...savedLogs,
+    ...stockMovementActivityLogs(state, savedLogs)
+  ];
   const role = currentUserRole(state);
 
   if (role === "store_keeper") {

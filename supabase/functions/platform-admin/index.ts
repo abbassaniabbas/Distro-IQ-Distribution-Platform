@@ -452,9 +452,9 @@ Deno.serve(async (req) => {
     return jsonResponse({ error: "Method not allowed" }, 405);
   }
 
-  const supabaseUrl = Deno.env.get("SUPABASE_URL");
-  const anonKey = Deno.env.get("SUPABASE_ANON_KEY");
-  const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const supabaseUrl = Deno.env.get("https://phoawfpicaucdjdhrban.supabase.co");
+  const anonKey = Deno.env.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBob2F3ZnBpY2F1Y2RqZGhyYmFuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODMxNjk0NTAsImV4cCI6MjA5ODc0NTQ1MH0.Yq-jKauZt4s0dVB4_2OtviSku5a_YODK2xPjGVoTPD4");
+  const serviceRoleKey = Deno.env.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBob2F3ZnBpY2F1Y2RqZGhyYmFuIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MzE2OTQ1MCwiZXhwIjoyMDk4NzQ1NDUwfQ.g1taddJnlqf3hbmFTN1Db6bCKhy0hXgDgJoInXI1kqw");
 
   if (!supabaseUrl || !anonKey || !serviceRoleKey) {
     return jsonResponse({ error: "Supabase function environment is not configured" }, 500);

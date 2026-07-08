@@ -357,6 +357,63 @@ function renderRestockModal(permissions) {
   `;
 }
 
+function renderStockReductionModal(permissions) {
+  if (!permissions.canManageStockMovements) return "";
+
+  return `
+    <div id="reduce-stock-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="reduce-stock-modal-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Stock reduction</span>
+            <h2 id="reduce-stock-modal-title">Reduce stock quantity</h2>
+          </div>
+          ${textButton({
+            iconName: "x",
+            label: "Close",
+            className: "js-close-reduce-stock-modal"
+          })}
+        </header>
+        <form id="reduce-stock-form" class="manager-form-grid" novalidate>
+          <input type="hidden" name="productId">
+          <label class="field span-full">
+            <span>Stock item</span>
+            <input name="productName" disabled>
+          </label>
+          <label class="field">
+            <span>Quantity to remove</span>
+            <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Enter amount" required>
+          </label>
+          <label class="field">
+            <span>Reason</span>
+            <select name="reason" required>
+              <option value="">Choose reason</option>
+              <option value="Damaged stock">Damaged stock</option>
+              <option value="Expired stock">Expired stock</option>
+              <option value="Production use">Used for production</option>
+              <option value="Stock count correction">Stock count correction</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+          <label class="field span-full">
+            <span>Extra note (optional)</span>
+            <textarea name="reasonDetails" rows="3" placeholder="Example: 3 cartons were damaged during loading"></textarea>
+          </label>
+          <div class="manager-form-actions span-full">
+            ${textButton({
+              iconName: "alert",
+              label: "Reduce stock",
+              className: "primary",
+              type: "submit"
+            })}
+          </div>
+          <span id="reduce-stock-form-message" class="field-error span-full" aria-live="polite"></span>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
 function managerRepOptions(state) {
   const accountNames = salesRepresentativeNames(state);
 
@@ -372,6 +429,7 @@ function managerRepOptions(state) {
 function renderProductCard(product, permissions) {
   const health = getStockHealth(product);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canReduceStock = permissions.canManageStockMovements;
   const canManageProducts = permissions.canManageProducts;
   const searchIndex = [
     product.id,
@@ -430,13 +488,24 @@ function renderProductCard(product, permissions) {
                 className: "js-toggle-product-status",
                 data: { "product-id": product.id }
               })
-            : textButton({
+            : ""}
+          ${!canManageProducts && canRestock
+            ? textButton({
                 iconName: "plus",
                 label: "Restock",
                 className: "primary js-restock-product",
-                disabled: !canRestock,
                 data: { "product-id": product.id }
-              })}
+              })
+            : ""}
+          ${canReduceStock
+            ? textButton({
+                iconName: "alert",
+                label: "Reduce",
+                className: "js-reduce-stock",
+                disabled: Number(product.stock || 0) <= 0,
+                data: { "product-id": product.id }
+              })
+            : ""}
         </div>
       </footer>
     </article>
@@ -514,7 +583,7 @@ function otherRecipientPlaceholder(recipientType) {
 function destinationPlaceholder(recipientType) {
   const normalizedType = String(recipientType || "").toLowerCase();
 
-  if (normalizedType.includes("representative")) return "Van number, route, or run";
+  if (normalizedType.includes("representative")) return "Van number or delivery area";
   if (normalizedType.includes("supermarket")) return "Outlet branch, city, or delivery address";
   if (normalizedType.includes("internal")) return "Store room, production line, or equipment bay";
   return "Where the stock is going";
@@ -560,9 +629,9 @@ function renderDispatchForm(state, permissions) {
           <input name="recipientNameOther" data-dispatch-recipient-other placeholder="Type recipient name" hidden>
         </label>
         <label class="field" data-dispatch-run-field>
-          <span>Representative run</span>
+          <span>Delivery trip (optional)</span>
           <select name="routeId">
-            <option value="">No run selected</option>
+            <option value="">No trip selected</option>
             ${state.routes.map((route) => `<option value="${escapeHtml(route.id)}">${escapeHtml(route.name)}</option>`).join("")}
           </select>
         </label>
@@ -706,6 +775,7 @@ function renderAssignmentRows(state, permissions) {
     const product = productMap.get(assignment.productId);
     const outstanding = assignmentOutstanding(assignment);
     const soldPercent = assignment.assigned ? (assignment.sold / assignment.assigned) * 100 : 0;
+    const reconcileBlocked = outstanding > 0 && !assignment.varianceFlagged;
     const searchIndex = [
       assignment.id,
       assignment.repName,
@@ -755,13 +825,20 @@ function renderAssignmentRows(state, permissions) {
                     disabled: outstanding <= 0,
                     data: { "assignment-id": assignment.id }
                   })}
-                  ${textButton({
-                    iconName: "check",
-                    label: assignment.varianceFlagged ? "Close" : "Reconcile",
-                    className: "primary js-reconcile-assignment",
-                    disabled: outstanding > 0 && !assignment.varianceFlagged,
-                    data: { "assignment-id": assignment.id }
-                  })}
+                  <span class="reconcile-action-wrap">
+                    ${textButton({
+                      iconName: "check",
+                      label: assignment.varianceFlagged ? "Close" : "Reconcile",
+                      className: "primary js-reconcile-assignment",
+                      disabled: reconcileBlocked,
+                      data: { "assignment-id": assignment.id }
+                    })}
+                    ${
+                      reconcileBlocked
+                        ? '<span class="assignment-action-hint" role="tooltip">Flag the outstanding stock before closing.</span>'
+                        : ""
+                    }
+                  </span>
                 </div>
               `
               : ""
@@ -950,6 +1027,7 @@ export function renderInventory({ state }) {
       ${renderStockTabPage({ activeTabId, state, permissions, vision })}
       ${renderStockProductModal(state, permissions)}
       ${renderRestockModal(permissions)}
+      ${renderStockReductionModal(permissions)}
     </section>
   `;
 }
@@ -961,6 +1039,9 @@ export function bindInventory({ root, store }) {
   const restockModal = qs("#restock-modal", root);
   const restockForm = qs("#restock-form", root);
   const restockMessage = qs("#restock-form-message", root);
+  const reduceStockModal = qs("#reduce-stock-modal", root);
+  const reduceStockForm = qs("#reduce-stock-form", root);
+  const reduceStockMessage = qs("#reduce-stock-form-message", root);
   const productForm = qs("#manager-product-form", root);
   const productMessage = qs("#manager-product-message", root);
   const stockImageUploadField = qs("#stock-image-upload-field", root);
@@ -1046,6 +1127,10 @@ export function bindInventory({ root, store }) {
     if (restockModal) restockModal.hidden = true;
   }
 
+  function closeReduceStockModal() {
+    if (reduceStockModal) reduceStockModal.hidden = true;
+  }
+
   function openRestockModal(productId) {
     const product = store.getState().products.find((item) => item.id === productId);
     if (!restockModal || !restockForm || !product) return;
@@ -1056,6 +1141,18 @@ export function bindInventory({ root, store }) {
     if (restockMessage) restockMessage.textContent = "";
     restockModal.hidden = false;
     restockForm.elements.quantity.focus();
+  }
+
+  function openReduceStockModal(productId) {
+    const product = store.getState().products.find((item) => item.id === productId);
+    if (!reduceStockModal || !reduceStockForm || !product) return;
+
+    reduceStockForm.reset();
+    reduceStockForm.elements.productId.value = product.id;
+    reduceStockForm.elements.productName.value = `${product.name} (${formatNumber(product.stock)} ${productUnit(product)} currently)`;
+    if (reduceStockMessage) reduceStockMessage.textContent = "";
+    reduceStockModal.hidden = false;
+    reduceStockForm.elements.quantity.focus();
   }
 
   stockImageInput?.addEventListener("change", async () => {
@@ -1209,12 +1306,20 @@ export function bindInventory({ root, store }) {
     button.addEventListener("click", closeRestockModal);
   });
 
+  qsa(".js-close-reduce-stock-modal", root).forEach((button) => {
+    button.addEventListener("click", closeReduceStockModal);
+  });
+
   stockModal?.addEventListener("click", (event) => {
     if (event.target === stockModal) closeStockModal();
   });
 
   restockModal?.addEventListener("click", (event) => {
     if (event.target === restockModal) closeRestockModal();
+  });
+
+  reduceStockModal?.addEventListener("click", (event) => {
+    if (event.target === reduceStockModal) closeReduceStockModal();
   });
 
   restockForm?.addEventListener("submit", (event) => {
@@ -1237,6 +1342,43 @@ export function bindInventory({ root, store }) {
       message: "Stock quantity added"
     });
     closeRestockModal();
+  });
+
+  reduceStockForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(reduceStockForm);
+    const productId = String(formData.get("productId") || "");
+    const quantity = Number(formData.get("quantity") || 0);
+    const reason = String(formData.get("reason") || "").trim();
+    const reasonDetails = String(formData.get("reasonDetails") || "").trim();
+    const product = store.getState().products.find((item) => item.id === productId);
+
+    if (reduceStockMessage) reduceStockMessage.textContent = "";
+
+    if (!productId || !Number.isFinite(quantity) || quantity <= 0) {
+      if (reduceStockMessage) reduceStockMessage.textContent = "Enter the quantity you want to remove.";
+      return;
+    }
+
+    if (product && quantity > Number(product.stock || 0)) {
+      if (reduceStockMessage) reduceStockMessage.textContent = `Only ${formatNumber(product.stock)} available.`;
+      return;
+    }
+
+    if (!reason) {
+      if (reduceStockMessage) reduceStockMessage.textContent = "Choose a reason for reducing stock.";
+      return;
+    }
+
+    store.dispatch({
+      type: "REDUCE_PRODUCT_STOCK",
+      productId,
+      quantity,
+      reason,
+      reasonDetails,
+      message: "Stock quantity reduced"
+    });
+    closeReduceStockModal();
   });
 
   qsa(".js-edit-product", root).forEach((button) => {
@@ -1327,6 +1469,12 @@ export function bindInventory({ root, store }) {
   qsa(".js-restock-product", root).forEach((button) => {
     button.addEventListener("click", () => {
       openRestockModal(button.dataset.productId);
+    });
+  });
+
+  qsa(".js-reduce-stock", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      openReduceStockModal(button.dataset.productId);
     });
   });
 
