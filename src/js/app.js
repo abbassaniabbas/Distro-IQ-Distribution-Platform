@@ -5,11 +5,12 @@ import { loadWorkspace, tryLoadPlatformOverview } from "./services/backend.js";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
-import { applySearchFilter, escapeHtml, qs } from "./ui/dom.js";
+import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
 import {
   bindTopbarCommunications,
   getTopbarNotificationItems,
+  getUnreadNotificationCount,
   getUnreadMessageCount
 } from "./ui/topbar-communications.js";
 import { showToast } from "./ui/toast.js";
@@ -150,6 +151,7 @@ const topbarUtilities = qs("#topbar-utility-actions");
 const topbarAvatar = qs("#topbar-avatar");
 const notificationsButton = qs("#topbar-notifications");
 const messagesButton = qs("#topbar-messages");
+const searchSuggestions = document.createElement("div");
 const AUTH_ROUTES = ["login", "signup", "reset-password", "platform-admin"];
 const PLATFORM_NAV_ITEMS = [
   {
@@ -159,6 +161,11 @@ const PLATFORM_NAV_ITEMS = [
   }
 ];
 let activeAuthFormFlows = 0;
+let activeViewAbortController = null;
+
+searchSuggestions.className = "search-suggestions";
+searchSuggestions.hidden = true;
+globalSearch.parentElement?.appendChild(searchSuggestions);
 
 function beginAuthFormFlow() {
   activeAuthFormFlows += 1;
@@ -360,12 +367,13 @@ function updateTopbarUtilities(state, view) {
   topbarAvatar.title = `${profileName} - ${profileRole}`;
   const unreadMessages = getUnreadMessageCount(state);
   const notificationCount = getTopbarNotificationItems(state).length;
+  const unreadNotifications = getUnreadNotificationCount(state);
 
-  notificationsButton?.classList.toggle("has-alert", notificationCount > 0);
+  notificationsButton?.classList.toggle("has-alert", unreadNotifications > 0);
   messagesButton?.classList.toggle("has-alert", unreadMessages > 0);
   notificationsButton?.setAttribute(
     "aria-label",
-    notificationCount ? `Notifications, ${notificationCount} latest` : "Notifications"
+    unreadNotifications ? `Notifications, ${unreadNotifications} new` : notificationCount ? `Notifications, ${notificationCount} latest` : "Notifications"
   );
   messagesButton?.setAttribute(
     "aria-label",
@@ -378,6 +386,50 @@ function updateTopbarUtilities(state, view) {
   }
 
   topbarAvatar.textContent = initialsForProfile(account, state.user).toUpperCase();
+}
+
+function searchSuggestionLabel(item) {
+  const preferred = item.querySelector?.("strong, h2, h3, .metric-value")?.textContent;
+  const text = preferred || item.textContent || item.dataset.searchIndex || "";
+
+  return text.replace(/\s+/g, " ").trim().slice(0, 96);
+}
+
+function updateSearchSuggestions() {
+  const query = String(globalSearch.value || "").trim().toLowerCase();
+
+  if (globalSearch.disabled || query.length < 3) {
+    searchSuggestions.hidden = true;
+    searchSuggestions.innerHTML = "";
+    return;
+  }
+
+  const seen = new Set();
+  const matches = qsa("[data-search-index]", viewRoot)
+    .filter((item) => !item.closest?.(".activity-log-view"))
+    .filter((item) => String(item.dataset.searchIndex || "").includes(query))
+    .map((item) => searchSuggestionLabel(item))
+    .filter(Boolean)
+    .filter((label) => {
+      const key = label.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6);
+
+  if (!matches.length) {
+    searchSuggestions.hidden = true;
+    searchSuggestions.innerHTML = "";
+    return;
+  }
+
+  searchSuggestions.innerHTML = matches.map((label) => `
+    <button type="button" data-search-suggestion="${escapeHtml(label)}">
+      ${escapeHtml(label)}
+    </button>
+  `).join("");
+  searchSuggestions.hidden = false;
 }
 
 function render() {
@@ -402,13 +454,45 @@ function render() {
   if (view.isSetup) {
     globalSearch.value = "";
   }
+
+  activeViewAbortController?.abort();
+  activeViewAbortController = new AbortController();
   viewRoot.innerHTML = view.render({ state: viewState, store, routeId });
-  view.bind?.({ root: viewRoot, store, routeId, beginAuthFormFlow });
+  view.bind?.({
+    root: viewRoot,
+    store,
+    routeId,
+    beginAuthFormFlow,
+    signal: activeViewAbortController.signal
+  });
   applySearchFilter(viewRoot, globalSearch.value);
+  updateSearchSuggestions();
 }
 
 globalSearch.addEventListener("input", () => {
   applySearchFilter(viewRoot, globalSearch.value);
+  updateSearchSuggestions();
+});
+
+globalSearch.addEventListener("blur", () => {
+  window.setTimeout(() => {
+    searchSuggestions.hidden = true;
+  }, 120);
+});
+
+globalSearch.addEventListener("focus", updateSearchSuggestions);
+
+searchSuggestions.addEventListener("mousedown", (event) => {
+  event.preventDefault();
+});
+
+searchSuggestions.addEventListener("click", (event) => {
+  const button = event.target.closest?.("[data-search-suggestion]");
+  if (!button) return;
+
+  globalSearch.value = button.dataset.searchSuggestion || "";
+  searchSuggestions.hidden = true;
+  globalSearch.dispatchEvent(new Event("input", { bubbles: true }));
 });
 
 bindTopbarCommunications({ store, notificationsButton, messagesButton });

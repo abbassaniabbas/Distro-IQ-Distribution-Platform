@@ -1044,7 +1044,7 @@ export function renderInventory({ state }) {
   `;
 }
 
-export function bindInventory({ root, store }) {
+export function bindInventory({ root, store, signal }) {
   const categoryFilter = qs("#inventory-category-filter", root);
   const stockModal = qs("#stock-product-modal", root);
   const stockModalTitle = qs("#stock-product-modal-title", root);
@@ -1131,7 +1131,7 @@ export function bindInventory({ root, store }) {
     globalSearch?.addEventListener("input", () => {
       currentPage = 1;
       applyPage();
-    });
+    }, { signal });
 
     window.setTimeout(applyPage, 0);
   }

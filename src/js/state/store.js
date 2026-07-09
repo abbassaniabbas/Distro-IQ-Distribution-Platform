@@ -1,6 +1,6 @@
 import seedData from "../data/seed-data.js";
 import { createActivityLog, getCurrentActor } from "../services/activity.js";
-import { assignmentOutstanding, getCreditGuardForOrder } from "../services/calculations.js";
+import { assignmentOutstanding } from "../services/calculations.js";
 import { salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
@@ -156,6 +156,7 @@ function ensureStateShape(value) {
     accounts: Array.isArray(state.accounts) ? state.accounts : [],
     invites: Array.isArray(state.invites) ? state.invites : [],
     messages: Array.isArray(state.messages) ? state.messages : [],
+    notificationReadAt: String(state.notificationReadAt || ""),
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
@@ -531,6 +532,7 @@ function reducer(currentState, action) {
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
         messages: Array.isArray(action.messages) ? action.messages : state.messages,
+        notificationReadAt: action.notificationReadAt || state.notificationReadAt,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs
       };
     }
@@ -544,6 +546,7 @@ function reducer(currentState, action) {
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
         messages: Array.isArray(action.messages) ? action.messages : state.messages,
+        notificationReadAt: action.notificationReadAt || state.notificationReadAt,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
         backend: {
           ...state.backend,
@@ -664,6 +667,7 @@ function reducer(currentState, action) {
         accounts: [],
         invites: [],
         messages: [],
+        notificationReadAt: "",
         activityLogs: [],
         salesReports: [],
         creditLimitHistory: [],
@@ -813,22 +817,16 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "MARK_NOTIFICATIONS_READ": {
+      if (!state.client?.id) return state;
+
+      state.notificationReadAt = new Date().toISOString();
+      return state;
+    }
+
     case "ADVANCE_ORDER": {
       const order = state.orders.find((item) => item.id === action.orderId);
       if (order) {
-        const creditGuard = getCreditGuardForOrder(order, state);
-
-        if (creditGuard.status === "credit_hold" && order.status !== "delivered") {
-          appendActivityLog(state, {
-            clientId: state.client?.id,
-            actionType: "blocked",
-            recordType: "order",
-            recordLabel: order.id,
-            summary: `${order.id} held because projected credit exceeds the limit`
-          });
-          return state;
-        }
-
         order.status = nextOrderStatus(order.status);
         order.updatedAt = todayISO();
         appendActivityLog(state, {
@@ -837,6 +835,24 @@ function reducer(currentState, action) {
           recordType: "order",
           recordLabel: order.id,
           summary: `${order.id} sales order moved to ${textLabel(order.status)}`
+        });
+      }
+      return state;
+    }
+
+    case "SET_ORDER_STATUS": {
+      const order = state.orders.find((item) => item.id === action.orderId);
+      const nextStatus = normalizedOrderStatus(action.status);
+
+      if (order && order.status !== nextStatus) {
+        order.status = nextStatus;
+        order.updatedAt = todayISO();
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "updated",
+          recordType: "order",
+          recordLabel: order.id,
+          summary: `${order.id} sales order set to ${textLabel(order.status)}`
         });
       }
       return state;

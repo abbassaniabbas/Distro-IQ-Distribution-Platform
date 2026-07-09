@@ -4,7 +4,7 @@ import {
   getOrdersWithTotals
 } from "../services/calculations.js";
 import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js";
-import { currentUserPermissions } from "../services/rbac.js";
+import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, table } from "../ui/components.js";
 
@@ -54,11 +54,11 @@ function renderSummaryTiles(state) {
 }
 
 function renderOrderRows(orders, state, permissions) {
-  const canUpdateSales = permissions.canLogSalesReturns || permissions.canDispatchStock;
+  const canManageOrderFlow = ["manager", "ceo"].includes(currentUserRole(state));
 
   return orders.map((order, index) => {
     const creditGuard = getCreditGuardForOrder(order, state);
-    const canAdvanceOrder = order.status !== "delivered" && canUpdateSales && creditGuard.status !== "credit_hold";
+    const canAdvanceOrder = order.status !== "delivered" && canManageOrderFlow;
     const creditMeta = creditGuard.limitAmount
       ? `${formatPercent(creditGuard.usagePercent)} used`
       : "No limit set";
@@ -96,9 +96,17 @@ function renderOrderRows(orders, state, permissions) {
         <td>${formatCurrency(order.total)}</td>
         <td>
           <div class="row-actions">
+            <label class="order-status-select">
+              <span class="sr-only">Set sales order step</span>
+              <select class="js-order-status-select" data-order-id="${escapeHtml(order.id)}" ${canManageOrderFlow ? "" : "disabled"}>
+                ${ORDER_STATUSES.map((status) => `
+                  <option value="${escapeHtml(status)}" ${order.status === status ? "selected" : ""}>${escapeHtml(statusText(status))}</option>
+                `).join("")}
+              </select>
+            </label>
             ${iconButton({
               iconName: "arrowRight",
-              label: creditGuard.status === "credit_hold" ? "Credit hold: cannot advance" : "Move sales order forward",
+              label: "Move sales order forward",
               className: "js-advance-order",
               disabled: !canAdvanceOrder,
               data: { "order-id": order.id }
@@ -107,7 +115,7 @@ function renderOrderRows(orders, state, permissions) {
               iconName: "clock",
               label: "Mark delayed",
               className: "js-delay-order",
-              disabled: order.status === "delivered" || order.status === "delayed" || !canUpdateSales,
+              disabled: order.status === "delivered" || order.status === "delayed" || !canManageOrderFlow,
               data: { "order-id": order.id }
             })}
           </div>
@@ -164,7 +172,7 @@ export function renderOrders({ state }) {
   `;
 }
 
-export function bindOrders({ root, store }) {
+export function bindOrders({ root, store, signal }) {
   const statusFilter = qs("#order-status-filter", root);
   const regionFilter = qs("#order-region-filter", root);
   const globalSearch = qs("#global-search", document);
@@ -228,7 +236,7 @@ export function bindOrders({ root, store }) {
 
     statusFilter.addEventListener("change", resetPage);
     regionFilter.addEventListener("change", resetPage);
-    globalSearch?.addEventListener("input", resetPage);
+    globalSearch?.addEventListener("input", resetPage, { signal });
 
     window.setTimeout(applyPage, 0);
   }
@@ -264,6 +272,17 @@ export function bindOrders({ root, store }) {
         type: "DELAY_ORDER",
         orderId: button.dataset.orderId,
         message: "Sales order marked delayed"
+      });
+    });
+  });
+
+  qsa(".js-order-status-select", root).forEach((select) => {
+    select.addEventListener("change", () => {
+      store.dispatch({
+        type: "SET_ORDER_STATUS",
+        orderId: select.dataset.orderId,
+        status: select.value,
+        message: "Sales order step updated"
       });
     });
   });

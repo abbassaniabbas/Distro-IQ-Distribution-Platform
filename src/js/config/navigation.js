@@ -7,11 +7,6 @@ export const NAV_ITEMS = [
     icon: "dashboard"
   },
   {
-    id: "messages",
-    label: "Messages",
-    icon: "message"
-  },
-  {
     id: "orders",
     label: "Sales Orders",
     icon: "orders"

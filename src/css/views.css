@@ -1246,6 +1246,18 @@
   letter-spacing: 0;
 }
 
+.order-status-select select {
+  min-height: 40px;
+  max-width: 132px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--ink);
+  padding: 0 8px;
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .product-grid,
 .route-grid,
 .retailer-grid,
@@ -1620,85 +1632,88 @@
   width: 100%;
 }
 
-.message-history-toolbar {
-  justify-content: flex-end;
-  margin-bottom: -6px;
-}
-
-.message-history-toolbar .button.is-active {
-  border-color: rgba(25, 185, 133, 0.48);
-  background: var(--mint-soft);
-  color: var(--navy);
-}
-
-.messages-layout {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 18px;
-  align-items: start;
-}
-
-.message-history-panel {
+.message-conversation-panel {
   display: grid;
   gap: 14px;
   min-width: 0;
 }
 
-.message-history-list {
+.message-thread {
   display: grid;
-  gap: 12px;
-  max-height: 560px;
+  align-content: start;
+  gap: 10px;
+  min-height: 420px;
+  max-height: 620px;
   overflow: auto;
-  padding-right: 4px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #f7fbfc;
 }
 
-.message-history-card {
+.message-thread-bubble {
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
+  width: min(680px, 88%);
   gap: 12px;
-  padding: 14px;
+  align-items: start;
+}
+
+.message-thread-bubble.is-sent {
+  justify-self: end;
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.message-thread-bubble.is-received {
+  justify-self: start;
+}
+
+.message-thread-bubble.is-unread .message-bubble-body {
+  border-color: rgba(25, 185, 133, 0.36);
+  background: var(--mint-soft);
+}
+
+.message-bubble-body {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 13px 14px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: #ffffff;
   box-shadow: 0 1px 0 rgba(7, 26, 47, 0.03);
 }
 
-.message-history-card.is-unread {
-  border-color: rgba(25, 185, 133, 0.36);
-  background: var(--mint-soft);
+.message-thread-bubble.is-sent .message-bubble-body {
+  border-color: rgba(25, 185, 133, 0.3);
+  background: #ebfbf4;
 }
 
-.message-history-body {
-  display: grid;
-  min-width: 0;
-  gap: 8px;
-}
-
-.message-history-body header {
+.message-bubble-body header {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
 }
 
-.message-history-body strong,
-.message-history-body span,
-.message-history-body p {
+.message-bubble-body strong,
+.message-bubble-body span,
+.message-bubble-body p {
   overflow-wrap: anywhere;
 }
 
-.message-history-body span,
-.message-history-body time {
+.message-bubble-body span,
+.message-bubble-body time {
   color: var(--muted);
   font-size: 0.78rem;
   font-weight: 800;
 }
 
-.message-history-body time {
+.message-bubble-body time {
   white-space: nowrap;
 }
 
-.message-history-body p {
+.message-bubble-body p {
   color: var(--ink);
   line-height: 1.55;
 }
@@ -2061,14 +2076,13 @@
   .invoice-grid,
   .accountant-filter-grid,
   .message-page-compose,
-  .messages-layout,
   .finance-kpis {
     grid-template-columns: 1fr;
   }
 
   .accountant-export-actions,
   .accountant-filter-foot,
-  .message-history-body header {
+  .message-bubble-body header {
     align-items: stretch;
     flex-direction: column;
   }
@@ -2077,7 +2091,11 @@
     min-width: 0;
   }
 
-  .message-history-body time {
+  .message-thread-bubble {
+    width: 100%;
+  }
+
+  .message-bubble-body time {
     white-space: normal;
   }
 

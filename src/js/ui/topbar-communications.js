@@ -3,7 +3,6 @@ import {
   accountForCurrentUser,
   initials,
   normalized,
-  receivedMessages,
   relativeTime
 } from "../services/messages.js";
 import { escapeHtml } from "./dom.js";
@@ -16,16 +15,7 @@ export function getTopbarNotificationItems(state) {
   if (!state.client?.id) return [];
 
   const account = accountForCurrentUser(state);
-  const messageItems = receivedMessages(state).map((message) => ({
-    id: `message-${message.id}`,
-    kind: "message",
-    title: `${message.fromName || "Team member"} messaged you`,
-    meta: relativeTime(message.createdAt),
-    body: message.body,
-    avatar: initials(message.fromName || message.fromEmail),
-    createdAt: message.createdAt,
-    unread: !message.readAt
-  }));
+  const readAt = new Date(state.notificationReadAt || 0).getTime();
   const activityItems = getScopedActivityLogs(state)
     .filter((entry) => entry.clientId === state.client.id)
     .filter((entry) => entry.actorUserId !== state.user?.id)
@@ -38,12 +28,16 @@ export function getTopbarNotificationItems(state) {
       body: entry.summary || "Workspace activity updated",
       avatar: initials(entry.actorName),
       createdAt: entry.createdAt,
-      unread: false
+      unread: new Date(entry.createdAt || 0).getTime() > readAt
     }));
 
-  return [...messageItems, ...activityItems]
+  return activityItems
     .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0))
     .slice(0, 5);
+}
+
+export function getUnreadNotificationCount(state) {
+  return getTopbarNotificationItems(state).filter((item) => item.unread).length;
 }
 
 function closeNotificationPopover() {
@@ -105,6 +99,7 @@ function openNotificationPopover({ store, trigger }) {
   document.body.appendChild(popover);
   activeNotificationPopover = popover;
   positionPopover(popover, trigger);
+  store.dispatch({ type: "MARK_NOTIFICATIONS_READ" });
 }
 
 export function bindTopbarCommunications({ store, notificationsButton, messagesButton }) {

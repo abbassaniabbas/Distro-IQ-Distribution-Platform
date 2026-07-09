@@ -3,6 +3,7 @@ const seedData = {
   accounts: [],
   invites: [],
   messages: [],
+  notificationReadAt: "",
   activityLogs: [],
   salesReports: [],
   creditLimitHistory: [],
