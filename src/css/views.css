@@ -930,6 +930,10 @@
   gap: 12px;
 }
 
+.rep-stock-date-filter {
+  margin-bottom: 12px;
+}
+
 .rep-stock-card {
   display: grid;
   gap: 12px;

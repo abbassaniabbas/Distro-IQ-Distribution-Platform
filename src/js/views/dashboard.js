@@ -25,8 +25,19 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
+function dashboardRouteParams() {
+  if (typeof window === "undefined") return new URLSearchParams();
+
+  const query = window.location.hash.split("?")[1] || "";
+  return new URLSearchParams(query);
+}
+
 function normalized(value) {
   return String(value || "").trim().toLowerCase();
+}
+
+function dateOnly(value) {
+  return String(value || "").slice(0, 10);
 }
 
 function currentRepName(state) {
@@ -44,23 +55,31 @@ function currentRepName(state) {
   );
 }
 
-function buildRepAssignments(state) {
+function buildRepAssignments(state, repName = "") {
   const productMap = getProductMap(state.products || []);
+  const repKey = normalized(repName);
 
   return (state.stockAssignments || [])
+    .filter((assignment) => !repKey || normalized(assignment.repName) === repKey)
     .map((assignment) => {
       const product = productMap.get(assignment.productId);
       const outstanding = assignmentOutstanding(assignment);
       const soldPercent = assignment.assigned ? (Number(assignment.sold || 0) / Number(assignment.assigned || 0)) * 100 : 0;
+      const assignedDate = dateOnly(assignment.assignedAt || assignment.updatedAt || todayISO());
 
       return {
         ...assignment,
         product,
         outstanding,
-        soldPercent
+        soldPercent,
+        assignedDate
       };
     })
-    .filter((assignment) => assignment.product);
+    .filter((assignment) => assignment.product)
+    .sort((a, b) => (
+      String(b.assignedDate || "").localeCompare(String(a.assignedDate || "")) ||
+      String(b.updatedAt || b.assignedAt || "").localeCompare(String(a.updatedAt || a.assignedAt || ""))
+    ));
 }
 
 function todaysRepTransactions(state, repName) {
@@ -1519,6 +1538,40 @@ function renderManagerReportReview(state) {
   `;
 }
 
+function repStockDateOptions(assignments) {
+  return [...new Set(assignments.map((assignment) => assignment.assignedDate).filter(Boolean))]
+    .sort((a, b) => String(b).localeCompare(String(a)));
+}
+
+function selectedRepStockDate(assignments) {
+  const dates = repStockDateOptions(assignments);
+  const requestedDate = dashboardRouteParams().get("stockDate") || "";
+
+  if (requestedDate && dates.includes(requestedDate)) return requestedDate;
+  if (dates.includes(todayISO())) return todayISO();
+  return dates[0] || "";
+}
+
+function repStockDateHref(date) {
+  return `#/dashboard?stockDate=${encodeURIComponent(date)}`;
+}
+
+function renderRepStockDateFilter(assignments, activeDate) {
+  const dates = repStockDateOptions(assignments);
+
+  if (dates.length <= 1) return "";
+
+  return `
+    <nav class="subtab-nav rep-stock-date-filter" aria-label="Assigned stock days">
+      ${dates.map((date) => `
+        <a class="subtab-link${date === activeDate ? " is-active" : ""}" href="${repStockDateHref(date)}">
+          ${date === todayISO() ? "Today" : escapeHtml(formatDate(date))}
+        </a>
+      `).join("")}
+    </nav>
+  `;
+}
+
 function renderRepStockCards(assignments) {
   if (!assignments.length) {
     return '<div class="empty-state">No assigned stock yet</div>';
@@ -1530,7 +1583,7 @@ function renderRepStockCards(assignments) {
         <article class="rep-stock-card" data-search-index="${escapeHtml(`${assignment.product.name} ${assignment.repName}`.toLowerCase())}">
           <header>
             <div>
-              <span class="eyebrow">Assigned stock - ${escapeHtml(assignment.product.id)}</span>
+              <span class="eyebrow">${assignment.assignedDate === todayISO() ? "Assigned today" : `Assigned ${escapeHtml(formatDate(assignment.assignedDate))}`} - ${escapeHtml(assignment.product.id)}</span>
               <h3>${escapeHtml(assignment.product.name)}</h3>
             </div>
             ${statusPill(assignment.outstanding > 0 ? "in_hand" : "done")}
@@ -1822,7 +1875,11 @@ function renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage) {
 
 function renderSalesRepDashboard(state) {
   const repName = currentRepName(state);
-  const assignments = buildRepAssignments(state);
+  const assignments = buildRepAssignments(state, repName);
+  const activeStockDate = selectedRepStockDate(assignments);
+  const visibleAssignments = activeStockDate
+    ? assignments.filter((assignment) => assignment.assignedDate === activeStockDate)
+    : assignments;
   const transactions = todaysRepTransactions(state, repName);
   const summary = repDaySummary(transactions);
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], repName);
@@ -1866,9 +1923,15 @@ function renderSalesRepDashboard(state) {
       </div>
 
       <section class="panel">
-          ${panelHeader("Assigned stock", "Stock currently loaded to you")}
-          ${renderRepStockCards(assignments)}
-        </section>
+        ${panelHeader(
+          "Assigned stock",
+          activeStockDate
+            ? `${activeStockDate === todayISO() ? "Today" : formatDate(activeStockDate)} assignments`
+            : "Stock currently loaded to you"
+        )}
+        ${renderRepStockDateFilter(assignments, activeStockDate)}
+        ${renderRepStockCards(visibleAssignments)}
+      </section>
 
       <section class="panel">
         ${panelHeader("Product catalogue", "Visible snacks from the factory")}
