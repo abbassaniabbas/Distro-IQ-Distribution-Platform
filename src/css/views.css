@@ -1588,6 +1588,121 @@
   font-weight: 750;
 }
 
+.messages-view {
+  display: grid;
+  gap: 18px;
+}
+
+.message-compose-panel {
+  overflow: visible;
+}
+
+.message-page-compose {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.72fr) minmax(320px, 1.28fr) auto;
+  align-items: end;
+  gap: 14px;
+}
+
+.message-page-body-field textarea {
+  min-height: 84px;
+  resize: vertical;
+}
+
+.message-page-actions {
+  display: grid;
+  align-content: end;
+  gap: 8px;
+  min-width: 150px;
+}
+
+.message-page-actions .button {
+  width: 100%;
+}
+
+.message-history-toolbar {
+  justify-content: flex-end;
+  margin-bottom: -6px;
+}
+
+.message-history-toolbar .button.is-active {
+  border-color: rgba(25, 185, 133, 0.48);
+  background: var(--mint-soft);
+  color: var(--navy);
+}
+
+.messages-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+}
+
+.message-history-panel {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.message-history-list {
+  display: grid;
+  gap: 12px;
+  max-height: 560px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.message-history-card {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+  box-shadow: 0 1px 0 rgba(7, 26, 47, 0.03);
+}
+
+.message-history-card.is-unread {
+  border-color: rgba(25, 185, 133, 0.36);
+  background: var(--mint-soft);
+}
+
+.message-history-body {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
+.message-history-body header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.message-history-body strong,
+.message-history-body span,
+.message-history-body p {
+  overflow-wrap: anywhere;
+}
+
+.message-history-body span,
+.message-history-body time {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.message-history-body time {
+  white-space: nowrap;
+}
+
+.message-history-body p {
+  color: var(--ink);
+  line-height: 1.55;
+}
+
 .client-id-box code {
   color: var(--teal-dark);
   font-weight: 850;
@@ -1843,6 +1958,21 @@
   accent-color: var(--mint-strong);
 }
 
+.platform-alert-banner {
+  margin-bottom: 16px;
+  padding: 13px 14px;
+  border: 1px solid rgba(207, 77, 67, 0.22);
+  border-radius: var(--radius);
+  background: rgba(207, 77, 67, 0.08);
+  color: var(--coral);
+  font-size: 0.88rem;
+  font-weight: 850;
+}
+
+.platform-health-metrics {
+  margin-bottom: 16px;
+}
+
 .aging-list {
   display: grid;
   gap: 12px;
@@ -1930,14 +2060,25 @@
   .account-grid,
   .invoice-grid,
   .accountant-filter-grid,
+  .message-page-compose,
+  .messages-layout,
   .finance-kpis {
     grid-template-columns: 1fr;
   }
 
   .accountant-export-actions,
-  .accountant-filter-foot {
+  .accountant-filter-foot,
+  .message-history-body header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .message-page-actions {
+    min-width: 0;
+  }
+
+  .message-history-body time {
+    white-space: normal;
   }
 
   .retailer-list-main,

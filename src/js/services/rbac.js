@@ -37,7 +37,7 @@ const LEGACY_ROLE_MAP = {
 
 const ROLE_PERMISSIONS = {
   sales_rep: {
-    nav: ["dashboard", "retailers", "activity-log", "settings"],
+    nav: ["dashboard", "messages", "retailers", "activity-log", "settings"],
     canViewCompanyWide: false,
     canLogSalesReturns: true,
     canManageProducts: false,
@@ -57,7 +57,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false
   },
   manager: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "messages", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
@@ -77,7 +77,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: true
   },
   store_keeper: {
-    nav: ["dashboard", "inventory", "activity-log", "settings"],
+    nav: ["dashboard", "messages", "inventory", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -97,7 +97,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false
   },
   accountant: {
-    nav: ["dashboard", "orders", "retailers", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "messages", "orders", "retailers", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -117,7 +117,7 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false
   },
   ceo: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "messages", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: true,

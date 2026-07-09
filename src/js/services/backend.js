@@ -399,6 +399,12 @@ export async function triggerPlatformJob(payload) {
   return loadPlatformOverview();
 }
 
+export async function exportPlatformClientData(payload) {
+  const data = await invokePlatformAdmin("export-client-data", payload);
+
+  return data.export || {};
+}
+
 export async function createWorkspace(payload) {
   throwIfBackendMissing();
 

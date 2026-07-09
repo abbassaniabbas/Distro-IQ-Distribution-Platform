@@ -410,6 +410,75 @@ async function recordIntervention(adminClient: ReturnType<typeof createClient>, 
   };
 }
 
+async function exportClientData(adminClient: ReturnType<typeof createClient>, caller: { id: string; email?: string }, payload: Record<string, unknown>) {
+  const clientId = cleanText(payload.clientId);
+
+  if (!clientId) {
+    throw new Error("Choose a client deployment");
+  }
+
+  const { data: client, error: clientError } = await adminClient
+    .from("clients")
+    .select("*")
+    .eq("id", clientId)
+    .single();
+
+  if (clientError || !client) {
+    throw new Error(clientError?.message || "Client deployment not found");
+  }
+
+  const tableNames = [
+    "memberships",
+    "invites",
+    "activity_logs",
+    "stock_categories",
+    "stock_products",
+    "stock_assignments",
+    "stock_transactions",
+    "credit_limits",
+    "platform_feature_modules",
+    "platform_email_templates",
+    "platform_document_sequences",
+    "platform_audit_logs",
+    "platform_health_events"
+  ];
+  const tables: Record<string, unknown[]> = {
+    clients: [client]
+  };
+
+  for (const tableName of tableNames) {
+    const { data, error } = await adminClient
+      .from(tableName)
+      .select("*")
+      .eq("client_id", clientId);
+
+    if (error) {
+      throw new Error(`Could not export ${tableName}: ${error.message}`);
+    }
+
+    tables[tableName] = data || [];
+  }
+
+  await writeAudit(adminClient, {
+    clientId,
+    actionType: "exported",
+    recordType: "client_data",
+    recordLabel: client.company_name || clientId,
+    actorUserId: caller.id,
+    actorEmail: caller.email || "",
+    summary: `Exported all client tables for ${client.company_name || clientId}`
+  });
+
+  return {
+    export: {
+      clientId,
+      companyName: client.company_name || "",
+      generatedAt: new Date().toISOString(),
+      tables
+    }
+  };
+}
+
 async function triggerJob(adminClient: ReturnType<typeof createClient>, caller: { id: string; email?: string }, payload: Record<string, unknown>) {
   const jobType = cleanText(payload.jobType) || "manual_job";
   const target = cleanText(payload.target);
@@ -484,6 +553,8 @@ Deno.serve(async (req) => {
         ? await updateConfig(adminClient, caller, payload)
         : action === "record-intervention"
         ? await recordIntervention(adminClient, caller, payload)
+        : action === "export-client-data"
+        ? await exportClientData(adminClient, caller, payload)
         : action === "trigger-job"
         ? await triggerJob(adminClient, caller, payload)
         : null;

@@ -1,4 +1,6 @@
 import {
+  exportPlatformClientData,
+  loadPlatformOverview,
   provisionPlatformClient,
   recordPlatformIntervention,
   triggerPlatformJob,
@@ -7,11 +9,14 @@ import {
 } from "../services/backend.js";
 import { CURRENCY_OPTIONS, TIMEZONE_OPTIONS } from "../services/tenant.js";
 import { formatDate, formatNumber } from "../services/formatters.js";
+import { createZipBlob } from "../services/zip.js";
 import { ROLE_OPTIONS, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 
 const INITIAL_ACCOUNT_ROLES = ["ceo", "manager", "accountant", "store_keeper", "sales_rep"];
+const PLATFORM_REFRESH_MS = 60000;
+let platformRefreshTimer = 0;
 const FEATURE_MODULES = [
   {
     key: "raw_materials",
@@ -89,6 +94,55 @@ function platformTotals(data) {
     ...clientTotals,
     healthAlerts: data.healthEvents.filter((event) => ["failed", "warning", "open"].includes(event.status)).length
   };
+}
+
+function platformStats(data) {
+  return data.stats || {};
+}
+
+function storageUsage(data) {
+  const stats = platformStats(data);
+  const limitBytes = Number(stats.storageLimitBytes || 1073741824);
+  const usedBytes = Number(stats.storageUsedBytes || 0);
+  const percent = limitBytes ? (usedBytes / limitBytes) * 100 : 0;
+
+  return {
+    usedBytes,
+    limitBytes,
+    percent
+  };
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let size = value;
+  let unitIndex = 0;
+
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+
+  return `${size >= 10 || unitIndex === 0 ? Math.round(size) : size.toFixed(1)} ${units[unitIndex]}`;
+}
+
+function errorHealthEvents(data) {
+  return (data.healthEvents || [])
+    .filter((event) => {
+      const status = String(event.status || "").toLowerCase();
+      const eventType = String(event.eventType || "").toLowerCase();
+
+      return status === "failed" || eventType.includes("error");
+    })
+    .slice(0, 10);
+}
+
+function safeFilePart(value) {
+  return String(value || "client")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "client";
 }
 
 function optionList(items, selectedValue = "") {
@@ -442,7 +496,7 @@ function renderDataOversightPanel(data) {
             <span class="toolbar-group">
               ${textButton({
                 iconName: "download",
-                label: "Export raw data",
+                label: "Export ZIP",
                 className: "js-export-platform-data"
               })}
               ${textButton({
@@ -467,15 +521,45 @@ function renderDataOversightPanel(data) {
 }
 
 function renderHealthPanel(data) {
+  const stats = platformStats(data);
+  const storage = storageUsage(data);
+  const errors = errorHealthEvents(data);
+  const storageWarning = storage.percent >= 80;
+
   return `
     <section class="panel">
       ${panelHeader("System health and monitoring", "Track sessions, errors, connectivity, storage, notifications, and jobs")}
+      ${storageWarning ? `
+        <div class="platform-alert-banner">
+          Supabase storage is at ${formatNumber(storage.percent)}% of its limit. Review uploads and storage usage.
+        </div>
+      ` : ""}
+      <div class="metric-grid platform-health-metrics">
+        ${metricCard({
+          label: "Active sessions",
+          value: formatNumber(stats.activeSessions || 0),
+          meta: "Currently active",
+          iconName: "team"
+        })}
+        ${metricCard({
+          label: "Storage used",
+          value: formatBytes(storage.usedBytes),
+          meta: `${formatNumber(storage.percent)}% of ${formatBytes(storage.limitBytes)}`,
+          iconName: "package"
+        })}
+        ${metricCard({
+          label: "Error events",
+          value: formatNumber(errors.length),
+          meta: "Last 10 shown below",
+          iconName: "alert"
+        })}
+      </div>
       <div class="dashboard-layout">
         <div>
           ${table(
             ["Service", "Event", "Status", "Summary", "Recorded"],
-            data.healthEvents.slice(0, 8).map(renderHealthRow),
-            "No platform health events have been recorded yet"
+            errors.map(renderHealthRow),
+            "No error events have been recorded yet"
           )}
         </div>
         <form id="platform-job-form" class="form-grid" novalidate>
@@ -663,22 +747,85 @@ function bindAsyncForm({ root, store, formId, messageSelector, busyText, success
   });
 }
 
-function exportPlatformData(root, store) {
-  const data = platformData(store.getState());
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: "application/json"
-  });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = `distroiq-platform-export-${new Date().toISOString().slice(0, 10)}.json`;
-  link.click();
-  URL.revokeObjectURL(link.href);
-
+async function exportPlatformData(root, store) {
   const form = qs("#platform-intervention-form", root);
-  setFormMessage(form, "#platform-intervention-message", "Raw platform data exported", true);
+  const button = qs(".js-export-platform-data", root);
+  const label = button ? qs("span", button) : null;
+  const idleText = label?.textContent || "";
+  const values = form ? formValues(form) : {};
+  const stateData = platformData(store.getState());
+  const client = stateData.clients.find((item) => item.id === values.clientId);
+
+  if (!values.clientId) {
+    setFormMessage(form, "#platform-intervention-message", "Choose a client deployment before exporting.");
+    return;
+  }
+
+  if (button) button.disabled = true;
+  if (label) label.textContent = "Exporting...";
+
+  try {
+    const exported = await exportPlatformClientData({ clientId: values.clientId });
+    const tableEntries = Object.entries(exported.tables || {});
+    const files = [
+      {
+        name: "manifest.json",
+        content: {
+          clientId: values.clientId,
+          companyName: exported.companyName || client?.companyName || "",
+          generatedAt: exported.generatedAt || new Date().toISOString(),
+          tables: tableEntries.map(([name, rows]) => ({
+            name,
+            rows: Array.isArray(rows) ? rows.length : 0
+          }))
+        }
+      },
+      ...tableEntries.map(([name, rows]) => ({
+        name: `tables/${name}.json`,
+        content: rows
+      }))
+    ];
+    const blob = createZipBlob(files);
+    const safeName = safeFilePart(exported.companyName || client?.companyName || values.clientId);
+    const date = new Date().toISOString().slice(0, 10);
+    const link = document.createElement("a");
+
+    link.href = URL.createObjectURL(blob);
+    link.download = `distroiq-${safeName}-export-${date}.zip`;
+    link.click();
+    URL.revokeObjectURL(link.href);
+
+    const platformOverview = await loadPlatformOverview();
+    dispatchPlatformContext(store, platformOverview, "Client export downloaded");
+    setFormMessage(form, "#platform-intervention-message", "Client export downloaded as ZIP", true);
+  } catch (error) {
+    setFormMessage(form, "#platform-intervention-message", error.message || "Export failed");
+  } finally {
+    if (button) button.disabled = false;
+    if (label) label.textContent = idleText;
+  }
 }
 
 export function bindPlatformConsole({ root, store }) {
+  if (platformRefreshTimer) {
+    window.clearInterval(platformRefreshTimer);
+  }
+
+  platformRefreshTimer = window.setInterval(async () => {
+    if (!store.getState().platformAdmin) {
+      window.clearInterval(platformRefreshTimer);
+      platformRefreshTimer = 0;
+      return;
+    }
+
+    try {
+      const platformOverview = await loadPlatformOverview();
+      dispatchPlatformContext(store, platformOverview);
+    } catch {
+      // Keep the current console visible if a background refresh fails.
+    }
+  }, PLATFORM_REFRESH_MS);
+
   bindAsyncForm({
     root,
     store,
@@ -772,7 +919,7 @@ export function bindPlatformConsole({ root, store }) {
     submit: triggerPlatformJob
   });
 
-  qs(".js-export-platform-data", root)?.addEventListener("click", () => {
-    exportPlatformData(root, store);
+  qs(".js-export-platform-data", root)?.addEventListener("click", async () => {
+    await exportPlatformData(root, store);
   });
 }

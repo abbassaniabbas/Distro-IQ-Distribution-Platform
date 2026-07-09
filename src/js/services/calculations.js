@@ -342,8 +342,10 @@ export function calculateVisionMetrics(state) {
     const percent = limit.limit ? (Number(limit.balance || 0) / Number(limit.limit || 0)) * 100 : 100;
     return percent >= 85 && percent < 100;
   }).length;
-  const orderCreditGuards = orders.map((order) => getCreditGuardForOrder(order, state));
-  const creditHoldOrders = orderCreditGuards.filter((guard) => guard.status === "credit_hold").length;
+  const creditHoldOrders = orders.filter((order) => (
+    String(order.paymentType || "").toLowerCase().includes("credit") &&
+    String(order.paymentStatus || "").toLowerCase() !== "paid"
+  )).length;
   const paidTotal = invoices
     .filter((invoice) => invoice.status === "paid")
     .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);

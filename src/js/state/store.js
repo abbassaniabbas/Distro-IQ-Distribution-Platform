@@ -131,6 +131,21 @@ function ensureQuickSaleOrders(state) {
   };
 }
 
+function normalizedOrderStatus(status) {
+  const value = String(status || "").toLowerCase();
+
+  if (value === "processing" || value === "packed") return "in_transit";
+  if (["in_transit", "delayed", "delivered"].includes(value)) return value;
+  return "in_transit";
+}
+
+function normalizeOrders(orders = []) {
+  return (orders || []).map((order) => ({
+    ...order,
+    status: normalizedOrderStatus(order.status)
+  }));
+}
+
 function ensureStateShape(value) {
   const state = clone(value || seedData);
 
@@ -145,7 +160,7 @@ function ensureStateShape(value) {
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
-    orders: mergeSeedRecords(state.orders, seedData.orders),
+    orders: normalizeOrders(mergeSeedRecords(state.orders, seedData.orders)),
     routes: mergeSeedRecords(state.routes, seedData.routes),
     products: mergeSeedRecords(state.products, seedData.products),
     stockCategories: mergeSeedRecords(state.stockCategories, seedData.stockCategories),
@@ -177,14 +192,14 @@ function getPersistableState(state) {
 
 function nextOrderStatus(status) {
   const flow = {
-    processing: "packed",
-    packed: "in_transit",
     in_transit: "delivered",
-    delayed: "processing",
+    processing: "in_transit",
+    packed: "in_transit",
+    delayed: "in_transit",
     delivered: "delivered"
   };
 
-  return flow[status] || "processing";
+  return flow[status] || "in_transit";
 }
 
 function nextRouteStatus(status) {
@@ -421,6 +436,64 @@ function createQuickSaleOrder(state, {
   return orderId;
 }
 
+function findRetailerByName(state, name) {
+  const normalizedName = String(name || "").trim().toLowerCase();
+
+  if (!normalizedName) return null;
+
+  return (state.retailers || []).find((retailer) => (
+    String(retailer.name || "").trim().toLowerCase() === normalizedName
+  )) || null;
+}
+
+function createDispatchSalesOrder(state, {
+  transactionId,
+  product,
+  quantity,
+  recipientName,
+  recipientType,
+  destination,
+  dispatchDate,
+  staffName
+}) {
+  const customer = findRetailerByName(state, recipientName);
+  const orderId = createId("ORD");
+
+  state.orders = [
+    {
+      id: orderId,
+      clientId: state.client?.id || "",
+      source: "factory_dispatch",
+      transactionId,
+      retailerId: customer?.id || "",
+      customerName: customer?.name || recipientName || "Customer",
+      customerType: customer?.channel || recipientType || "Customer",
+      region: customer?.stateName || customer?.region || destination || "Direct dispatch",
+      priority: "Normal",
+      status: "in_transit",
+      paymentType: "pending",
+      paymentStatus: "pending",
+      dueAt: dispatchDate,
+      createdAt: dispatchDate,
+      updatedAt: dispatchDate,
+      repName: staffName,
+      repUserId: state.user?.id || "",
+      items: [
+        {
+          productId: product.id,
+          productName: product.name,
+          quantity,
+          unitPrice: Number(product.unitPrice || 0),
+          unitCost: Number(product.unitCost || 0)
+        }
+      ]
+    },
+    ...(state.orders || [])
+  ];
+
+  return orderId;
+}
+
 function reducer(currentState, action) {
   const state = clone(currentState);
 
@@ -493,7 +566,7 @@ function reducer(currentState, action) {
         invites: [],
         activityLogs: [],
         platformAdmin: Boolean(action.session),
-        platformOverview: Array.isArray(action.platformOverview) ? action.platformOverview : [],
+        platformOverview: action.platformOverview || [],
         backend: {
           ...state.backend,
           configured: true,
@@ -695,7 +768,7 @@ function reducer(currentState, action) {
         ? (state.accounts || []).filter((account) => (
             account.clientId === state.client.id &&
             account.id !== sender?.id &&
-            account.status !== "deactivated"
+            !["deactivated", "disabled"].includes(String(account.status || "").toLowerCase())
           ))
         : (state.accounts || []).filter((account) => (
             account.clientId === state.client.id && account.id === recipientAccountId
@@ -1032,6 +1105,8 @@ function reducer(currentState, action) {
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
       const dispatchDate = action.dispatchDate || todayISO();
+      const transactionId = createId("TXN");
+      let orderId = "";
 
       if (!product || !quantity || Number(product.stock || 0) < quantity) {
         return state;
@@ -1063,9 +1138,22 @@ function reducer(currentState, action) {
         ];
       }
 
+      if (recipientType.toLowerCase().includes("supermarket") || recipientType.toLowerCase().includes("customer")) {
+        orderId = createDispatchSalesOrder(state, {
+          transactionId,
+          product,
+          quantity,
+          recipientName,
+          recipientType,
+          destination,
+          dispatchDate,
+          staffName
+        });
+      }
+
       state.stockTransactions = [
         {
-          id: createId("TXN"),
+          id: transactionId,
           type: recipientType.toLowerCase().includes("internal") ? "internal movement" : "supply",
           productId: product.id,
           productName: product.name,
@@ -1082,7 +1170,8 @@ function reducer(currentState, action) {
           date: dispatchDate,
           recordedBy: staffName,
           movementDirection: "out",
-          creditImpact: 0
+          creditImpact: 0,
+          orderId
         },
         ...(state.stockTransactions || [])
       ];
@@ -1094,6 +1183,16 @@ function reducer(currentState, action) {
         recordLabel: product.id,
         summary: `Dispatched ${quantity} ${product.name} to ${recipientName}`
       });
+
+      if (orderId) {
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "created",
+          recordType: "order",
+          recordLabel: orderId,
+          summary: `${orderId} created from factory dispatch to ${recipientName}`
+        });
+      }
 
       return state;
     }

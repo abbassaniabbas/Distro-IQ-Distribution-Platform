@@ -20,6 +20,7 @@ import { renderDashboard, bindDashboard } from "./views/dashboard.js";
 import { renderFinance, bindFinance } from "./views/finance.js";
 import { renderInventory, bindInventory } from "./views/inventory.js";
 import { renderLoading, bindLoading } from "./views/loading.js";
+import { renderMessages, bindMessages } from "./views/messages.js";
 import {
   renderOnboarding,
   bindOnboarding,
@@ -74,6 +75,11 @@ const routes = {
     title: "Dashboard",
     render: renderDashboard,
     bind: bindDashboard
+  },
+  messages: {
+    title: "Messages",
+    render: renderMessages,
+    bind: bindMessages
   },
   orders: {
     title: "Sales Orders",

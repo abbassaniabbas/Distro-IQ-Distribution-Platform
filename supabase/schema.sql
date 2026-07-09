@@ -524,6 +524,9 @@ set search_path = public
 as $$
 declare
   v_console jsonb;
+  v_active_sessions bigint := 0;
+  v_storage_used_bytes bigint := 0;
+  v_storage_limit_bytes bigint := 1073741824;
 begin
   if auth.uid() is null then
     raise exception 'Authentication required';
@@ -532,6 +535,37 @@ begin
   if not public.is_platform_admin() then
     raise exception 'Platform admin access required';
   end if;
+
+  begin
+    select count(*)
+    into v_active_sessions
+    from auth.sessions
+    where updated_at >= now() - interval '1 hour';
+  exception
+    when others then
+      v_active_sessions := 0;
+  end;
+
+  begin
+    select coalesce(sum(
+      case
+        when metadata ->> 'size' ~ '^[0-9]+$' then (metadata ->> 'size')::bigint
+        else 0
+      end
+    ), 0)
+    into v_storage_used_bytes
+    from storage.objects;
+  exception
+    when others then
+      v_storage_used_bytes := 0;
+  end;
+
+  begin
+    v_storage_limit_bytes := coalesce(nullif(current_setting('app.storage_limit_bytes', true), '')::bigint, 1073741824);
+  exception
+    when others then
+      v_storage_limit_bytes := 1073741824;
+  end;
 
   with client_stats as (
     select
@@ -570,7 +604,10 @@ begin
         'accounts', total_accounts,
         'activeAccounts', total_active_accounts,
         'invites', total_invites,
-        'activity', total_activity
+        'activity', total_activity,
+        'activeSessions', v_active_sessions,
+        'storageUsedBytes', v_storage_used_bytes,
+        'storageLimitBytes', v_storage_limit_bytes
       )
       from platform_stats
     ),
