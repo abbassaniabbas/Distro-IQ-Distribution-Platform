@@ -7,6 +7,11 @@ import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, sco
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { applySearchFilter, escapeHtml, qs } from "./ui/dom.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
+import {
+  bindTopbarCommunications,
+  getTopbarNotificationItems,
+  getUnreadMessageCount
+} from "./ui/topbar-communications.js";
 import { showToast } from "./ui/toast.js";
 import { renderActivityLog, bindActivityLog } from "./views/activity-log.js";
 import { renderAuth, bindAuth } from "./views/auth.js";
@@ -335,6 +340,8 @@ function updateTopbarUtilities(state, view) {
   topbarUtilities.hidden = !shouldShow;
 
   if (!shouldShow) {
+    notificationsButton?.classList.remove("has-alert");
+    messagesButton?.classList.remove("has-alert");
     return;
   }
 
@@ -345,6 +352,19 @@ function updateTopbarUtilities(state, view) {
   const profileRole = state.platformAdmin ? "Super Admin" : account?.role ? roleLabel(account.role) : "Team member";
 
   topbarAvatar.title = `${profileName} - ${profileRole}`;
+  const unreadMessages = getUnreadMessageCount(state);
+  const notificationCount = getTopbarNotificationItems(state).length;
+
+  notificationsButton?.classList.toggle("has-alert", notificationCount > 0);
+  messagesButton?.classList.toggle("has-alert", unreadMessages > 0);
+  notificationsButton?.setAttribute(
+    "aria-label",
+    notificationCount ? `Notifications, ${notificationCount} latest` : "Notifications"
+  );
+  messagesButton?.setAttribute(
+    "aria-label",
+    unreadMessages ? `Messages, ${unreadMessages} unread` : "Messages"
+  );
 
   if (avatarUrl) {
     topbarAvatar.innerHTML = `<img src="${escapeHtml(avatarUrl)}" alt="">`;
@@ -385,13 +405,7 @@ globalSearch.addEventListener("input", () => {
   applySearchFilter(viewRoot, globalSearch.value);
 });
 
-notificationsButton?.addEventListener("click", () => {
-  showToast("No new notifications right now");
-});
-
-messagesButton?.addEventListener("click", () => {
-  showToast("No unread messages right now");
-});
+bindTopbarCommunications({ store, notificationsButton, messagesButton });
 
 signOutButton.addEventListener("click", async () => {
   try {

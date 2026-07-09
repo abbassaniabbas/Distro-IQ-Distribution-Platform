@@ -2,6 +2,7 @@ const seedData = {
   client: null,
   accounts: [],
   invites: [],
+  messages: [],
   activityLogs: [],
   salesReports: [],
   creditLimitHistory: [],

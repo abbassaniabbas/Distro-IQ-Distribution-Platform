@@ -140,6 +140,7 @@ function ensureStateShape(value) {
     client: state.client || null,
     accounts: Array.isArray(state.accounts) ? state.accounts : [],
     invites: Array.isArray(state.invites) ? state.invites : [],
+    messages: Array.isArray(state.messages) ? state.messages : [],
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
@@ -210,6 +211,34 @@ function categoryNameForStockCategory(stockCategory) {
 
 function currentActorLabel(state) {
   return getCurrentActor(state).name || "Manager";
+}
+
+function currentWorkspaceAccount(state) {
+  const userEmail = String(state.user?.email || "").trim().toLowerCase();
+
+  return (state.accounts || []).find((account) => (
+    account.clientId === state.client?.id &&
+    (
+      (account.userId && account.userId === state.user?.id) ||
+      (userEmail && String(account.email || "").trim().toLowerCase() === userEmail)
+    )
+  )) || null;
+}
+
+function messageBelongsToCurrentUser(state, message) {
+  const account = currentWorkspaceAccount(state);
+  const userEmail = String(state.user?.email || "").trim().toLowerCase();
+  const accountEmail = String(account?.email || "").trim().toLowerCase();
+
+  return (
+    message.clientId === state.client?.id &&
+    (
+      (account?.id && message.toAccountId === account.id) ||
+      (state.user?.id && message.toUserId === state.user.id) ||
+      (accountEmail && String(message.toEmail || "").trim().toLowerCase() === accountEmail) ||
+      (userEmail && String(message.toEmail || "").trim().toLowerCase() === userEmail)
+    )
+  );
 }
 
 function productFieldValue(key, value) {
@@ -428,6 +457,7 @@ function reducer(currentState, action) {
         client: action.client || null,
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
+        messages: Array.isArray(action.messages) ? action.messages : state.messages,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs
       };
     }
@@ -440,6 +470,7 @@ function reducer(currentState, action) {
         client: action.client || null,
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
+        messages: Array.isArray(action.messages) ? action.messages : state.messages,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
         backend: {
           ...state.backend,
@@ -559,6 +590,7 @@ function reducer(currentState, action) {
         client: null,
         accounts: [],
         invites: [],
+        messages: [],
         activityLogs: [],
         salesReports: [],
         creditLimitHistory: [],
@@ -646,6 +678,56 @@ function reducer(currentState, action) {
           summary: "Completed account setup"
         });
       }
+
+      return state;
+    }
+
+    case "SEND_MESSAGE": {
+      if (!state.client?.id) return state;
+
+      const recipientAccountId = String(action.recipientAccountId || "").trim();
+      const body = String(action.body || "").trim();
+      const recipient = (state.accounts || []).find((account) => (
+        account.clientId === state.client.id && account.id === recipientAccountId
+      ));
+      const sender = currentWorkspaceAccount(state);
+      const actor = getCurrentActor(state);
+
+      if (!recipient || !body) return state;
+
+      state.messages = [
+        {
+          id: createId("MSG"),
+          clientId: state.client.id,
+          fromAccountId: sender?.id || "",
+          fromUserId: state.user?.id || sender?.userId || "",
+          fromName: sender?.name || actor.name || "Team member",
+          fromEmail: sender?.email || actor.email || state.user?.email || "",
+          fromRole: sender?.role || "",
+          toAccountId: recipient.id,
+          toUserId: recipient.userId || "",
+          toName: recipient.name,
+          toEmail: recipient.email || "",
+          toRole: recipient.role || "",
+          body,
+          readAt: "",
+          createdAt: new Date().toISOString()
+        },
+        ...(state.messages || [])
+      ];
+
+      return state;
+    }
+
+    case "MARK_MESSAGES_READ": {
+      if (!state.client?.id) return state;
+
+      const readAt = new Date().toISOString();
+      (state.messages || []).forEach((message) => {
+        if (messageBelongsToCurrentUser(state, message) && !message.readAt) {
+          message.readAt = readAt;
+        }
+      });
 
       return state;
     }
