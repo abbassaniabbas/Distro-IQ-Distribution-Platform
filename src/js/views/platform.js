@@ -168,7 +168,7 @@ function userOptions(users) {
   return optionList(
     users.map((user) => ({
       value: user.id,
-      label: `${user.name} - ${user.companyName}`
+      label: `${user.name} (${user.email}) - ${user.companyName}`
     }))
   );
 }
@@ -188,7 +188,7 @@ function renderCompanyRow(company) {
     .toLowerCase();
 
   return `
-    <tr data-search-index="${escapeHtml(searchIndex)}">
+    <tr data-platform-user-row data-search-index="${escapeHtml(searchIndex)}">
       <td>
         <strong>${escapeHtml(company.companyName)}</strong>
         <div class="muted">${escapeHtml(company.documentBusinessName || company.companyName)}</div>
@@ -238,6 +238,7 @@ function renderAuditRow(log) {
       <td>${escapeHtml(log.actionType || "reviewed")}</td>
       <td>${escapeHtml(log.recordType || "record")}</td>
       <td>${escapeHtml(log.actorName || "Bex Lab Innovations")}</td>
+      <td><code>${escapeHtml(log.actorUserId || "System")}</code></td>
       <td>${escapeHtml(log.summary || "")}</td>
     </tr>
   `;
@@ -351,6 +352,10 @@ function renderUserManagementPanel(data) {
       <div class="dashboard-layout">
         <form id="platform-account-form" class="form-grid" novalidate>
           <label class="field span-full">
+            <span>Find user</span>
+            <input id="platform-user-search" type="search" placeholder="Search name or email">
+          </label>
+          <label class="field span-full">
             <span>User account</span>
             <select name="membershipId">${userOptions(data.users)}</select>
           </label>
@@ -387,7 +392,7 @@ function renderUserManagementPanel(data) {
         <div>
           ${table(
             ["User", "Company", "Role", "Status", "Password", "Created"],
-            data.users.slice(0, 8).map(renderUserRow),
+            data.users.map(renderUserRow),
             "No client user accounts are visible yet"
           )}
         </div>
@@ -510,7 +515,7 @@ function renderDataOversightPanel(data) {
         </form>
         <div>
           ${table(
-            ["Date", "Company", "Action", "Record", "Actor", "Summary"],
+            ["Date", "Company", "Action", "Record", "Actor", "Admin ID", "Summary"],
             data.auditLogs.slice(0, 10).map(renderAuditRow),
             "No audit records have been captured yet"
           )}
@@ -719,6 +724,33 @@ function setFormMessage(form, selector, text, isSuccess = false) {
   message.className = isSuccess ? "auth-message is-success" : "field-error";
 }
 
+function bindPlatformUserSearch(root) {
+  const input = qs("#platform-user-search", root);
+  const accountForm = qs("#platform-account-form", root);
+  const membershipSelect = accountForm?.elements.membershipId;
+  const rows = [...root.querySelectorAll("[data-platform-user-row]")];
+
+  if (!input || !membershipSelect) return;
+
+  input.addEventListener("input", () => {
+    const query = String(input.value || "").trim().toLowerCase();
+
+    rows.forEach((row) => {
+      row.hidden = Boolean(query) && !String(row.dataset.searchIndex || "").includes(query);
+    });
+
+    [...membershipSelect.options].forEach((option) => {
+      if (!option.value) return;
+
+      option.hidden = Boolean(query) && !String(option.textContent || "").toLowerCase().includes(query);
+    });
+
+    if (membershipSelect.selectedOptions[0]?.hidden) {
+      membershipSelect.value = "";
+    }
+  });
+}
+
 function bindAsyncForm({ root, store, formId, messageSelector, busyText, successText, collect, submit }) {
   const form = qs(formId, root);
   if (!form) return;
@@ -826,6 +858,8 @@ export function bindPlatformConsole({ root, store }) {
     }
   }, PLATFORM_REFRESH_MS);
 
+  bindPlatformUserSearch(root);
+
   bindAsyncForm({
     root,
     store,
@@ -858,7 +892,10 @@ export function bindPlatformConsole({ root, store }) {
       const values = formValues(form);
       requireSelection(values.membershipId, "Choose a user account.");
 
-      return values;
+      return {
+        ...values,
+        redirectTo: `${window.location.origin}/#/reset-password`
+      };
     },
     submit: updatePlatformAccount
   });
