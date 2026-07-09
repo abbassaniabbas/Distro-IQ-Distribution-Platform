@@ -720,6 +720,9 @@
 .rep-main-grid {
   display: grid;
   grid-template-columns: minmax(320px, 0.9fr) minmax(360px, 1.1fr);
+  grid-template-areas:
+    "quick-log day-report"
+    "daily-credit daily-credit";
   gap: 14px;
   align-items: stretch;
 }
@@ -732,14 +735,15 @@
 }
 
 .rep-report-panel {
+  grid-area: day-report;
   display: flex;
   flex-direction: column;
-  height: 520px;
-  min-height: 520px;
+  min-height: 0;
   overflow: hidden;
 }
 
 .rep-action-panel {
+  grid-area: quick-log;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -779,6 +783,12 @@
 
 .rep-log-card-header strong {
   font-size: 0.95rem;
+}
+
+.rep-log-card-header small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
 }
 
 .rep-type-toggle {
@@ -853,6 +863,7 @@
 }
 
 .rep-credit-panel {
+  grid-area: daily-credit;
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -2036,6 +2047,13 @@
   .rep-main-grid,
   .rep-hero {
     grid-template-columns: 1fr;
+  }
+
+  .rep-main-grid {
+    grid-template-areas:
+      "quick-log"
+      "daily-credit"
+      "day-report";
   }
 
   .manager-command-grid,

@@ -12,6 +12,7 @@ import {
   getOrdersWithTotals,
   getProductMap,
   getRetailerMap,
+  isRepresentativeReturnEligible,
   getStockHealth,
   stockCategoryIdForProduct
 } from "../services/calculations.js";
@@ -1539,7 +1540,10 @@ function renderManagerReportReview(state) {
 }
 
 function repStockDateOptions(assignments) {
-  return [...new Set(assignments.map((assignment) => assignment.assignedDate).filter(Boolean))]
+  return [...new Set(assignments
+    .filter((assignment) => isRepresentativeReturnEligible(assignment, todayISO()))
+    .map((assignment) => assignment.assignedDate)
+    .filter(Boolean))]
     .sort((a, b) => String(b).localeCompare(String(a)));
 }
 
@@ -1574,7 +1578,7 @@ function renderRepStockDateFilter(assignments, activeDate) {
 
 function renderRepStockCards(assignments) {
   if (!assignments.length) {
-    return '<div class="empty-state">No assigned stock yet</div>';
+    return '<div class="empty-state">No stock assigned in the past 7 days</div>';
   }
 
   return `
@@ -1605,7 +1609,7 @@ function renderRepStockCards(assignments) {
 
           <footer>
             <span class="muted">${formatNumber(assignment.assigned)} assigned</span>
-            <button class="button js-fill-rep-product" type="button" data-assignment-id="${escapeHtml(assignment.id)}">
+            <button class="button js-fill-rep-product" type="button" data-product-id="${escapeHtml(assignment.productId)}">
               <span>Use this</span>
             </button>
           </footer>
@@ -1652,17 +1656,40 @@ function renderRepProductCatalogue(products) {
   `;
 }
 
-function renderRepAssignmentOptions(assignments, mode = "sale") {
-  return assignments.map((assignment) => {
-    const available = mode === "return" ? Number(assignment.sold || 0) : assignment.outstanding;
-    const unitLabel = mode === "return" ? "sold" : "left";
+function repProductChoices(assignments, mode = "sale") {
+  const choices = new Map();
 
-    return `
-      <option value="${escapeHtml(assignment.id)}" data-outstanding="${escapeHtml(assignment.outstanding)}" data-sold="${escapeHtml(assignment.sold || 0)}">
-        ${escapeHtml(assignment.product.name)} (${formatNumber(available)} ${unitLabel})
-      </option>
-    `;
-  }).join("");
+  assignments.forEach((assignment) => {
+    const available = mode === "return" ? Number(assignment.sold || 0) : assignment.outstanding;
+    const canUseAssignment = available > 0 && (
+      mode !== "return" || isRepresentativeReturnEligible(assignment, todayISO())
+    );
+
+    if (!canUseAssignment || !assignment.product) return;
+
+    const existing = choices.get(assignment.productId) || {
+      productId: assignment.productId,
+      productName: assignment.product.name,
+      available: 0,
+      assignmentIds: []
+    };
+
+    existing.available += available;
+    existing.assignmentIds.push(assignment.id);
+    choices.set(assignment.productId, existing);
+  });
+
+  return [...choices.values()].sort((a, b) => a.productName.localeCompare(b.productName));
+}
+
+function renderRepAssignmentOptions(assignments, mode = "sale") {
+  const unitLabel = mode === "return" ? "sold" : "left";
+
+  return repProductChoices(assignments, mode).map((choice) => `
+    <option value="${escapeHtml(choice.productId)}" data-assignment-ids="${escapeHtml(choice.assignmentIds.join(","))}">
+      ${escapeHtml(choice.productName)} (${formatNumber(choice.available)} ${unitLabel})
+    </option>
+  `).join("");
 }
 
 function renderRepCustomerField(customers, prefix = "") {
@@ -1705,9 +1732,9 @@ function renderRepQuickLog(state, assignments) {
           </div>
 
           <label class="field">
-            <span>Snack</span>
+            <span>Product</span>
             <select name="saleAssignmentId" data-rep-assignment-select required>
-              <option value="">Pick snack</option>
+              <option value="">Pick product</option>
               ${renderRepAssignmentOptions(assignments, "sale")}
             </select>
           </label>
@@ -1736,13 +1763,13 @@ function renderRepQuickLog(state, assignments) {
         <form id="rep-return-form" class="rep-log-form rep-log-card" novalidate>
           <div class="rep-log-card-header">
             <span class="eyebrow">Customer return</span>
-            <strong>Return</strong>
+            <strong>Return <small>Last 7 days</small></strong>
           </div>
 
           <label class="field">
-            <span>Snack</span>
+            <span>Product</span>
             <select name="returnAssignmentId" data-rep-assignment-select required>
-              <option value="">Pick snack</option>
+              <option value="">Pick product</option>
               ${renderRepAssignmentOptions(assignments, "return")}
             </select>
           </label>
@@ -1878,7 +1905,10 @@ function renderSalesRepDashboard(state) {
   const assignments = buildRepAssignments(state, repName);
   const activeStockDate = selectedRepStockDate(assignments);
   const visibleAssignments = activeStockDate
-    ? assignments.filter((assignment) => assignment.assignedDate === activeStockDate)
+    ? assignments.filter((assignment) => (
+        assignment.assignedDate === activeStockDate &&
+        isRepresentativeReturnEligible(assignment, todayISO())
+      ))
     : assignments;
   const transactions = todaysRepTransactions(state, repName);
   const summary = repDaySummary(transactions);
@@ -1915,11 +1945,9 @@ function renderSalesRepDashboard(state) {
       </section>
 
       <div class="rep-main-grid">
-        <div class="rep-side-stack">
-          ${renderRepQuickLog(state, assignments)}
-          ${renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage)}
-        </div>
+        ${renderRepQuickLog(state, assignments)}
         ${renderRepReportPanel(repName, transactions, summary, existingReport, state)}
+        ${renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage)}
       </div>
 
       <section class="panel">
@@ -2364,7 +2392,7 @@ function bindSalesRepDashboard({ root, store }) {
   qsa(".js-fill-rep-product", root).forEach((button) => {
     button.addEventListener("click", () => {
       assignmentSelects.forEach((select) => {
-        select.value = button.dataset.assignmentId;
+        select.value = button.dataset.productId;
       });
       assignmentSelects[0]?.focus();
     });
@@ -2378,26 +2406,38 @@ function bindSalesRepDashboard({ root, store }) {
     const formData = new FormData(form);
     const prefix = transactionType === "return" ? "return" : "sale";
     const message = qs(`#rep-${prefix}-message`, root);
-    const assignmentId = String(formData.get(`${prefix}AssignmentId`) || "");
+    const productId = String(formData.get(`${prefix}AssignmentId`) || "");
     const customerId = String(formData.get(`${prefix}CustomerId`) || "");
     const typedCustomerName = String(formData.get(`${prefix}CustomerName`) || "").trim();
     const quantity = Number(formData.get(`${prefix}Quantity`) || 0);
     const paymentType = String(formData.get(`${prefix}PaymentType`) || "cash");
     const returnDisposition = String(formData.get("returnDisposition") || "held_by_rep");
-    const assignment = (state.stockAssignments || []).find((item) => item.id === assignmentId);
-    const product = (state.products || []).find((item) => item.id === assignment?.productId);
+    const repName = currentRepName(state);
+    const selectedAssignments = buildRepAssignments(state, repName)
+      .filter((assignment) => assignment.productId === productId)
+      .filter((assignment) => transactionType !== "return" || isRepresentativeReturnEligible(assignment, todayISO()))
+      .filter((assignment) => (
+        transactionType === "return"
+          ? Number(assignment.sold || 0) > 0
+          : assignment.outstanding > 0
+      ));
+    const product = (state.products || []).find((item) => item.id === productId);
     const customer = (state.retailers || []).find((item) => item.id === customerId);
     const customerName = customer?.name || typedCustomerName;
     const isCreditSale = transactionType === "sale" && normalized(paymentType).includes("credit");
-    const repName = assignment?.repName || currentRepName(state);
-    const outstanding = assignment ? assignmentOutstanding(assignment) : 0;
-    const soldForReturn = Number(assignment?.sold || 0);
+    const availableQuantity = selectedAssignments.reduce((total, assignment) => (
+      total + (transactionType === "return" ? Number(assignment.sold || 0) : assignment.outstanding)
+    ), 0);
     const amount = quantity * Number(product?.unitPrice || 0);
 
     setRepMessage(message, "");
 
-    if (!assignment) {
-      setRepMessage(message, "Pick a snack first.", "error");
+    if (!product || !selectedAssignments.length) {
+      setRepMessage(
+        message,
+        transactionType === "return" ? "Customer returns can only be logged within 7 days of assignment." : "Pick a product first.",
+        "error"
+      );
       return;
     }
 
@@ -2416,13 +2456,9 @@ function bindSalesRepDashboard({ root, store }) {
       return;
     }
 
-    if (transactionType === "sale" && quantity > outstanding) {
-      setRepMessage(message, `Only ${formatNumber(outstanding)} left for this snack.`, "error");
-      return;
-    }
-
-    if (transactionType === "return" && quantity > soldForReturn) {
-      setRepMessage(message, `Only ${formatNumber(soldForReturn)} sold units can be returned for this snack.`, "error");
+    if (quantity > availableQuantity) {
+      const detail = transactionType === "return" ? "sold units can be returned within 7 days" : "left";
+      setRepMessage(message, `Only ${formatNumber(availableQuantity)} ${detail} for this product.`, "error");
       return;
     }
 
@@ -2451,7 +2487,8 @@ function bindSalesRepDashboard({ root, store }) {
 
     store.dispatch({
       type: "LOG_REP_TRANSACTION",
-      assignmentId,
+      assignmentIds: selectedAssignments.map((assignment) => assignment.id),
+      productId,
       customerId,
       customerName,
       customerType: customer?.channel || customer?.type || "Customer",

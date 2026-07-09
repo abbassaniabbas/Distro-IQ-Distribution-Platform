@@ -1,6 +1,6 @@
 import seedData from "../data/seed-data.js";
 import { createActivityLog, getCurrentActor } from "../services/activity.js";
-import { assignmentOutstanding } from "../services/calculations.js";
+import { assignmentOutstanding, isRepresentativeReturnEligible } from "../services/calculations.js";
 import { salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
@@ -29,6 +29,10 @@ function mergeSeedRecords(existing, defaults) {
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function normalized(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function currentActorName(state) {
@@ -876,42 +880,79 @@ function reducer(currentState, action) {
     }
 
     case "LOG_REP_TRANSACTION": {
-      const assignment = state.stockAssignments.find((item) => item.id === action.assignmentId);
-      const product = state.products.find((item) => item.id === assignment?.productId);
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const quantity = Math.max(0, Number(action.quantity || 0));
       const transactionType = action.transactionType === "return" ? "return" : "sale";
-      const amount = quantity * Number(product?.unitPrice || 0);
       const paymentType = action.paymentType || (transactionType === "return" ? "credit adjustment" : "cash");
       const returnDisposition = transactionType === "return"
         ? (action.returnDisposition === "to_store" ? "to_store" : "held_by_rep")
         : "";
+      const repName = action.repName || currentActorName(state);
+      const requestedIds = Array.isArray(action.assignmentIds)
+        ? action.assignmentIds
+        : [action.assignmentId];
+      const requestedAssignmentIds = new Set(requestedIds.map((id) => String(id || "")).filter(Boolean));
+      const requestedProductId = String(action.productId || "");
+      const selectedAssignments = (state.stockAssignments || [])
+        .filter((assignment) => requestedAssignmentIds.has(String(assignment.id)))
+        .filter((assignment) => !requestedProductId || assignment.productId === requestedProductId)
+        .filter((assignment) => normalized(assignment.repName) === normalized(repName));
+      const productId = requestedProductId || selectedAssignments[0]?.productId || "";
+      const product = state.products.find((item) => item.id === productId);
+      const eligibleAssignments = selectedAssignments
+        .filter((assignment) => assignment.productId === productId)
+        .filter((assignment) => transactionType !== "return" || isRepresentativeReturnEligible(assignment, todayISO()))
+        .filter((assignment) => (
+          transactionType === "return"
+            ? Number(assignment.sold || 0) > 0
+            : assignmentOutstanding(assignment) > 0
+        ))
+        .sort((a, b) => String(a.assignedAt || "").localeCompare(String(b.assignedAt || "")));
+      const availableQuantity = eligibleAssignments.reduce((total, assignment) => (
+        total + (transactionType === "return" ? Number(assignment.sold || 0) : assignmentOutstanding(assignment))
+      ), 0);
+      const amount = quantity * Number(product?.unitPrice || 0);
       const isCreditImpact = String(paymentType).toLowerCase().includes("credit");
       const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
-      const repName = action.repName || assignment?.repName || currentActorName(state);
       const customerName = customer?.name || action.customerName || "Walk-in customer";
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
 
-      if (!assignment || !product || !quantity) return state;
-      if (transactionType === "sale" && quantity > assignmentOutstanding(assignment)) return state;
-      if (transactionType === "return" && quantity > Number(assignment.sold || 0)) return state;
+      if (!product || !quantity || !eligibleAssignments.length || quantity > availableQuantity) return state;
 
-      if (transactionType === "sale") {
-        assignment.sold = Number(assignment.sold || 0) + quantity;
-      } else {
-        assignment.sold = Math.max(0, Number(assignment.sold || 0) - quantity);
+      let remainingQuantity = quantity;
+      const assignmentAllocations = [];
 
-        if (returnDisposition === "to_store") {
-          assignment.returned = Number(assignment.returned || 0) + quantity;
-          product.stock = Number(product.stock || 0) + quantity;
-          product.updatedAt = todayISO();
+      eligibleAssignments.forEach((assignment) => {
+        if (remainingQuantity <= 0) return;
+
+        const available = transactionType === "return"
+          ? Number(assignment.sold || 0)
+          : assignmentOutstanding(assignment);
+        const allocatedQuantity = Math.min(available, remainingQuantity);
+
+        if (transactionType === "sale") {
+          assignment.sold = Number(assignment.sold || 0) + allocatedQuantity;
         } else {
-          assignment.heldReturns = Number(assignment.heldReturns || 0) + quantity;
+          assignment.sold = Math.max(0, Number(assignment.sold || 0) - allocatedQuantity);
+
+          if (returnDisposition === "to_store") {
+            assignment.returned = Number(assignment.returned || 0) + allocatedQuantity;
+          } else {
+            assignment.heldReturns = Number(assignment.heldReturns || 0) + allocatedQuantity;
+          }
         }
+
+        assignment.updatedAt = todayISO();
+        refreshAssignmentCompletion(state, assignment);
+        assignmentAllocations.push({ assignmentId: assignment.id, quantity: allocatedQuantity });
+        remainingQuantity -= allocatedQuantity;
+      });
+
+      if (transactionType === "return" && returnDisposition === "to_store") {
+        product.stock = Number(product.stock || 0) + quantity;
+        product.updatedAt = todayISO();
       }
 
-      assignment.updatedAt = todayISO();
-      refreshAssignmentCompletion(state, assignment);
       const transactionId = createId("TXN");
       const orderId = transactionType === "sale"
         ? createQuickSaleOrder(state, {
@@ -930,7 +971,7 @@ function reducer(currentState, action) {
         {
           id: transactionId,
           type: transactionType,
-          productId: assignment.productId,
+          productId,
           productName: product.name,
           quantity,
           amount,
@@ -950,7 +991,10 @@ function reducer(currentState, action) {
             ? (returnDisposition === "to_store" ? "Store stock" : "Held by sales representative")
             : "",
           movementDirection: transactionType === "return" && returnDisposition === "to_store" ? "in" : "",
-          orderId
+          orderId,
+          assignmentId: assignmentAllocations[0]?.assignmentId || "",
+          assignmentIds: assignmentAllocations.map((allocation) => allocation.assignmentId),
+          assignmentAllocations
         },
         ...(state.stockTransactions || [])
       ];

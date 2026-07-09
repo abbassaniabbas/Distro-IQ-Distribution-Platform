@@ -10,6 +10,23 @@ export function assignmentOutstanding(assignment) {
   return Math.max(0, Number(assignment.assigned || 0) - Number(assignment.sold || 0) - Number(assignment.returned || 0));
 }
 
+export const REPRESENTATIVE_RETURN_GRACE_DAYS = 7;
+
+export function isRepresentativeReturnEligible(assignment, referenceDate = new Date().toISOString().slice(0, 10)) {
+  const assignedDate = String(assignment?.assignedAt || assignment?.updatedAt || "").slice(0, 10);
+  const reference = String(referenceDate || "").slice(0, 10);
+
+  if (!assignedDate || !reference) return false;
+
+  const assignedAt = Date.parse(`${assignedDate}T00:00:00Z`);
+  const checkedAt = Date.parse(`${reference}T00:00:00Z`);
+
+  if (Number.isNaN(assignedAt) || Number.isNaN(checkedAt)) return false;
+
+  const daysSinceAssignment = Math.floor((checkedAt - assignedAt) / 86400000);
+  return daysSinceAssignment >= 0 && daysSinceAssignment < REPRESENTATIVE_RETURN_GRACE_DAYS;
+}
+
 export function stockCategoryIdForProduct(product) {
   const category = String(product.stockCategory || product.category || "").toLowerCase();
 
