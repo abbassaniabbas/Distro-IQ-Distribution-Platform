@@ -22,6 +22,7 @@ import { metricCard, panelHeader, progressBar, statusPill, table, textButton } f
 import { icon } from "../ui/icons.js";
 
 const DEFAULT_STOCK_TAB = "stock-health";
+const DISPATCH_PAGE_SIZE = 10;
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -675,6 +676,11 @@ function renderDispatchPage(state, permissions) {
         renderDispatchRows(state),
         "No factory dispatches recorded yet"
       )}
+      <div class="activity-pagination" data-dispatch-pagination hidden>
+        <button class="button" type="button" data-dispatch-page="prev">Previous</button>
+        <span data-dispatch-page-status>Page 1 of 1</span>
+        <button class="button" type="button" data-dispatch-page="next">Next</button>
+      </div>
     </section>
   `;
 }
@@ -689,7 +695,9 @@ function dispatchTransactions(state) {
 function renderDispatchRows(state) {
   const productMap = getProductMap(state.products);
 
-  return dispatchTransactions(state).map((transaction) => {
+  return [...dispatchTransactions(state)]
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.id || "").localeCompare(String(a.id || "")))
+    .map((transaction, index) => {
     const product = productMap.get(transaction.productId);
     const recipient = transaction.recipientName || transaction.partyName || "Factory";
     const destination = transaction.dispatchDestination || transaction.destination || transaction.partyType || "Factory";
@@ -704,7 +712,7 @@ function renderDispatchRows(state) {
     ].join(" ").toLowerCase();
 
     return `
-      <tr data-search-index="${escapeHtml(searchIndex)}">
+      <tr ${index >= DISPATCH_PAGE_SIZE ? "hidden " : ""}data-dispatch-row data-search-index="${escapeHtml(searchIndex)}">
         <td>
           <strong>${escapeHtml(product?.name || transaction.productId)}</strong>
           <div class="muted">${escapeHtml(transaction.id)}</div>
@@ -1076,6 +1084,59 @@ export function bindInventory({ root, store }) {
     categoryFilter.value = requestedStockType;
     applyStockTypeFilter();
   }
+
+  function setupDispatchPagination() {
+    const rows = qsa("[data-dispatch-row]", root);
+    const pagination = qs("[data-dispatch-pagination]", root);
+    const status = qs("[data-dispatch-page-status]", root);
+    const prevButton = qs('[data-dispatch-page="prev"]', root);
+    const nextButton = qs('[data-dispatch-page="next"]', root);
+    const globalSearch = qs("#global-search", document);
+    let currentPage = 1;
+
+    if (!rows.length || !pagination || !status) return;
+
+    function matchedRows() {
+      const query = String(globalSearch?.value || "").trim().toLowerCase();
+      return rows.filter((row) => !query || String(row.dataset.searchIndex || "").includes(query));
+    }
+
+    function applyPage() {
+      const visibleRows = matchedRows();
+      const totalPages = Math.max(1, Math.ceil(visibleRows.length / DISPATCH_PAGE_SIZE));
+
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+      rows.forEach((row) => {
+        row.hidden = true;
+      });
+      visibleRows.forEach((row, index) => {
+        const page = Math.floor(index / DISPATCH_PAGE_SIZE) + 1;
+        row.hidden = page !== currentPage;
+      });
+
+      pagination.hidden = visibleRows.length <= DISPATCH_PAGE_SIZE;
+      status.textContent = `${formatNumber(visibleRows.length)} dispatch${visibleRows.length === 1 ? "" : "es"} - page ${formatNumber(currentPage)} of ${formatNumber(totalPages)}`;
+      if (prevButton) prevButton.disabled = currentPage <= 1;
+      if (nextButton) nextButton.disabled = currentPage >= totalPages;
+    }
+
+    prevButton?.addEventListener("click", () => {
+      currentPage -= 1;
+      applyPage();
+    });
+    nextButton?.addEventListener("click", () => {
+      currentPage += 1;
+      applyPage();
+    });
+    globalSearch?.addEventListener("input", () => {
+      currentPage = 1;
+      applyPage();
+    });
+
+    window.setTimeout(applyPage, 0);
+  }
+
+  setupDispatchPagination();
 
   function setStockImageUploadState({ fileName = "", error = "" } = {}) {
     if (!stockImageUploadField) return;

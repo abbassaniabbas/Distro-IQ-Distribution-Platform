@@ -687,16 +687,24 @@ function reducer(currentState, action) {
 
       const recipientAccountId = String(action.recipientAccountId || "").trim();
       const body = String(action.body || "").trim();
-      const recipient = (state.accounts || []).find((account) => (
-        account.clientId === state.client.id && account.id === recipientAccountId
-      ));
       const sender = currentWorkspaceAccount(state);
       const actor = getCurrentActor(state);
+      const canSendToAllStaff = ["manager", "ceo"].includes(String(sender?.role || "").toLowerCase());
+      const shouldSendToAllStaff = Boolean(action.sendToAllStaff) || recipientAccountId === "__all_staff__";
+      const recipients = shouldSendToAllStaff && canSendToAllStaff
+        ? (state.accounts || []).filter((account) => (
+            account.clientId === state.client.id &&
+            account.id !== sender?.id &&
+            account.status !== "deactivated"
+          ))
+        : (state.accounts || []).filter((account) => (
+            account.clientId === state.client.id && account.id === recipientAccountId
+          ));
 
-      if (!recipient || !body) return state;
+      if (!recipients.length || !body) return state;
 
       state.messages = [
-        {
+        ...recipients.map((recipient) => ({
           id: createId("MSG"),
           clientId: state.client.id,
           fromAccountId: sender?.id || "",
@@ -712,7 +720,7 @@ function reducer(currentState, action) {
           body,
           readAt: "",
           createdAt: new Date().toISOString()
-        },
+        })),
         ...(state.messages || [])
       ];
 

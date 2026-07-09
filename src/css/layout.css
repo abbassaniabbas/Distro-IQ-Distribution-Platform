@@ -274,11 +274,11 @@
   gap: 10px;
   max-height: min(560px, calc(100vh - 120px));
   padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--line);
   border-radius: var(--radius);
-  background: #05080d;
-  color: #ffffff;
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+  background: #ffffff;
+  color: var(--ink);
+  box-shadow: 0 24px 70px rgba(7, 26, 47, 0.18);
 }
 
 .topbar-popover-arrow {
@@ -288,9 +288,9 @@
   width: 18px;
   height: 18px;
   transform: translateX(-50%) rotate(45deg);
-  border-top: 1px solid rgba(255, 255, 255, 0.09);
-  border-left: 1px solid rgba(255, 255, 255, 0.09);
-  background: #05080d;
+  border-top: 1px solid var(--line);
+  border-left: 1px solid var(--line);
+  background: #ffffff;
 }
 
 .topbar-notification-popover header,
@@ -307,6 +307,10 @@
   position: relative;
   z-index: 1;
   padding: 2px 4px 6px;
+}
+
+.topbar-notification-popover header strong {
+  color: var(--navy);
 }
 
 .topbar-notification-popover header span,
@@ -336,7 +340,7 @@
 
 .topbar-notification-row:hover,
 .topbar-notification-row.is-unread {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--mint-soft);
 }
 
 .topbar-notification-row strong,
@@ -349,7 +353,7 @@
 
 .topbar-notification-row p {
   margin-top: 4px;
-  color: rgba(255, 255, 255, 0.64);
+  color: var(--muted);
   line-height: 1.45;
 }
 
@@ -447,7 +451,7 @@
 .message-thread-list {
   display: grid;
   gap: 10px;
-  max-height: 330px;
+  max-height: 308px;
   overflow: auto;
 }
 
@@ -455,10 +459,12 @@
   display: grid;
   grid-template-columns: 44px minmax(0, 1fr);
   gap: 12px;
+  min-height: 96px;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: var(--radius);
   background: var(--surface);
+  overflow: hidden;
 }
 
 .message-thread-row.is-unread {
@@ -470,6 +476,10 @@
   margin-top: 6px;
   color: var(--ink);
   line-height: 1.45;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 body[data-app-view="auth"] .app-shell {

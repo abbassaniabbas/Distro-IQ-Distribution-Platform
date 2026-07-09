@@ -199,18 +199,23 @@ function openNotificationPopover({ store, trigger }) {
 
 function recipientOptions(state) {
   const currentAccount = accountForCurrentUser(state);
-
-  return (state.accounts || [])
+  const canSendToAllStaff = ["manager", "ceo"].includes(normalized(currentAccount?.role));
+  const recipients = (state.accounts || [])
     .filter((account) => account.clientId === state.client?.id)
     .filter((account) => account.id !== currentAccount?.id)
     .filter((account) => account.status !== "deactivated")
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
-    .map((account) => `
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  const allStaffOption = canSendToAllStaff && recipients.length
+    ? '<option value="__all_staff__">All staff</option>'
+    : "";
+  const staffOptions = recipients.map((account) => `
       <option value="${escapeHtml(account.id)}">
         ${escapeHtml(account.name || account.email)} - ${escapeHtml(roleLabel(account.role))}
       </option>
     `)
     .join("");
+
+  return `${allStaffOption}${staffOptions}`;
 }
 
 function renderMessageList(messages, emptyText, direction) {
@@ -218,7 +223,7 @@ function renderMessageList(messages, emptyText, direction) {
     return `<div class="topbar-empty-state">${escapeHtml(emptyText)}</div>`;
   }
 
-  return messages.slice(0, 12).map((message) => {
+  return messages.map((message) => {
     const name = direction === "sent" ? message.toName : message.fromName;
     const metaRole = direction === "sent" ? roleLabel(message.toRole) : senderRole(message);
     const metaPrefix = direction === "sent" ? "To" : "From";
@@ -342,8 +347,9 @@ function renderMessageModal({ store }) {
     store.dispatch({
       type: "SEND_MESSAGE",
       recipientAccountId,
+      sendToAllStaff: recipientAccountId === "__all_staff__",
       body,
-      message: "Message sent"
+      message: recipientAccountId === "__all_staff__" ? "Message sent to all staff" : "Message sent"
     });
     renderMessageModal({ store });
   });
