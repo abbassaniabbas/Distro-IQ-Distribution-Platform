@@ -155,12 +155,13 @@ function optionList(items, selectedValue = "") {
     .join("");
 }
 
-function companyOptions(clients) {
+function companyOptions(clients, selectedValue = "") {
   return optionList(
     clients.map((client) => ({
       value: client.id,
       label: client.companyName
-    }))
+    })),
+    selectedValue
   );
 }
 
@@ -402,6 +403,13 @@ function renderUserManagementPanel(data) {
 }
 
 function renderConfigurationPanel(data) {
+  const selectedClientId = data.clients[0]?.id || "";
+  const moduleMap = new Map(
+    data.featureModules
+      .filter((module) => module.clientId === selectedClientId)
+      .map((module) => [module.moduleKey, module.enabled])
+  );
+
   return `
     <section class="panel">
       ${panelHeader("Platform configuration", "Control modules, email templates, document references, and branding per client")}
@@ -409,7 +417,7 @@ function renderConfigurationPanel(data) {
         <form id="platform-config-form" class="form-grid" novalidate>
           <label class="field span-full">
             <span>Client deployment</span>
-            <select name="clientId">${companyOptions(data.clients)}</select>
+            <select name="clientId">${companyOptions(data.clients, selectedClientId)}</select>
           </label>
           <label class="field">
             <span>Printed business name</span>
@@ -422,7 +430,7 @@ function renderConfigurationPanel(data) {
           <div class="span-full platform-module-grid">
             ${FEATURE_MODULES.map((module) => `
               <label class="platform-toggle">
-                <input type="checkbox" name="modules" value="${escapeHtml(module.key)}" checked>
+                <input type="checkbox" name="modules" value="${escapeHtml(module.key)}" data-feature-module ${moduleMap.get(module.key) === false ? "" : "checked"}>
                 <span>${escapeHtml(module.label)}</span>
               </label>
             `).join("")}
@@ -724,6 +732,63 @@ function setFormMessage(form, selector, text, isSuccess = false) {
   message.className = isSuccess ? "auth-message is-success" : "field-error";
 }
 
+function platformConfigPayload(form) {
+  const values = formValues(form);
+  const modules = new Set(new FormData(form).getAll("modules"));
+  requireSelection(values.clientId, "Choose a client deployment.");
+
+  return {
+    ...values,
+    modules: FEATURE_MODULES.map((module) => ({
+      key: module.key,
+      enabled: modules.has(module.key)
+    }))
+  };
+}
+
+function applyClientModuleToggles(form, data) {
+  const clientId = String(form.elements.clientId?.value || "");
+  const moduleMap = new Map(
+    (data.featureModules || [])
+      .filter((module) => module.clientId === clientId)
+      .map((module) => [module.moduleKey, module.enabled])
+  );
+
+  form.querySelectorAll("[data-feature-module]").forEach((input) => {
+    input.checked = moduleMap.get(input.value) !== false;
+  });
+}
+
+function bindImmediateFeatureModuleToggles({ root, store }) {
+  const form = qs("#platform-config-form", root);
+  if (!form) return;
+
+  const clientSelect = form.elements.clientId;
+  clientSelect?.addEventListener("change", () => {
+    applyClientModuleToggles(form, platformData(store.getState()));
+  });
+
+  form.querySelectorAll("[data-feature-module]").forEach((input) => {
+    input.addEventListener("change", async () => {
+      const message = qs("#platform-config-message", form);
+      const previousValue = !input.checked;
+      input.disabled = true;
+      setFormMessage(form, "#platform-config-message", "Updating module...");
+
+      try {
+        const platformOverview = await updatePlatformConfiguration(platformConfigPayload(form));
+        dispatchPlatformContext(store, platformOverview, "Module setting updated");
+        setFormMessage(form, "#platform-config-message", "Module setting updated", true);
+      } catch (error) {
+        input.checked = previousValue;
+        setFormMessage(form, "#platform-config-message", error.message || "Module update failed");
+      } finally {
+        input.disabled = false;
+      }
+    });
+  });
+}
+
 function bindPlatformUserSearch(root) {
   const input = qs("#platform-user-search", root);
   const accountForm = qs("#platform-account-form", root);
@@ -859,6 +924,7 @@ export function bindPlatformConsole({ root, store }) {
   }, PLATFORM_REFRESH_MS);
 
   bindPlatformUserSearch(root);
+  bindImmediateFeatureModuleToggles({ root, store });
 
   bindAsyncForm({
     root,
@@ -907,19 +973,7 @@ export function bindPlatformConsole({ root, store }) {
     messageSelector: "#platform-config-message",
     busyText: "Saving...",
     successText: "Platform configuration saved",
-    collect: (form) => {
-      const values = formValues(form);
-      const modules = new Set(new FormData(form).getAll("modules"));
-      requireSelection(values.clientId, "Choose a client deployment.");
-
-      return {
-        ...values,
-        modules: FEATURE_MODULES.map((module) => ({
-          key: module.key,
-          enabled: modules.has(module.key)
-        }))
-      };
-    },
+    collect: platformConfigPayload,
     submit: updatePlatformConfiguration
   });
 

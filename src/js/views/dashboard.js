@@ -18,6 +18,7 @@ import {
 } from "../services/calculations.js";
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
+import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -1920,6 +1921,8 @@ function renderSalesRepDashboard(state) {
     normalized(report.repName) === normalized(repName) &&
     report.reportDate === todayISO()
   ));
+  const fieldReportsEnabled = isModuleEnabled(state, "field_reports");
+  const creditControlEnabled = isModuleEnabled(state, "credit_control");
 
   return `
     <section class="view dashboard-view sales-rep-portal">
@@ -1928,7 +1931,7 @@ function renderSalesRepDashboard(state) {
           <span class="eyebrow">Today</span>
           <h2>${escapeHtml(repName)}</h2>
         </div>
-        <div class="rep-hero-stats">
+        <div class="rep-hero-stats${creditControlEnabled ? "" : " is-credit-disabled"}">
           <div>
             <span>Stock</span>
             <strong>${formatNumber(stockInHand)}</strong>
@@ -1937,17 +1940,19 @@ function renderSalesRepDashboard(state) {
             <span>Sales</span>
             <strong>${formatCurrency(summary.salesAmount)}</strong>
           </div>
-          <div class="${creditUsage >= 85 ? "is-warning" : ""}">
-            <span>Today credit</span>
-            <strong>${formatPercent(creditUsage)}</strong>
-          </div>
+          ${creditControlEnabled ? `
+            <div class="${creditUsage >= 85 ? "is-warning" : ""}">
+              <span>Today credit</span>
+              <strong>${formatPercent(creditUsage)}</strong>
+            </div>
+          ` : ""}
         </div>
       </section>
 
-      <div class="rep-main-grid">
+      <div class="rep-main-grid${fieldReportsEnabled ? "" : " is-report-disabled"}">
         ${renderRepQuickLog(state, assignments)}
-        ${renderRepReportPanel(repName, transactions, summary, existingReport, state)}
-        ${renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage)}
+        ${fieldReportsEnabled ? renderRepReportPanel(repName, transactions, summary, existingReport, state) : ""}
+        ${creditControlEnabled ? renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage) : ""}
       </div>
 
       <section class="panel">
@@ -2268,7 +2273,7 @@ export function renderDashboard({ state }) {
         </div>
       </section>
       ${isManagerPortal ? renderManagerSalesOperations(state) : ""}
-      ${isManagerPortal ? renderManagerReportReview(state) : ""}
+      ${isManagerPortal && isModuleEnabled(state, "field_reports") ? renderManagerReportReview(state) : ""}
     </section>
   `;
 }

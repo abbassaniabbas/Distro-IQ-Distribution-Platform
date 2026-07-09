@@ -1,6 +1,7 @@
 import { creditUsageTone, getCreditLimitForParty, getCustomerRating } from "../services/calculations.js";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions } from "../services/rbac.js";
+import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
 
@@ -12,7 +13,7 @@ function renderSupermarketManager(state, permissions) {
   if (!permissions.canManageCustomers && !permissions.canAddCustomers) return "";
 
   const moneySymbol = currencySymbolFor(state.client);
-  const canManagePaymentTerms = permissions.canManageCustomers;
+  const canManagePaymentTerms = permissions.canManageCustomers && isModuleEnabled(state, "credit_control");
   const title = canManagePaymentTerms ? "Customer relationship" : "Add customer";
   const subtitle = canManagePaymentTerms
     ? "Add or update customer details, location, customer type, and payment terms"

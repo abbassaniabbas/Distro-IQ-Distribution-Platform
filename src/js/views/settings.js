@@ -23,6 +23,7 @@ import {
   validateClientForm
 } from "../services/tenant.js";
 import { currentUserPermissions, currentUserRole, roleDescription, roleLabel } from "../services/rbac.js";
+import { isModuleEnabled } from "../services/features.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { bindBrandColorInputs } from "../ui/brand-controls.js";
@@ -181,10 +182,12 @@ function renderCompanySettings(state, account) {
           })}
         </div>
       </form>
-      <div class="saved-preview-block">
-        ${panelHeader("Saved delivery note preview", "Branding applied to a sample document")}
-        ${renderDeliveryNotePreview(client)}
-      </div>
+      ${isModuleEnabled(state, "delivery_notes") ? `
+        <div class="saved-preview-block">
+          ${panelHeader("Saved delivery note preview", "Branding applied to a sample document")}
+          ${renderDeliveryNotePreview(client)}
+        </div>
+      ` : ""}
     </section>
   `;
 }

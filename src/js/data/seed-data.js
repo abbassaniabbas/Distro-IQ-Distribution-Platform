@@ -2,6 +2,7 @@ const seedData = {
   client: null,
   accounts: [],
   invites: [],
+  featureModules: [],
   messages: [],
   notificationReadAt: "",
   activityLogs: [],

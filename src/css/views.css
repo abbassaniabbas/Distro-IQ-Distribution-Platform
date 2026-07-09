@@ -691,6 +691,10 @@
   gap: 10px;
 }
 
+.rep-hero-stats.is-credit-disabled {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .rep-hero-stats div,
 .rep-report-grid div {
   display: grid;
@@ -725,6 +729,13 @@
     "daily-credit daily-credit";
   gap: 14px;
   align-items: stretch;
+}
+
+.rep-main-grid.is-report-disabled {
+  grid-template-columns: 1fr;
+  grid-template-areas:
+    "quick-log"
+    "daily-credit";
 }
 
 .rep-side-stack {
@@ -2134,6 +2145,11 @@
   width: 16px;
   height: 16px;
   accent-color: var(--mint-strong);
+}
+
+.platform-toggle:has(input:checked) {
+  border-color: rgba(25, 185, 133, 0.38);
+  background: var(--mint-soft);
 }
 
 .platform-alert-banner {

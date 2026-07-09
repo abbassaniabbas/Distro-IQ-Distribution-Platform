@@ -1,3 +1,5 @@
+import { isClientRouteEnabled } from "./features.js";
+
 export const ROLE_OPTIONS = [
   {
     value: "sales_rep",
@@ -186,6 +188,7 @@ export function canAccessRoute(state, routeId) {
   if (routeId === "platform-console") return Boolean(state.platformAdmin);
   if (routeId === "messages") return Boolean(state.session && state.client?.id);
   if (!state.session || !state.client?.id) return true;
+  if (!isClientRouteEnabled(state, routeId)) return false;
 
   return currentUserPermissions(state).nav.includes(routeId);
 }

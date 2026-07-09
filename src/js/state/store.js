@@ -159,6 +159,7 @@ function ensureStateShape(value) {
     client: state.client || null,
     accounts: Array.isArray(state.accounts) ? state.accounts : [],
     invites: Array.isArray(state.invites) ? state.invites : [],
+    featureModules: Array.isArray(state.featureModules) ? state.featureModules : [],
     messages: Array.isArray(state.messages) ? state.messages : [],
     notificationReadAt: String(state.notificationReadAt || ""),
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
@@ -546,6 +547,7 @@ function reducer(currentState, action) {
         client: action.client || null,
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
+        featureModules: Array.isArray(action.featureModules) ? action.featureModules : state.featureModules,
         messages: Array.isArray(action.messages) ? action.messages : state.messages,
         notificationReadAt: action.notificationReadAt || state.notificationReadAt,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs
@@ -560,6 +562,7 @@ function reducer(currentState, action) {
         client: action.client || null,
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
+        featureModules: Array.isArray(action.featureModules) ? action.featureModules : state.featureModules,
         messages: Array.isArray(action.messages) ? action.messages : state.messages,
         notificationReadAt: action.notificationReadAt || state.notificationReadAt,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
@@ -582,6 +585,7 @@ function reducer(currentState, action) {
         client: null,
         accounts: [],
         invites: [],
+        featureModules: [],
         activityLogs: [],
         platformAdmin: Boolean(action.session),
         platformOverview: action.platformOverview || [],
@@ -591,6 +595,13 @@ function reducer(currentState, action) {
           status: action.session ? "platform_authenticated" : "anonymous",
           error: ""
         }
+      };
+    }
+
+    case "SET_FEATURE_MODULES": {
+      return {
+        ...state,
+        featureModules: Array.isArray(action.featureModules) ? action.featureModules : state.featureModules
       };
     }
 

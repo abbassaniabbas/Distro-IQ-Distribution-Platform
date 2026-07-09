@@ -85,6 +85,16 @@ function mapWorkspaceMessage(row) {
   };
 }
 
+function mapFeatureModule(row) {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    moduleKey: row.module_key,
+    enabled: row.enabled !== false,
+    updatedAt: row.updated_at
+  };
+}
+
 function mapPlatformClient(row) {
   return {
     id: row.client_id || row.id,
@@ -292,6 +302,7 @@ export async function loadWorkspace() {
       client: null,
       accounts: [],
       invites: [],
+      featureModules: [],
       messages: []
     };
   }
@@ -299,6 +310,7 @@ export async function loadWorkspace() {
   const [
     { data: accountRows, error: accountError },
     { data: inviteRows, error: inviteError },
+    { data: featureModuleRows, error: featureModuleError },
     { data: activityRows, error: activityError },
     { data: messageRows, error: messageError }
   ] = await Promise.all([
@@ -312,6 +324,10 @@ export async function loadWorkspace() {
       .select("id, client_id, membership_id, email, role, subject, redirect_to, status, created_at")
       .eq("client_id", client.id)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("platform_feature_modules")
+      .select("id, client_id, module_key, enabled, updated_at")
+      .eq("client_id", client.id),
     supabase
       .from("activity_logs")
       .select("id, client_id, action_type, record_type, record_label, actor_user_id, actor_name, actor_email, summary, created_at")
@@ -334,6 +350,10 @@ export async function loadWorkspace() {
     console.warn("Activity log could not be loaded:", activityError.message);
   }
 
+  if (featureModuleError) {
+    console.warn("Feature modules could not be loaded:", featureModuleError.message);
+  }
+
   if (messageError) {
     console.warn("Messages could not be loaded:", messageError.message);
   }
@@ -342,9 +362,24 @@ export async function loadWorkspace() {
     client,
     accounts: (accountRows || []).map(mapAccount),
     invites: (inviteRows || []).map(mapInvite),
+    featureModules: featureModuleError ? [] : (featureModuleRows || []).map(mapFeatureModule),
     activityLogs: activityError ? [] : (activityRows || []).map(mapActivityLog),
     messages: messageError ? [] : (messageRows || []).map(mapWorkspaceMessage)
   };
+}
+
+export async function loadWorkspaceFeatureModules(clientId) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase
+    .from("platform_feature_modules")
+    .select("id, client_id, module_key, enabled, updated_at")
+    .eq("client_id", clientId);
+
+  if (error) throw new Error(error.message);
+
+  return (data || []).map(mapFeatureModule);
 }
 
 export async function loadPlatformOverview() {

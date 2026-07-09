@@ -16,6 +16,7 @@ import {
   statusText
 } from "../services/formatters.js";
 import { currentUserPermissions, salesRepresentativeNames } from "../services/rbac.js";
+import { isModuleEnabled } from "../services/features.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -39,7 +40,7 @@ function stockTabHref(tabId) {
   return `#/inventory?tab=${encodeURIComponent(tabId)}`;
 }
 
-function stockTabsForPermissions(permissions) {
+function stockTabsForPermissions(permissions, state) {
   return [
     {
       id: "stock-health",
@@ -63,15 +64,15 @@ function stockTabsForPermissions(permissions) {
       id: "movement-history",
       label: "Movement history"
     },
-    {
+    ...(isModuleEnabled(state, "credit_control") ? [{
       id: "credit",
       label: "Credit limits"
-    }
+    }] : [])
   ];
 }
 
-function activeStockTabId(permissions) {
-  const tabs = stockTabsForPermissions(permissions);
+function activeStockTabId(permissions, state) {
+  const tabs = stockTabsForPermissions(permissions, state);
   const requestedTab = inventoryRouteParams().get("tab") || DEFAULT_STOCK_TAB;
   const normalizedTab = ["factory-health", "add-stock", "raw-materials", "finished-goods", "equipment", "categories"]
     .includes(requestedTab)
@@ -81,10 +82,10 @@ function activeStockTabId(permissions) {
   return tabs.some((tab) => tab.id === normalizedTab) ? normalizedTab : tabs[0].id;
 }
 
-function renderStockSubtabs(activeTabId, permissions) {
+function renderStockSubtabs(activeTabId, permissions, state) {
   return `
     <nav class="subtab-nav stock-subtabs" aria-label="Stock pages">
-      ${stockTabsForPermissions(permissions).map((tab) => `
+      ${stockTabsForPermissions(permissions, state).map((tab) => `
         <a
           class="subtab-link ${tab.id === activeTabId ? "is-active" : ""}"
           href="${escapeHtml(stockTabHref(tab.id))}"
@@ -1031,11 +1032,11 @@ function renderStockTabPage({ activeTabId, state, permissions, vision }) {
 export function renderInventory({ state }) {
   const permissions = currentUserPermissions(state);
   const vision = calculateVisionMetrics(state);
-  const activeTabId = activeStockTabId(permissions);
+  const activeTabId = activeStockTabId(permissions, state);
 
   return `
     <section class="view inventory-view">
-      ${renderStockSubtabs(activeTabId, permissions)}
+      ${renderStockSubtabs(activeTabId, permissions, state)}
       ${renderStockTabPage({ activeTabId, state, permissions, vision })}
       ${renderStockProductModal(state, permissions)}
       ${renderRestockModal(permissions)}

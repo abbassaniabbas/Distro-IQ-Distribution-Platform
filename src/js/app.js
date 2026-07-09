@@ -1,7 +1,8 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
 import { createStore } from "./state/store.js";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
-import { loadWorkspace, tryLoadPlatformOverview } from "./services/backend.js";
+import { loadWorkspace, loadWorkspaceFeatureModules, tryLoadPlatformOverview } from "./services/backend.js";
+import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
@@ -162,6 +163,8 @@ const PLATFORM_NAV_ITEMS = [
 ];
 let activeAuthFormFlows = 0;
 let activeViewAbortController = null;
+let featureModuleRefreshPending = false;
+const FEATURE_MODULE_REFRESH_MS = 5000;
 
 searchSuggestions.className = "search-suggestions";
 searchSuggestions.hidden = true;
@@ -180,7 +183,7 @@ function isAuthFormFlowActive() {
 }
 
 function defaultRouteForState(state) {
-  return currentUserPermissions(state).nav[0] || DEFAULT_ROUTE;
+  return currentUserPermissions(state).nav.find((routeId) => isClientRouteEnabled(state, routeId)) || DEFAULT_ROUTE;
 }
 
 function getHashRouteId() {
@@ -270,7 +273,7 @@ function renderNav(activeRouteId, state) {
   const permissions = currentUserPermissions(state);
   const role = currentUserRole(state);
   const visibleItems = state.session && state.client?.id
-    ? NAV_ITEMS.filter((item) => permissions.nav.includes(item.id))
+    ? NAV_ITEMS.filter((item) => permissions.nav.includes(item.id) && isClientRouteEnabled(state, item.id))
     : NAV_ITEMS;
 
   navRoot.innerHTML = visibleItems.map((item) => {
@@ -437,7 +440,7 @@ function render() {
   const routeId = getCurrentRouteId(state);
   const view = routes[routeId];
   const isAuthRoute = AUTH_ROUTES.includes(routeId);
-  const viewState = scopeStateForCurrentRole(state);
+  const viewState = scopeStateForCurrentRole(scopeStateForEnabledModules(state));
 
   document.body.dataset.appView = isAuthRoute ? "auth" : "workspace";
   setCurrencySettings(state.client);
@@ -517,6 +520,42 @@ store.subscribe((state, action) => {
 });
 
 window.addEventListener("hashchange", render);
+
+function featureModuleSignature(featureModules) {
+  return (featureModules || [])
+    .map((module) => `${module.id || module.moduleKey}:${module.enabled}:${module.updatedAt || ""}`)
+    .sort()
+    .join("|");
+}
+
+async function refreshWorkspaceFeatureModules() {
+  const state = store.getState();
+
+  if (
+    featureModuleRefreshPending ||
+    !state.session ||
+    !state.client?.id ||
+    state.platformAdmin ||
+    !isBackendConfigured()
+  ) {
+    return;
+  }
+
+  featureModuleRefreshPending = true;
+  try {
+    const featureModules = await loadWorkspaceFeatureModules(state.client.id);
+
+    if (featureModuleSignature(featureModules) !== featureModuleSignature(store.getState().featureModules)) {
+      store.dispatch({ type: "SET_FEATURE_MODULES", featureModules });
+    }
+  } catch {
+    // Keep the last known module configuration if a background check cannot complete.
+  } finally {
+    featureModuleRefreshPending = false;
+  }
+}
+
+window.setInterval(refreshWorkspaceFeatureModules, FEATURE_MODULE_REFRESH_MS);
 
 replaceIconPlaceholders(document);
 

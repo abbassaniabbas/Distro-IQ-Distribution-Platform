@@ -13,6 +13,7 @@ import {
   salesRepresentativeAccounts,
   salesRepresentativeNames
 } from "../services/rbac.js";
+import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -30,37 +31,37 @@ function financeTabHref(tabId) {
   return `#/finance?tab=${encodeURIComponent(tabId)}`;
 }
 
-function financeTabs() {
+function financeTabs(state) {
   return [
     {
       id: "overview",
       label: "Overview"
     },
-    {
+    ...(isModuleEnabled(state, "field_reports") ? [{
       id: "sales-reports",
       label: "Sales reports"
-    },
+    }] : []),
     {
       id: "product-revenue",
       label: "Product revenue"
     },
-    {
+    ...(isModuleEnabled(state, "credit_control") ? [{
       id: "credit-risk",
       label: "Credit & risk"
-    }
+    }] : [])
   ];
 }
 
-function activeFinanceTabId() {
+function activeFinanceTabId(state) {
   const requestedTab = financeRouteParams().get("tab") || DEFAULT_FINANCE_TAB;
 
-  return financeTabs().some((tab) => tab.id === requestedTab) ? requestedTab : DEFAULT_FINANCE_TAB;
+  return financeTabs(state).some((tab) => tab.id === requestedTab) ? requestedTab : DEFAULT_FINANCE_TAB;
 }
 
-function renderFinanceSubtabs(activeTabId) {
+function renderFinanceSubtabs(activeTabId, state) {
   return `
     <nav class="subtab-nav finance-subtabs" aria-label="Finance pages">
-      ${financeTabs().map((tab) => `
+      ${financeTabs(state).map((tab) => `
         <a
           class="subtab-link ${tab.id === activeTabId ? "is-active" : ""}"
           href="${escapeHtml(financeTabHref(tab.id))}"
@@ -391,7 +392,9 @@ function accountantMetricCard({ label, value, meta, iconName, summaryKey }) {
   `;
 }
 
-function renderAccountantSummaryCards(summary) {
+function renderAccountantSummaryCards(summary, state) {
+  const creditControlEnabled = isModuleEnabled(state, "credit_control");
+
   return `
     <div class="finance-kpis accountant-kpis">
       ${accountantMetricCard({
@@ -415,13 +418,13 @@ function renderAccountantSummaryCards(summary) {
         iconName: "wallet",
         summaryKey: "profit"
       })}
-      ${accountantMetricCard({
+      ${creditControlEnabled ? accountantMetricCard({
         label: "Credit owed",
         value: formatCurrency(summary.creditOwed),
         meta: "Open balances that can hurt cash flow",
         iconName: "alert",
         summaryKey: "creditOwed"
-      })}
+      }) : ""}
       ${accountantMetricCard({
         label: "Returns",
         value: formatCurrency(summary.returns),
@@ -744,7 +747,7 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
   }
 
   return `
-    ${renderAccountantSummaryCards(summary)}
+    ${renderAccountantSummaryCards(summary, state)}
     <section class="panel">
       ${panelHeader("Product revenue", "Top product lines by sales value")}
       <div class="bar-list">${renderAccountantProductRevenue(state)}</div>
@@ -754,12 +757,12 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
 
 function renderAccountantFinance({ state }) {
   const summary = getAccountantSummary(state);
-  const activeTabId = activeFinanceTabId();
+  const activeTabId = activeFinanceTabId(state);
   const permissions = currentUserPermissions(state);
 
   return `
     <section class="view finance-view accountant-finance">
-      ${renderFinanceSubtabs(activeTabId)}
+      ${renderFinanceSubtabs(activeTabId, state)}
       ${activeTabId === "credit-risk" ? renderRepresentativeCreditManager(state, permissions) : ""}
       ${activeTabId === "credit-risk" ? renderCreditLimitManager(state, permissions) : ""}
       ${renderAccountantFinanceTab(activeTabId, state, summary)}
