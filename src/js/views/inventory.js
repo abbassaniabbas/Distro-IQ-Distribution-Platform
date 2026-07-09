@@ -205,6 +205,17 @@ function duplicateProductName(state, name, productId = "") {
   ));
 }
 
+function duplicateProductSku(state, sku, productId = "") {
+  const nextSku = normalizedProductName(sku);
+  const currentProductId = String(productId || "").trim();
+
+  if (!nextSku) return false;
+
+  return (state.products || []).some((product) => (
+    product.id !== currentProductId && normalizedProductName(product.id) === nextSku
+  ));
+}
+
 function renderProductImage(product) {
   if (product.imageUrl) {
     return `<img src="${escapeHtml(product.imageUrl)}" alt="">`;
@@ -1230,9 +1241,15 @@ export function bindInventory({ root, store }) {
       return;
     }
 
+    if (duplicateProductSku(store.getState(), sku, existingProductId)) {
+      if (productMessage) productMessage.textContent = "A product with this SKU already exists. Use a different SKU.";
+      return;
+    }
+
     store.dispatch({
       type: "UPSERT_PRODUCT",
       productId,
+      sku,
       name: formData.get("name"),
       stockCategory: formData.get("stockCategory"),
       unit: formData.get("unit"),

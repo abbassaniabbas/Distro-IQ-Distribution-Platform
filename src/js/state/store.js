@@ -73,9 +73,13 @@ function quickSaleOrderId(transaction) {
 
 function orderFromSaleTransaction(transaction, state) {
   const customer = (state.retailers || []).find((item) => item.id === transaction.customerId);
+  const product = (state.products || []).find((item) => item.id === transaction.productId);
   const paymentType = transaction.paymentType || "cash";
   const paymentLabel = String(paymentType).toLowerCase();
   const date = String(transaction.date || transaction.createdAt || todayISO()).slice(0, 10);
+  const quantity = Number(transaction.quantity || 0);
+  const unitPrice = Number(transaction.unitPrice ?? transaction.unitPriceAtSale ?? (quantity ? Number(transaction.amount || 0) / quantity : product?.unitPrice ?? 0));
+  const unitCost = Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? 0);
 
   return {
     id: quickSaleOrderId(transaction),
@@ -98,7 +102,10 @@ function orderFromSaleTransaction(transaction, state) {
     items: [
       {
         productId: transaction.productId,
-        quantity: Number(transaction.quantity || 0)
+        productName: transaction.productName || product?.name || transaction.productId,
+        quantity,
+        unitPrice,
+        unitCost
       }
     ]
   };
@@ -205,22 +212,39 @@ function currentActorLabel(state) {
   return getCurrentActor(state).name || "Manager";
 }
 
-function changedFieldLabels(previousProduct, nextProduct) {
+function productFieldValue(key, value) {
+  if (key === "imageUrl") return value ? "picture set" : "no picture";
+  if (key === "stockCategory") return categoryNameForStockCategory(value);
+  if (value === undefined || value === null || value === "") return "blank";
+  return String(value);
+}
+
+function productChangeDetails(previousProduct, nextProduct) {
   if (!previousProduct) return [];
 
   const trackedFields = [
+    ["id", "SKU"],
+    ["name", "product name"],
+    ["stockCategory", "stock type"],
     ["stock", "stock"],
     ["reorderPoint", "reorder point"],
     ["unitCost", "cost price"],
     ["unitPrice", "selling price"],
     ["status", "status"],
     ["category", "category"],
-    ["unit", "unit"]
+    ["unit", "unit"],
+    ["imageUrl", "picture"]
   ];
 
   return trackedFields
     .filter(([key]) => String(previousProduct[key] ?? "") !== String(nextProduct[key] ?? ""))
-    .map(([, label]) => label);
+    .map(([key, label]) => ({
+      field: key,
+      label,
+      previousValue: previousProduct[key] ?? "",
+      nextValue: nextProduct[key] ?? "",
+      summary: `${label}: ${productFieldValue(key, previousProduct[key])} -> ${productFieldValue(key, nextProduct[key])}`
+    }));
 }
 
 function productActivitySummary(previousProduct, nextProduct) {
@@ -228,10 +252,55 @@ function productActivitySummary(previousProduct, nextProduct) {
     return `Added stock ${nextProduct.name} with ${nextProduct.stock} ${nextProduct.unit}`;
   }
 
-  const changedLabels = changedFieldLabels(previousProduct, nextProduct);
-  const changeText = changedLabels.length ? `: ${changedLabels.join(", ")}` : "";
+  return `Updated stock ${nextProduct.name}`;
+}
 
-  return `Updated stock ${nextProduct.name}${changeText}`;
+function freezeProductPricingOnExistingRecords(state, product) {
+  if (!product?.id) return;
+
+  const unitPrice = Number(product.unitPrice || 0);
+  const unitCost = Number(product.unitCost || 0);
+
+  (state.orders || []).forEach((order) => {
+    (order.items || []).forEach((item) => {
+      if (item.productId !== product.id) return;
+      if (item.productName === undefined) item.productName = product.name;
+      if (item.unitPrice === undefined && item.unitPriceAtSale === undefined) item.unitPrice = unitPrice;
+      if (item.unitCost === undefined && item.unitCostAtSale === undefined) item.unitCost = unitCost;
+    });
+  });
+
+  (state.stockTransactions || []).forEach((transaction) => {
+    if (transaction.productId !== product.id) return;
+    const quantity = Number(transaction.quantity || 0);
+    const transactionUnitPrice = quantity && Number(transaction.amount || 0) > 0
+      ? Number(transaction.amount || 0) / quantity
+      : unitPrice;
+    if (transaction.productName === undefined) transaction.productName = product.name;
+    if (transaction.unitPrice === undefined && transaction.unitPriceAtSale === undefined) transaction.unitPrice = transactionUnitPrice;
+    if (transaction.unitCost === undefined && transaction.unitCostAtSale === undefined) transaction.unitCost = unitCost;
+  });
+}
+
+function remapProductReferences(state, previousProductId, nextProductId) {
+  if (!previousProductId || !nextProductId || previousProductId === nextProductId) return;
+
+  (state.stockAssignments || []).forEach((assignment) => {
+    if (assignment.productId === previousProductId) assignment.productId = nextProductId;
+  });
+  (state.stockTransactions || []).forEach((transaction) => {
+    if (transaction.productId === previousProductId) transaction.productId = nextProductId;
+  });
+  (state.orders || []).forEach((order) => {
+    (order.items || []).forEach((item) => {
+      if (item.productId === previousProductId) item.productId = nextProductId;
+    });
+  });
+  (state.salesReports || []).forEach((report) => {
+    (report.reportLines || []).forEach((line) => {
+      if (line.productId === previousProductId) line.productId = nextProductId;
+    });
+  });
 }
 
 function appendActivityLog(state, activity) {
@@ -310,7 +379,10 @@ function createQuickSaleOrder(state, {
       items: [
         {
           productId: product.id,
-          quantity
+          productName: product.name,
+          quantity,
+          unitPrice: Number(product.unitPrice || 0),
+          unitCost: Number(product.unitCost || 0)
         }
       ]
     },
@@ -679,8 +751,11 @@ function reducer(currentState, action) {
           id: transactionId,
           type: transactionType,
           productId: assignment.productId,
+          productName: product.name,
           quantity,
           amount,
+          unitPrice: Number(product.unitPrice || 0),
+          unitCost: Number(product.unitCost || 0),
           paymentType,
           partyType: customerType,
           partyName: customerName,
@@ -790,10 +865,22 @@ function reducer(currentState, action) {
       const productId = String(action.productId || "").trim();
       const existingProduct = state.products.find((item) => item.id === productId);
       const previousProduct = existingProduct ? { ...existingProduct } : null;
+      const requestedStockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
+      const nextProductId = String(action.sku || productId || "").trim() || createId(requestedStockCategory === "equipment" ? "EQP" : "SKU");
+      const normalizedNextProductId = nextProductId.toLowerCase();
+      const duplicateProductId = state.products.some((item) => (
+        item.id !== productId && String(item.id || "").trim().toLowerCase() === normalizedNextProductId
+      ));
+      if (duplicateProductId) return state;
+
+      if (previousProduct) {
+        freezeProductPricingOnExistingRecords(state, previousProduct);
+      }
+
       const stockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
       const status = ["active", "inactive"].includes(String(action.status || "")) ? action.status : existingProduct?.status || "active";
       const product = {
-        id: productId || createId(stockCategory === "equipment" ? "EQP" : "SKU"),
+        id: nextProductId,
         name: String(action.name || existingProduct?.name || "New product").trim(),
         category: categoryNameForStockCategory(stockCategory),
         stockCategory,
@@ -813,6 +900,7 @@ function reducer(currentState, action) {
 
       if (existingProduct) {
         Object.assign(existingProduct, product);
+        remapProductReferences(state, previousProduct.id, product.id);
       } else {
         state.products = [product, ...state.products];
       }
@@ -822,7 +910,8 @@ function reducer(currentState, action) {
         actionType: existingProduct ? "updated" : "created",
         recordType: "inventory",
         recordLabel: product.id,
-        summary: productActivitySummary(previousProduct, product)
+        summary: productActivitySummary(previousProduct, product),
+        details: productChangeDetails(previousProduct, product)
       });
 
       return state;
@@ -889,8 +978,11 @@ function reducer(currentState, action) {
           id: createId("TXN"),
           type: recipientType.toLowerCase().includes("internal") ? "internal movement" : "supply",
           productId: product.id,
+          productName: product.name,
           quantity,
           amount: quantity * Number(product.unitPrice || 0),
+          unitPrice: Number(product.unitPrice || 0),
+          unitCost: Number(product.unitCost || 0),
           paymentType: "none",
           partyType: recipientType,
           partyName: recipientName,
@@ -1001,6 +1093,81 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "UPSERT_REP_CREDIT_LIMIT": {
+      const repName = String(action.repName || "").trim();
+      const repUserId = String(action.repUserId || "").trim();
+      const nextLimit = Math.max(0, Number(action.limit || 0));
+      if (!repName || !nextLimit) return state;
+
+      const normalizedRepName = repName.toLowerCase();
+      const paymentPeriodDays = normalizedPaymentPeriod(action.paymentPeriodDays ?? 1, 1);
+      const changedBy = currentActorLabel(state);
+      const changedAt = new Date().toISOString();
+      let limit = state.creditLimits.find((item) => (
+        (repUserId && item.repUserId === repUserId) ||
+        (
+          String(item.partyType || "").toLowerCase().includes("representative") &&
+          String(item.partyName || "").trim().toLowerCase() === normalizedRepName
+        )
+      ));
+      const previousLimit = Number(limit?.limit || 0);
+
+      if (!limit) {
+        limit = {
+          id: createId("CRD"),
+          partyType: "Sales Representative",
+          partyName: repName,
+          repUserId,
+          limit: nextLimit,
+          balance: 0,
+          previousLimit: 0,
+          discountPercent: 0,
+          paymentPeriodDays,
+          latePenaltyPercent: 0,
+          changedBy,
+          changedAt
+        };
+        state.creditLimits = [limit, ...state.creditLimits];
+      } else {
+        limit.previousLimit = previousLimit;
+        limit.partyType = "Sales Representative";
+        limit.partyName = repName;
+        limit.repUserId = repUserId || limit.repUserId || "";
+        limit.limit = nextLimit;
+        limit.paymentPeriodDays = paymentPeriodDays;
+        limit.changedBy = changedBy;
+        limit.changedAt = changedAt;
+      }
+
+      state.creditLimitHistory = [
+        {
+          id: createId("CLH"),
+          creditLimitId: limit.id,
+          partyType: limit.partyType,
+          partyName: limit.partyName,
+          previousLimit,
+          nextLimit,
+          discountPercent: Number(limit.discountPercent || 0),
+          paymentPeriodDays,
+          latePenaltyPercent: Number(limit.latePenaltyPercent || 0),
+          changedBy,
+          reason: String(action.reason || "Representative working credit limit updated").trim(),
+          changedAt
+        },
+        ...(state.creditLimitHistory || [])
+      ];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: previousLimit ? "updated" : "created",
+        recordType: "credit_limit",
+        recordLabel: repName,
+        summary: `Representative credit limit set for ${repName}`
+      });
+
+      return state;
+    }
+
     case "REVIEW_SALES_REPORT": {
       const report = state.salesReports.find((item) => item.id === action.reportId);
       if (report) {
@@ -1046,8 +1213,11 @@ function reducer(currentState, action) {
             id: createId("TXN"),
             type: "internal movement",
             productId: product.id,
+            productName: product.name,
             quantity,
             amount: 0,
+            unitPrice: Number(product.unitPrice || 0),
+            unitCost: Number(product.unitCost || 0),
             paymentType: "none",
             partyType: "Factory",
             partyName: "Stock replenishment",
@@ -1087,8 +1257,11 @@ function reducer(currentState, action) {
             id: createId("TXN"),
             type: "write off",
             productId: product.id,
+            productName: product.name,
             quantity,
             amount: 0,
+            unitPrice: Number(product.unitPrice || 0),
+            unitCost: Number(product.unitCost || 0),
             paymentType: "none",
             partyType: "Factory",
             partyName: reason,

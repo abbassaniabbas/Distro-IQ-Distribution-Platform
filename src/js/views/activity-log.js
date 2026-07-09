@@ -58,7 +58,7 @@ function repRecentActivityRows(state) {
     })
     .map((transaction) => {
       const isReturn = normalized(transaction.type) === "return";
-      const productName = productNameFor(state, transaction.productId);
+      const productName = transaction.productName || productNameFor(state, transaction.productId);
       const returnDisposition = isReturn ? returnDispositionLabel(transaction.returnDisposition) : "";
       const details = [
         `${formatNumber(transaction.quantity)} units`,
@@ -236,13 +236,17 @@ function renderRows(logs) {
     const actionLabel = actionTypeLabel(entry.actionType);
     const recordLabel = recordTypeLabel(entry.recordType);
     const userLabel = entry.actorEmail ? `${entry.actorName} ${entry.actorEmail}` : entry.actorName;
+    const detailLines = Array.isArray(entry.details)
+      ? entry.details.map((detail) => detail.summary).filter(Boolean)
+      : [];
     const searchIndex = [
       actionLabel,
       recordLabel,
       entry.recordLabel,
       entry.actorName,
       entry.actorEmail,
-      entry.summary
+      entry.summary,
+      detailLines.join(" ")
     ]
       .join(" ")
       .toLowerCase();
@@ -265,7 +269,10 @@ function renderRows(logs) {
           <strong>${escapeHtml(entry.actorName || "Team member")}</strong>
           ${entry.actorEmail ? `<div class="muted">${escapeHtml(entry.actorEmail)}</div>` : ""}
         </td>
-        <td>${escapeHtml(entry.summary || "Record updated")}</td>
+        <td>
+          ${escapeHtml(entry.summary || "Record updated")}
+          ${detailLines.length ? `<div class="muted">${detailLines.map(escapeHtml).join("<br>")}</div>` : ""}
+        </td>
       </tr>
     `;
   });

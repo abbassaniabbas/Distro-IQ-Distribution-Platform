@@ -64,7 +64,8 @@ export function createActivityLog({
   recordType,
   recordLabel = "",
   actor,
-  summary
+  summary,
+  details = []
 }) {
   return {
     id: createId("LOG"),
@@ -76,6 +77,7 @@ export function createActivityLog({
     actorName: actor?.name || "Team member",
     actorEmail: actor?.email || "",
     summary,
+    details,
     createdAt: new Date().toISOString()
   };
 }
@@ -141,7 +143,7 @@ function stockMovementActivityLogs(state, existingLogs) {
   return (state.stockTransactions || [])
     .map((transaction) => {
       const product = productMap.get(transaction.productId);
-      const productName = product?.name || transaction.productId || "Stock item";
+      const productName = transaction.productName || product?.name || transaction.productId || "Stock item";
       const actionType = transactionActionType(transaction);
       const entry = {
         id: `TXN-ACT-${transaction.id}`,
@@ -173,14 +175,14 @@ function financialTransactionActivityLogs(state) {
     })
     .map((transaction) => {
       const product = productMap.get(transaction.productId);
-      const productName = product?.name || transaction.productId || "Stock item";
+      const productName = transaction.productName || product?.name || transaction.productId || "Stock item";
       const type = String(transaction.type || "").toLowerCase();
       const isSale = type === "sale";
       const isReturn = type === "return";
       const quantity = Number(transaction.quantity || 0);
       const amount = isSale || isReturn
         ? Number(transaction.amount || 0)
-        : quantity * Number(product?.unitCost || product?.unitPrice || 0);
+        : quantity * Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? product?.unitPrice ?? 0);
       const actionType = isSale ? "sold" : isReturn ? "returned" : "reduced";
       const recordType = isSale || isReturn ? "sale" : "stock_movement";
       const actorName = transaction.recordedBy || transaction.staffResponsible || "Team member";

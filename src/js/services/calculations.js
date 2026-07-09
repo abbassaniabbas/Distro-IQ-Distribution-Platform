@@ -23,7 +23,8 @@ export function getOrderTotal(order, products) {
 
   return (order.items || []).reduce((total, item) => {
     const product = productMap.get(item.productId);
-    return total + (product?.unitPrice || 0) * item.quantity;
+    const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0);
+    return total + unitPrice * Number(item.quantity || 0);
   }, 0);
 }
 
@@ -60,8 +61,8 @@ export function getFinancialSalesLines(state) {
       return (order.items || []).map((item) => {
         const product = productMap.get(item.productId);
         const quantity = Number(item.quantity || 0);
-        const revenue = quantity * Number(product?.unitPrice || 0);
-        const cost = quantity * Number(product?.unitCost || 0);
+        const revenue = quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0);
+        const cost = quantity * Number(item.unitCost ?? item.unitCostAtSale ?? product?.unitCost ?? 0);
         const profit = revenue - cost;
 
         return {
@@ -70,7 +71,7 @@ export function getFinancialSalesLines(state) {
           source: "Sales order",
           date: dateOnly(order.createdAt || order.updatedAt || order.dueAt),
           productId: item.productId,
-          productName: product?.name || "Unknown product",
+          productName: item.productName || product?.name || "Unknown product",
           repName: route?.driver || order.repName || "Unassigned",
           customerName: retailer?.name || order.customerName || "Unknown customer",
           quantity,
@@ -99,7 +100,7 @@ export function getFinancialSalesLines(state) {
       const signedQuantity = isReturn ? -quantity : quantity;
       const grossAmount = Number(transaction.amount || quantity * Number(product?.unitPrice || 0));
       const revenue = isReturn ? -grossAmount : grossAmount;
-      const cost = signedQuantity * Number(product?.unitCost || 0);
+      const cost = signedQuantity * Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? 0);
       const profit = revenue - cost;
       const paymentType = transaction.paymentType || (isReturn ? "return" : "cash");
       const isCredit = String(paymentType || "").toLowerCase().includes("credit");
@@ -110,7 +111,7 @@ export function getFinancialSalesLines(state) {
         source: isReturn ? "Customer return" : "Rep quick sale",
         date: dateOnly(transaction.date || transaction.createdAt),
         productId: transaction.productId,
-        productName: product?.name || "Unknown product",
+        productName: transaction.productName || product?.name || "Unknown product",
         repName: transaction.recordedBy || "Sales Representative",
         customerName: transaction.partyName || "Customer",
         quantity: signedQuantity,

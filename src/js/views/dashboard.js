@@ -197,7 +197,8 @@ function rowPeriodMatches(value, period) {
 function salesValueFromOrder(order, productMap) {
   return (order.items || []).reduce((total, item) => {
     const product = productMap.get(item.productId);
-    return total + Number(product?.unitPrice || 0) * Number(item.quantity || 0);
+    const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0);
+    return total + unitPrice * Number(item.quantity || 0);
   }, 0);
 }
 
@@ -276,9 +277,10 @@ function buildCeoProductPerformance(state) {
       if (!row || !product) return;
 
       const quantity = Number(item.quantity || 0);
+      const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product.unitPrice ?? 0);
       row.orderedUnits += quantity;
       row.supermarketUnits += quantity;
-      row.salesValue += quantity * Number(product.unitPrice || 0);
+      row.salesValue += quantity * unitPrice;
       row.latestActivity = latestDate([row.latestActivity, order.createdAt || order.dueAt]);
     });
   });

@@ -7,7 +7,12 @@ import {
   getRetailerMap
 } from "../services/calculations.js";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
-import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
+import {
+  currentUserPermissions,
+  currentUserRole,
+  salesRepresentativeAccounts,
+  salesRepresentativeNames
+} from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -222,6 +227,60 @@ function renderCreditLimitManager(state, permissions) {
   `;
 }
 
+function renderRepresentativeCreditManager(state, permissions) {
+  if (!permissions.canSetCreditLimits) return "";
+
+  const representatives = salesRepresentativeAccounts(state);
+  const moneySymbol = currencySymbolFor(state.client);
+
+  return `
+    <section class="panel manager-tool-panel">
+      ${panelHeader("Sales representative credit", "Set the working credit amount a representative can sell before they settle")}
+      <form id="rep-credit-limit-form" class="manager-form-grid" novalidate>
+        <label class="field">
+          <span>Sales representative</span>
+          <select name="repKey" required ${representatives.length ? "" : "disabled"}>
+            <option value="">Choose representative</option>
+            ${representatives.map((account) => `
+              <option
+                value="${escapeHtml(account.userId || account.id || account.name)}"
+                data-rep-name="${escapeHtml(account.name)}"
+                data-rep-user-id="${escapeHtml(account.userId || "")}"
+              >
+                ${escapeHtml(account.name)}
+              </option>
+            `).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Working credit limit (${escapeHtml(moneySymbol)})</span>
+          <input name="limit" type="number" min="1" step="1000" inputmode="numeric" placeholder="0" required ${representatives.length ? "" : "disabled"}>
+        </label>
+        <label class="field">
+          <span>Days to settle</span>
+          <input name="paymentPeriodDays" type="number" min="0" step="1" inputmode="numeric" value="1" ${representatives.length ? "" : "disabled"}>
+        </label>
+        <label class="field span-full">
+          <span>Reason</span>
+          <input name="reason" placeholder="Daily route limit, risk review, payment performance" ${representatives.length ? "" : "disabled"}>
+        </label>
+        <div class="manager-form-actions span-full">
+          ${textButton({
+            iconName: "wallet",
+            label: "Save representative limit",
+            className: "primary",
+            type: "submit",
+            disabled: !representatives.length
+          })}
+        </div>
+        <span id="rep-credit-limit-message" class="field-error span-full">
+          ${representatives.length ? "" : "Add a sales representative in Team before setting a limit."}
+        </span>
+      </form>
+    </section>
+  `;
+}
+
 function renderCreditHistoryRows(state) {
   return (state.creditLimitHistory || []).map((entry) => {
     const searchIndex = [
@@ -287,7 +346,8 @@ function getAccountantSummary(state) {
     .filter((transaction) => String(transaction.type || "").toLowerCase() === "write off")
     .reduce((total, transaction) => {
       const product = productMap.get(transaction.productId);
-      return total + Number(transaction.quantity || 0) * Number(product?.unitCost || product?.unitPrice || 0);
+      const unitCost = Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? product?.unitPrice ?? 0);
+      return total + Number(transaction.quantity || 0) * unitCost;
     }, 0);
 
   return {
@@ -733,6 +793,7 @@ export function renderFinance({ state }) {
           iconName: "wallet"
         })}
       </div>
+      ${renderRepresentativeCreditManager(state, permissions)}
       ${renderCreditLimitManager(state, permissions)}
 
       <div class="finance-layout">
@@ -1020,6 +1081,39 @@ export function bindFinance({ root, store }) {
   }
 
   const creditForm = qs("#credit-limit-form", root);
+  const repCreditForm = qs("#rep-credit-limit-form", root);
+
+  repCreditForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(repCreditForm);
+    const message = qs("#rep-credit-limit-message", root);
+    const repSelect = repCreditForm.elements.repKey;
+    const selectedOption = repSelect?.selectedOptions?.[0];
+    const limit = Number(formData.get("limit") || 0);
+    const paymentPeriodDays = Number(formData.get("paymentPeriodDays") || 1);
+
+    if (message) message.textContent = "";
+
+    if (!selectedOption?.value || !limit || limit <= 0) {
+      if (message) message.textContent = "Choose a representative and enter a limit.";
+      return;
+    }
+
+    if (paymentPeriodDays < 0) {
+      if (message) message.textContent = "Days to settle cannot be negative.";
+      return;
+    }
+
+    store.dispatch({
+      type: "UPSERT_REP_CREDIT_LIMIT",
+      repName: selectedOption.dataset.repName,
+      repUserId: selectedOption.dataset.repUserId,
+      limit,
+      paymentPeriodDays,
+      reason: formData.get("reason"),
+      message: "Representative credit limit saved"
+    });
+  });
 
   creditForm?.addEventListener("submit", (event) => {
     event.preventDefault();
