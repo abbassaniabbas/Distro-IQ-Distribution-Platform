@@ -159,6 +159,35 @@ export function getCreditLimitForParty(creditLimits = [], partyName = "") {
   )) || null;
 }
 
+export function getRepresentativeDailyCreditUsed(state = {}, repName = "", date = dateOnly(new Date().toISOString())) {
+  const normalizedRepName = String(repName || "").trim().toLowerCase();
+  const targetDate = dateOnly(date);
+
+  if (!normalizedRepName || !targetDate) return 0;
+
+  const total = (state.stockTransactions || []).reduce((sum, transaction) => {
+    const type = String(transaction.type || "").toLowerCase();
+    const paymentType = String(transaction.paymentType || "").toLowerCase();
+    const transactionDate = dateOnly(transaction.date || transaction.createdAt);
+    const recordedBy = String(transaction.recordedBy || "").trim().toLowerCase();
+
+    if (recordedBy !== normalizedRepName || transactionDate !== targetDate || (type !== "sale" && type !== "return")) {
+      return sum;
+    }
+
+    if (Number.isFinite(Number(transaction.creditImpact)) && Number(transaction.creditImpact || 0) !== 0) {
+      return sum + Number(transaction.creditImpact || 0);
+    }
+
+    if (!paymentType.includes("credit")) return sum;
+
+    const amount = Number(transaction.amount || 0);
+    return sum + (type === "return" ? -amount : amount);
+  }, 0);
+
+  return Math.max(0, total);
+}
+
 function boundedScore(value) {
   return Math.max(0, Math.min(100, Number(value || 0)));
 }

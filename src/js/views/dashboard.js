@@ -7,6 +7,7 @@ import {
   getFinancialSalesLines,
   getCreditLimitForParty,
   getCustomerRating,
+  getRepresentativeDailyCreditUsed,
   getLowStockProducts,
   getOrdersWithTotals,
   getProductMap,
@@ -1801,14 +1802,17 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
   `;
 }
 
-function renderRepCreditPanel(creditLimit, creditUsage) {
+function renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage) {
+  const dailyLimit = Number(creditLimit?.limit || 0);
+  const creditLeft = Math.max(0, dailyLimit - Number(dailyCreditUsed || 0));
+
   return `
     <section class="panel rep-credit-panel">
-      ${panelHeader("Credit", creditLimit ? `${formatCurrency(creditLimit.balance)} of ${formatCurrency(creditLimit.limit)}` : "No limit set")}
+      ${panelHeader("Daily credit", creditLimit ? `${formatCurrency(dailyCreditUsed)} of ${formatCurrency(dailyLimit)} used today` : "No daily limit set")}
       <div class="stock-line rep-credit-line">
         <div class="stock-meta">
           <span>${formatPercent(creditUsage)} used</span>
-          <span>${formatCurrency(Math.max(0, Number(creditLimit?.limit || 0) - Number(creditLimit?.balance || 0)))} left</span>
+          <span>${formatCurrency(creditLeft)} left today</span>
         </div>
         ${progressBar(creditUsage, creditUsage >= 100 ? "danger" : creditUsage >= 85 ? "warning" : "good")}
       </div>
@@ -1822,7 +1826,8 @@ function renderSalesRepDashboard(state) {
   const transactions = todaysRepTransactions(state, repName);
   const summary = repDaySummary(transactions);
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], repName);
-  const creditUsage = creditLimit?.limit ? (Number(creditLimit.balance || 0) / Number(creditLimit.limit || 0)) * 100 : 0;
+  const dailyCreditUsed = getRepresentativeDailyCreditUsed(state, repName, todayISO());
+  const creditUsage = creditLimit?.limit ? (dailyCreditUsed / Number(creditLimit.limit || 0)) * 100 : 0;
   const stockInHand = assignments.reduce((total, assignment) => total + assignment.outstanding, 0);
   const existingReport = (state.salesReports || []).find((report) => (
     normalized(report.repName) === normalized(repName) &&
@@ -1846,7 +1851,7 @@ function renderSalesRepDashboard(state) {
             <strong>${formatCurrency(summary.salesAmount)}</strong>
           </div>
           <div class="${creditUsage >= 85 ? "is-warning" : ""}">
-            <span>Credit</span>
+            <span>Today credit</span>
             <strong>${formatPercent(creditUsage)}</strong>
           </div>
         </div>
@@ -1855,7 +1860,7 @@ function renderSalesRepDashboard(state) {
       <div class="rep-main-grid">
         <div class="rep-side-stack">
           ${renderRepQuickLog(state, assignments)}
-          ${renderRepCreditPanel(creditLimit, creditUsage)}
+          ${renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage)}
         </div>
         ${renderRepReportPanel(repName, transactions, summary, existingReport, state)}
       </div>
@@ -2366,11 +2371,12 @@ function bindSalesRepDashboard({ root, store }) {
     if (isCreditSale) {
       const repLimit = getCreditLimitForParty(state.creditLimits || [], repName);
       const customerLimit = getCreditLimitForParty(state.creditLimits || [], customer.name);
-      const repProjected = Number(repLimit?.balance || 0) + amount;
+      const repCreditUsedToday = getRepresentativeDailyCreditUsed(state, repName, todayISO());
+      const repProjected = repCreditUsedToday + amount;
       const customerProjected = Number(customerLimit?.balance || 0) + amount;
 
       if (!repLimit?.limit || repProjected > Number(repLimit.limit || 0)) {
-        setRepMessage(message, "Credit limit reached for this trip.", "error");
+        setRepMessage(message, !repLimit?.limit ? "Daily credit limit has not been set." : "Daily credit limit reached for today.", "error");
         return;
       }
 

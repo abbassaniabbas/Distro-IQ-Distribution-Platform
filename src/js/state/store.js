@@ -955,7 +955,7 @@ function reducer(currentState, action) {
         ...(state.stockTransactions || [])
       ];
 
-      updateCreditBalance(state, repName, creditImpact);
+      // Representative credit is recalculated daily from today's transactions.
       updateCreditBalance(state, customerName, creditImpact);
 
       appendActivityLog(state, {
