@@ -458,6 +458,7 @@ function createDispatchSalesOrder(state, {
   staffName
 }) {
   const customer = findRetailerByName(state, recipientName);
+  const dispatchesToRepresentative = String(recipientType || "").toLowerCase().includes("representative");
   const orderId = createId("ORD");
 
   state.orders = [
@@ -477,7 +478,7 @@ function createDispatchSalesOrder(state, {
       dueAt: dispatchDate,
       createdAt: dispatchDate,
       updatedAt: dispatchDate,
-      repName: staffName,
+      repName: dispatchesToRepresentative ? recipientName : staffName,
       repUserId: state.user?.id || "",
       items: [
         {
@@ -1117,6 +1118,9 @@ function reducer(currentState, action) {
       const quantity = Math.max(0, Number(action.quantity || 0));
       const recipientType = String(action.recipientType || "Recipient").trim();
       const recipientName = String(action.recipientName || "Recipient").trim();
+      const normalizedRecipientType = recipientType.toLowerCase();
+      const isInternalDispatch = normalizedRecipientType.includes("internal");
+      const isRepresentativeDispatch = normalizedRecipientType.includes("representative");
       const destination = String(action.destination || recipientType).trim();
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
@@ -1128,14 +1132,14 @@ function reducer(currentState, action) {
         return state;
       }
 
-      if (recipientType.toLowerCase().includes("representative") && !isSalesRepresentativeName(state, recipientName)) {
+      if (isRepresentativeDispatch && !isSalesRepresentativeName(state, recipientName)) {
         return state;
       }
 
       product.stock = Math.max(0, Number(product.stock || 0) - quantity);
       product.updatedAt = dispatchDate;
 
-      if (recipientType.toLowerCase().includes("representative")) {
+      if (isRepresentativeDispatch) {
         state.stockAssignments = [
           {
             id: createId("ASN"),
@@ -1154,7 +1158,7 @@ function reducer(currentState, action) {
         ];
       }
 
-      if (recipientType.toLowerCase().includes("supermarket") || recipientType.toLowerCase().includes("customer")) {
+      if (!isInternalDispatch) {
         orderId = createDispatchSalesOrder(state, {
           transactionId,
           product,
@@ -1170,7 +1174,7 @@ function reducer(currentState, action) {
       state.stockTransactions = [
         {
           id: transactionId,
-          type: recipientType.toLowerCase().includes("internal") ? "internal movement" : "supply",
+          type: isInternalDispatch ? "internal movement" : "supply",
           productId: product.id,
           productName: product.name,
           quantity,
