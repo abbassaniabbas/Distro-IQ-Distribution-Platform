@@ -261,6 +261,16 @@ function messageBelongsToCurrentUser(state, message) {
   );
 }
 
+function messageIsFromAccount(message, account) {
+  const accountEmail = String(account?.email || "").trim().toLowerCase();
+
+  return (
+    (account?.id && message.fromAccountId === account.id) ||
+    (account?.userId && message.fromUserId === account.userId) ||
+    (accountEmail && String(message.fromEmail || "").trim().toLowerCase() === accountEmail)
+  );
+}
+
 function productFieldValue(key, value) {
   if (key === "imageUrl") return value ? "picture set" : "no picture";
   if (key === "stockCategory") return categoryNameForStockCategory(value);
@@ -800,11 +810,37 @@ function reducer(currentState, action) {
           toEmail: recipient.email || "",
           toRole: recipient.role || "",
           body,
+          audience: shouldSendToAllStaff ? "all_staff" : "direct",
           readAt: "",
           createdAt: new Date().toISOString()
         })),
         ...(state.messages || [])
       ];
+
+      return state;
+    }
+
+    case "MARK_CONVERSATION_READ": {
+      if (!state.client?.id) return state;
+
+      const peerAccountId = String(action.peerAccountId || "").trim();
+      const currentAccount = currentWorkspaceAccount(state);
+
+      if (!peerAccountId || !currentAccount) return state;
+
+      const peerAccount = (state.accounts || []).find((account) => account.id === peerAccountId);
+      if (!peerAccount) return state;
+
+      const readAt = new Date().toISOString();
+      (state.messages || []).forEach((message) => {
+        if (
+          messageBelongsToCurrentUser(state, message) &&
+          messageIsFromAccount(message, peerAccount) &&
+          !message.readAt
+        ) {
+          message.readAt = readAt;
+        }
+      });
 
       return state;
     }
@@ -1421,6 +1457,86 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "UPSERT_CUSTOMER_CREDIT_LIMIT": {
+      const customer = state.retailers.find((item) => item.id === action.customerId);
+      const nextLimit = Math.max(0, Number(action.limit || 0));
+
+      if (!customer || !nextLimit) return state;
+
+      const customerName = String(customer.name || "").trim();
+      const normalizedCustomerName = customerName.toLowerCase();
+      const paymentPeriodDays = normalizedPaymentPeriod(action.paymentPeriodDays ?? 14);
+      const discountPercent = boundedPercent(action.discountPercent);
+      const latePenaltyPercent = boundedPercent(action.latePenaltyPercent);
+      const changedBy = currentActorLabel(state);
+      const changedAt = new Date().toISOString();
+      let limit = state.creditLimits.find((item) => (
+        item.retailerId === customer.id ||
+        (
+          String(item.partyType || "").toLowerCase().includes("supermarket") &&
+          String(item.partyName || "").trim().toLowerCase() === normalizedCustomerName
+        )
+      ));
+      const previousLimit = Number(limit?.limit || 0);
+
+      if (!limit) {
+        limit = {
+          id: createId("CRD"),
+          partyType: "Supermarket",
+          partyName: customerName,
+          retailerId: customer.id,
+          limit: nextLimit,
+          balance: Number(customer.outstanding || 0),
+          previousLimit: 0,
+          discountPercent,
+          paymentPeriodDays,
+          latePenaltyPercent,
+          changedBy,
+          changedAt
+        };
+        state.creditLimits = [limit, ...state.creditLimits];
+      } else {
+        limit.previousLimit = previousLimit;
+        limit.partyType = "Supermarket";
+        limit.partyName = customerName;
+        limit.retailerId = customer.id;
+        limit.limit = nextLimit;
+        limit.discountPercent = discountPercent;
+        limit.paymentPeriodDays = paymentPeriodDays;
+        limit.latePenaltyPercent = latePenaltyPercent;
+        limit.changedBy = changedBy;
+        limit.changedAt = changedAt;
+      }
+
+      state.creditLimitHistory = [
+        {
+          id: createId("CLH"),
+          creditLimitId: limit.id,
+          partyType: limit.partyType,
+          partyName: limit.partyName,
+          previousLimit,
+          nextLimit,
+          discountPercent,
+          paymentPeriodDays,
+          latePenaltyPercent,
+          changedBy,
+          reason: String(action.reason || "Customer credit terms updated").trim(),
+          changedAt
+        },
+        ...(state.creditLimitHistory || [])
+      ];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: previousLimit ? "updated" : "created",
+        recordType: "credit_limit",
+        recordLabel: customerName,
+        summary: `Customer credit terms set for ${customerName}`
+      });
+
+      return state;
+    }
+
     case "REVIEW_SALES_REPORT": {
       const report = state.salesReports.find((item) => item.id === action.reportId);
       if (report) {
@@ -1605,9 +1721,10 @@ function reducer(currentState, action) {
         if (!creditLimit) {
           creditLimit = {
             id: createId("CRD"),
-            partyType: "Customer",
-            partyName: nextName,
-            limit: requestedLimit,
+          partyType: "Customer",
+          partyName: nextName,
+          retailerId: retailer.id,
+          limit: requestedLimit,
             balance: retailer.outstanding,
             previousLimit: 0,
             changedBy,
@@ -1617,6 +1734,7 @@ function reducer(currentState, action) {
         } else {
           creditLimit.previousLimit = Number(creditLimit.limit || 0);
           creditLimit.partyName = nextName;
+          creditLimit.retailerId = retailer.id;
           creditLimit.limit = requestedLimit;
           creditLimit.balance = retailer.outstanding;
           creditLimit.changedBy = changedBy;

@@ -179,49 +179,63 @@ function renderCreditLimitManager(state, permissions) {
   if (!permissions.canSetCreditLimits) return "";
 
   const moneySymbol = currencySymbolFor(state.client);
+  const customers = [...(state.retailers || [])]
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader("Credit terms manager", "Set limit, discount, payment period, and late-payment penalty with retained history")}
+      ${panelHeader("Customer credit terms", "Set limit, discount, payment period, and late-payment penalty with retained history")}
       <form id="credit-limit-form" class="manager-form-grid" novalidate>
         <label class="field">
-          <span>Account</span>
-          <select name="creditLimitId" required>
-            <option value="">Choose account</option>
-            ${state.creditLimits.map((limit) => `
-              <option value="${escapeHtml(limit.id)}">${escapeHtml(limit.partyName)} - ${escapeHtml(limit.partyType)}</option>
-            `).join("")}
+          <span>Customer</span>
+          <select name="customerId" required ${customers.length ? "" : "disabled"}>
+            <option value="">Choose customer</option>
+            ${customers.map((customer) => {
+              const limit = state.creditLimits.find((item) => (
+                item.retailerId === customer.id ||
+                String(item.partyName || "").trim().toLowerCase() === String(customer.name || "").trim().toLowerCase()
+              ));
+
+              return `
+                <option value="${escapeHtml(customer.id)}" data-credit-limit-id="${escapeHtml(limit?.id || "")}">
+                  ${escapeHtml(customer.name)}${limit ? "" : " - no limit set"}
+                </option>
+              `;
+            }).join("")}
           </select>
         </label>
         <label class="field">
           <span>New limit (${escapeHtml(moneySymbol)})</span>
-          <input name="limit" type="number" min="1" step="1000" inputmode="numeric" placeholder="0" required>
+          <input name="limit" type="number" min="1" step="1000" inputmode="numeric" placeholder="0" required ${customers.length ? "" : "disabled"}>
         </label>
         <label class="field">
           <span>Discount (%)</span>
-          <input name="discountPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
+          <input name="discountPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0" ${customers.length ? "" : "disabled"}>
         </label>
         <label class="field">
           <span>Payment period</span>
-          <input name="paymentPeriodDays" type="number" min="0" step="1" inputmode="numeric" placeholder="14">
+          <input name="paymentPeriodDays" type="number" min="0" step="1" inputmode="numeric" placeholder="14" ${customers.length ? "" : "disabled"}>
         </label>
         <label class="field">
           <span>Late payment penalty (%)</span>
-          <input name="latePenaltyPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0">
+          <input name="latePenaltyPercent" type="number" min="0" max="100" step="0.1" inputmode="decimal" placeholder="0" ${customers.length ? "" : "disabled"}>
         </label>
         <label class="field span-full">
           <span>Reason</span>
-          <input name="reason" placeholder="Route growth, discount approval, payment performance, risk review">
+          <input name="reason" placeholder="Payment performance, credit review, approved discount" ${customers.length ? "" : "disabled"}>
         </label>
         <div class="manager-form-actions span-full">
           ${textButton({
             iconName: "wallet",
-            label: "Update credit terms",
+            label: "Save customer credit terms",
             className: "primary",
-            type: "submit"
+            type: "submit",
+            disabled: !customers.length
           })}
         </div>
-        <span id="credit-limit-message" class="field-error span-full"></span>
+        <span id="credit-limit-message" class="field-error span-full">
+          ${customers.length ? "" : "Add a customer before setting credit terms."}
+        </span>
       </form>
     </section>
   `;
@@ -719,7 +733,7 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
     return `
       ${renderAccountantFilters(state)}
       <section class="panel" data-export-table="true" data-export-title="Credit reports">
-        ${panelHeader("Credit reports", "Read-only balances and approved limits")}
+        ${panelHeader("Credit reports", "Balances, approved limits, and payment risk")}
         ${table(
           ["Account", "Status", "Balance", "Limit", "Available", "Usage", "Updated"],
           renderAccountantCreditRows(state),
@@ -741,10 +755,13 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
 function renderAccountantFinance({ state }) {
   const summary = getAccountantSummary(state);
   const activeTabId = activeFinanceTabId();
+  const permissions = currentUserPermissions(state);
 
   return `
     <section class="view finance-view accountant-finance">
       ${renderFinanceSubtabs(activeTabId)}
+      ${activeTabId === "credit-risk" ? renderRepresentativeCreditManager(state, permissions) : ""}
+      ${activeTabId === "credit-risk" ? renderCreditLimitManager(state, permissions) : ""}
       ${renderAccountantFinanceTab(activeTabId, state, summary)}
     </section>
   `;
@@ -1077,7 +1094,6 @@ function exportAccountantReport(root, format) {
 export function bindFinance({ root, store }) {
   if (root.querySelector(".accountant-finance")) {
     bindAccountantFinance({ root });
-    return;
   }
 
   const creditForm = qs("#credit-limit-form", root);
@@ -1119,14 +1135,16 @@ export function bindFinance({ root, store }) {
     event.preventDefault();
     const formData = new FormData(creditForm);
     const message = qs("#credit-limit-message", root);
-    const creditLimitId = String(formData.get("creditLimitId") || "");
+    const customerId = String(formData.get("customerId") || "");
+    const selectedOption = creditForm.elements.customerId?.selectedOptions?.[0];
+    const creditLimitId = String(selectedOption?.dataset.creditLimitId || "");
     const limit = Number(formData.get("limit") || 0);
     const paymentPeriodDays = Number(formData.get("paymentPeriodDays") || 0);
 
     if (message) message.textContent = "";
 
-    if (!creditLimitId || !limit || limit <= 0) {
-      if (message) message.textContent = "Choose an account and enter a new limit.";
+    if (!customerId || !limit || limit <= 0) {
+      if (message) message.textContent = "Choose a customer and enter a new limit.";
       return;
     }
 
@@ -1135,16 +1153,27 @@ export function bindFinance({ root, store }) {
       return;
     }
 
-    store.dispatch({
-      type: "UPDATE_CREDIT_LIMIT",
-      creditLimitId,
-      limit,
-      discountPercent: Number(formData.get("discountPercent") || 0),
-      paymentPeriodDays,
-      latePenaltyPercent: Number(formData.get("latePenaltyPercent") || 0),
-      reason: formData.get("reason"),
-      message: "Credit terms updated"
-    });
+    store.dispatch(creditLimitId
+      ? {
+          type: "UPDATE_CREDIT_LIMIT",
+          creditLimitId,
+          limit,
+          discountPercent: Number(formData.get("discountPercent") || 0),
+          paymentPeriodDays,
+          latePenaltyPercent: Number(formData.get("latePenaltyPercent") || 0),
+          reason: formData.get("reason"),
+          message: "Credit terms updated"
+        }
+      : {
+          type: "UPSERT_CUSTOMER_CREDIT_LIMIT",
+          customerId,
+          limit,
+          discountPercent: Number(formData.get("discountPercent") || 0),
+          paymentPeriodDays,
+          latePenaltyPercent: Number(formData.get("latePenaltyPercent") || 0),
+          reason: formData.get("reason"),
+          message: "Customer credit terms saved"
+        });
   });
 
   qsa(".js-mark-paid", root).forEach((button) => {

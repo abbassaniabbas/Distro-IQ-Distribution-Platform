@@ -431,6 +431,7 @@ async function exportClientData(adminClient: ReturnType<typeof createClient>, ca
     "memberships",
     "invites",
     "activity_logs",
+    "workspace_messages",
     "stock_categories",
     "stock_products",
     "stock_assignments",

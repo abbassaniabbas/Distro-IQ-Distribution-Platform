@@ -64,6 +64,27 @@ function mapActivityLog(row) {
   };
 }
 
+function mapWorkspaceMessage(row) {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    fromAccountId: row.from_account_id || "",
+    fromUserId: row.from_user_id || "",
+    fromName: row.from_name || "Team member",
+    fromEmail: row.from_email || "",
+    fromRole: row.from_role || "",
+    toAccountId: row.to_account_id || "",
+    toUserId: row.to_user_id || "",
+    toName: row.to_name || "Team member",
+    toEmail: row.to_email || "",
+    toRole: row.to_role || "",
+    body: row.body || "",
+    audience: row.audience || "direct",
+    readAt: row.read_at || "",
+    createdAt: row.created_at
+  };
+}
+
 function mapPlatformClient(row) {
   return {
     id: row.client_id || row.id,
@@ -270,14 +291,16 @@ export async function loadWorkspace() {
     return {
       client: null,
       accounts: [],
-      invites: []
+      invites: [],
+      messages: []
     };
   }
 
   const [
     { data: accountRows, error: accountError },
     { data: inviteRows, error: inviteError },
-    { data: activityRows, error: activityError }
+    { data: activityRows, error: activityError },
+    { data: messageRows, error: messageError }
   ] = await Promise.all([
     supabase
       .from("memberships")
@@ -293,7 +316,10 @@ export async function loadWorkspace() {
       .from("activity_logs")
       .select("id, client_id, action_type, record_type, record_label, actor_user_id, actor_name, actor_email, summary, created_at")
       .eq("client_id", client.id)
-      .order("created_at", { ascending: false })
+      .order("created_at", { ascending: false }),
+    supabase.rpc("get_my_workspace_messages", {
+      p_client_id: client.id
+    })
   ]);
 
   if (accountError) {
@@ -308,11 +334,16 @@ export async function loadWorkspace() {
     console.warn("Activity log could not be loaded:", activityError.message);
   }
 
+  if (messageError) {
+    console.warn("Messages could not be loaded:", messageError.message);
+  }
+
   return {
     client,
     accounts: (accountRows || []).map(mapAccount),
     invites: (inviteRows || []).map(mapInvite),
-    activityLogs: activityError ? [] : (activityRows || []).map(mapActivityLog)
+    activityLogs: activityError ? [] : (activityRows || []).map(mapActivityLog),
+    messages: messageError ? [] : (messageRows || []).map(mapWorkspaceMessage)
   };
 }
 
@@ -613,4 +644,42 @@ export async function activateCurrentMembership(clientId) {
 export async function recordActivity(payload) {
   throwIfBackendMissing();
   await recordWorkspaceActivity(payload);
+}
+
+function workspaceMessageError(error) {
+  const message = String(error?.message || "");
+
+  if (message.includes("workspace_message") || message.includes("get_my_workspace_messages")) {
+    return new Error("Messaging is not installed in Supabase yet. Run the updated supabase/schema.sql, then try again.");
+  }
+
+  return error instanceof Error ? error : new Error("The message could not be sent.");
+}
+
+export async function sendWorkspaceMessage({ clientId, recipientAccountId, sendToAllStaff, body }) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("send_workspace_message", {
+    p_client_id: clientId,
+    p_body: String(body || "").trim(),
+    p_recipient_membership_id: sendToAllStaff ? null : recipientAccountId,
+    p_audience: sendToAllStaff ? "all_staff" : "direct"
+  });
+
+  if (error) throw workspaceMessageError(error);
+
+  return loadWorkspace();
+}
+
+export async function markWorkspaceConversationRead({ clientId, peerAccountId }) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("mark_my_workspace_conversation_read", {
+    p_client_id: clientId,
+    p_peer_membership_id: peerAccountId
+  });
+
+  if (error) throw workspaceMessageError(error);
 }

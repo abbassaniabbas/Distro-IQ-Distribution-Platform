@@ -70,6 +70,23 @@ create table if not exists public.activity_logs (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.workspace_messages (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  from_membership_id uuid not null references public.memberships(id) on delete cascade,
+  to_membership_id uuid not null references public.memberships(id) on delete cascade,
+  audience text not null default 'direct' check (audience in ('direct', 'all_staff')),
+  body text not null check (char_length(trim(body)) between 1 and 800),
+  read_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists workspace_messages_recipient_created_at_idx
+on public.workspace_messages (client_id, to_membership_id, created_at desc);
+
+create index if not exists workspace_messages_sender_created_at_idx
+on public.workspace_messages (client_id, from_membership_id, created_at desc);
+
 create table if not exists public.stock_categories (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -265,6 +282,7 @@ alter table public.clients enable row level security;
 alter table public.memberships enable row level security;
 alter table public.invites enable row level security;
 alter table public.activity_logs enable row level security;
+alter table public.workspace_messages enable row level security;
 alter table public.stock_categories enable row level security;
 alter table public.stock_products enable row level security;
 alter table public.stock_assignments enable row level security;
@@ -397,6 +415,229 @@ as $$
       and status = 'active'
       and role = any(p_roles)
   );
+$$;
+
+create or replace function public.get_my_workspace_messages(p_client_id uuid)
+returns table (
+  id uuid,
+  client_id uuid,
+  from_account_id uuid,
+  from_user_id uuid,
+  from_name text,
+  from_email text,
+  from_role text,
+  to_account_id uuid,
+  to_user_id uuid,
+  to_name text,
+  to_email text,
+  to_role text,
+  body text,
+  audience text,
+  read_at timestamptz,
+  created_at timestamptz
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_current_membership_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select memberships.id
+  into v_current_membership_id
+  from public.memberships
+  where memberships.client_id = p_client_id
+    and memberships.user_id = auth.uid()
+    and memberships.status = 'active'
+  limit 1;
+
+  if v_current_membership_id is null then
+    raise exception 'Company access required';
+  end if;
+
+  return query
+  select
+    messages.id,
+    messages.client_id,
+    sender.id,
+    sender.user_id,
+    sender.name,
+    sender.email,
+    sender.role,
+    recipient.id,
+    recipient.user_id,
+    recipient.name,
+    recipient.email,
+    recipient.role,
+    messages.body,
+    messages.audience,
+    messages.read_at,
+    messages.created_at
+  from public.workspace_messages messages
+  join public.memberships sender on sender.id = messages.from_membership_id
+  join public.memberships recipient on recipient.id = messages.to_membership_id
+  where messages.client_id = p_client_id
+    and (
+      messages.from_membership_id = v_current_membership_id
+      or messages.to_membership_id = v_current_membership_id
+    )
+  order by messages.created_at asc;
+end;
+$$;
+
+create or replace function public.send_workspace_message(
+  p_client_id uuid,
+  p_body text,
+  p_recipient_membership_id uuid default null,
+  p_audience text default 'direct'
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_sender public.memberships%rowtype;
+  v_body text;
+  v_audience text;
+  v_count integer := 0;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select *
+  into v_sender
+  from public.memberships
+  where client_id = p_client_id
+    and user_id = auth.uid()
+    and status = 'active'
+  limit 1;
+
+  if v_sender.id is null then
+    raise exception 'Company access required';
+  end if;
+
+  v_body := trim(coalesce(p_body, ''));
+  v_audience := coalesce(nullif(trim(p_audience), ''), 'direct');
+
+  if char_length(v_body) < 1 or char_length(v_body) > 800 then
+    raise exception 'Messages must be between 1 and 800 characters';
+  end if;
+
+  if v_audience = 'all_staff' then
+    if v_sender.role not in ('manager', 'ceo') then
+      raise exception 'Only managers and CEOs can message all staff';
+    end if;
+
+    insert into public.workspace_messages (
+      client_id,
+      from_membership_id,
+      to_membership_id,
+      audience,
+      body
+    )
+    select
+      p_client_id,
+      v_sender.id,
+      recipient.id,
+      'all_staff',
+      v_body
+    from public.memberships recipient
+    where recipient.client_id = p_client_id
+      and recipient.id <> v_sender.id
+      and recipient.status in ('active', 'invited');
+
+    get diagnostics v_count = row_count;
+
+    if v_count = 0 then
+      raise exception 'No staff accounts are available to receive this message';
+    end if;
+
+    return v_count;
+  end if;
+
+  if v_audience <> 'direct' then
+    raise exception 'Invalid message audience';
+  end if;
+
+  if p_recipient_membership_id is null then
+    raise exception 'Choose a staff member';
+  end if;
+
+  if not exists (
+    select 1
+    from public.memberships recipient
+    where recipient.id = p_recipient_membership_id
+      and recipient.client_id = p_client_id
+      and recipient.id <> v_sender.id
+      and recipient.status in ('active', 'invited')
+  ) then
+    raise exception 'The selected staff member is not available';
+  end if;
+
+  insert into public.workspace_messages (
+    client_id,
+    from_membership_id,
+    to_membership_id,
+    audience,
+    body
+  )
+  values (
+    p_client_id,
+    v_sender.id,
+    p_recipient_membership_id,
+    'direct',
+    v_body
+  );
+
+  return 1;
+end;
+$$;
+
+create or replace function public.mark_my_workspace_conversation_read(
+  p_client_id uuid,
+  p_peer_membership_id uuid
+)
+returns integer
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_current_membership_id uuid;
+  v_count integer := 0;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select memberships.id
+  into v_current_membership_id
+  from public.memberships
+  where memberships.client_id = p_client_id
+    and memberships.user_id = auth.uid()
+    and memberships.status = 'active'
+  limit 1;
+
+  if v_current_membership_id is null then
+    raise exception 'Company access required';
+  end if;
+
+  update public.workspace_messages
+  set read_at = now()
+  where client_id = p_client_id
+    and from_membership_id = p_peer_membership_id
+    and to_membership_id = v_current_membership_id
+    and read_at is null;
+
+  get diagnostics v_count = row_count;
+  return v_count;
+end;
 $$;
 
 create or replace function public.create_client_workspace(
@@ -878,6 +1119,9 @@ grant execute on function public.is_client_member(uuid) to authenticated;
 grant execute on function public.is_client_admin(uuid) to authenticated;
 grant execute on function public.is_platform_admin() to authenticated;
 grant execute on function public.has_client_role(uuid, text[]) to authenticated;
+grant execute on function public.get_my_workspace_messages(uuid) to authenticated;
+grant execute on function public.send_workspace_message(uuid, text, uuid, text) to authenticated;
+grant execute on function public.mark_my_workspace_conversation_read(uuid, uuid) to authenticated;
 grant execute on function public.get_platform_overview() to authenticated;
 grant execute on function public.get_platform_console() to authenticated;
 
@@ -1123,5 +1367,5 @@ create policy "credit_limits_write_by_manager_roles"
 on public.credit_limits
 for all
 to authenticated
-using (public.has_client_role(client_id, array['manager']))
-with check (public.has_client_role(client_id, array['manager']));
+using (public.has_client_role(client_id, array['manager', 'accountant', 'ceo']))
+with check (public.has_client_role(client_id, array['manager', 'accountant', 'ceo']));

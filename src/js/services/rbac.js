@@ -17,7 +17,7 @@ export const ROLE_OPTIONS = [
   {
     value: "accountant",
     label: "Accountant",
-    description: "Read-only sales reports, credit balances, revenue, profit, and exports"
+    description: "Sales reports, credit terms, revenue, profit, and exports"
   },
   {
     value: "ceo",
@@ -104,7 +104,7 @@ const ROLE_PERMISSIONS = {
     canAddStock: false,
     canAssignStock: false,
     canReconcileStock: false,
-    canSetCreditLimits: false,
+    canSetCreditLimits: true,
     canAddCustomers: false,
     canManageCustomers: false,
     canReviewReports: true,
