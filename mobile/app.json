@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "DistroIQ",
+    "slug": "distroiq-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F5F8F7"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#F5F8F7"
+      },
+      "package": "com.bexlab.distroiq"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.bexlab.distroiq"
+    }
+  }
+}
