@@ -271,6 +271,7 @@
   position: fixed;
   z-index: 80;
   display: grid;
+  width: min(340px, calc(100vw - 24px));
   gap: 10px;
   max-height: min(560px, calc(100vh - 120px));
   padding: 14px;

@@ -1,5 +1,4 @@
 import {
-  assignmentOutstanding,
   calculateVisionMetrics,
   creditUsageTone,
   getProductMap,
@@ -17,6 +16,7 @@ import {
 } from "../services/formatters.js";
 import { currentUserPermissions, salesRepresentativeNames } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
+import { printTabularReport } from "../services/report-export.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -24,6 +24,7 @@ import { icon } from "../ui/icons.js";
 
 const DEFAULT_STOCK_TAB = "stock-health";
 const DISPATCH_PAGE_SIZE = 10;
+const FINISHED_PRODUCTS_CATEGORY = "finished_products";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -585,6 +586,28 @@ function renderDispatchRecipientOptions(state, recipientType) {
   ].join("");
 }
 
+function dispatchableProducts(state, recipientType) {
+  const normalizedType = String(recipientType || "").toLowerCase();
+  const requiresFinishedGoods = normalizedType.includes("representative") || normalizedType.includes("supermarket");
+
+  return (state.products || []).filter((product) => (
+    product.status !== "inactive" &&
+    Number(product.stock || 0) > 0 &&
+    (!requiresFinishedGoods || stockCategoryIdForProduct(product) === FINISHED_PRODUCTS_CATEGORY)
+  ));
+}
+
+function renderDispatchProductOptions(state, recipientType, selectedProductId = "") {
+  return [
+    '<option value="">Choose stock item</option>',
+    ...dispatchableProducts(state, recipientType).map((product) => `
+      <option value="${escapeHtml(product.id)}" ${product.id === selectedProductId ? "selected" : ""}>
+        ${escapeHtml(product.name)} (${formatNumber(product.stock)} ${escapeHtml(productUnit(product))})
+      </option>
+    `)
+  ].join("");
+}
+
 function otherRecipientPlaceholder(recipientType) {
   const normalizedType = String(recipientType || "").toLowerCase();
 
@@ -605,27 +628,10 @@ function destinationPlaceholder(recipientType) {
 function renderDispatchForm(state, permissions) {
   if (!permissions.canDispatchStock && !permissions.canManageStockMovements && !permissions.canAssignStock) return "";
 
-  const dispatchableProducts = state.products.filter((product) => (
-    product.status !== "inactive" && Number(product.stock || 0) > 0
-  ));
-
   return `
     <section class="panel manager-tool-panel">
       ${panelHeader("Record factory dispatch", "Log stock leaving the factory for a representative, supermarket, or internal destination")}
       <form id="stock-dispatch-form" class="manager-form-grid" novalidate>
-        <label class="field">
-          <span>Item</span>
-          <select name="productId" required>
-            <option value="">Choose stock item</option>
-            ${dispatchableProducts.map((product) => `
-              <option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} (${formatNumber(product.stock)} ${escapeHtml(productUnit(product))})</option>
-            `).join("")}
-          </select>
-        </label>
-        <label class="field">
-          <span>Quantity</span>
-          <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
-        </label>
         <label class="field">
           <span>Recipient type</span>
           <select name="recipientType" required>
@@ -640,6 +646,16 @@ function renderDispatchForm(state, permissions) {
             ${renderDispatchRecipientOptions(state, "Sales Representative")}
           </select>
           <input name="recipientNameOther" data-dispatch-recipient-other placeholder="Type recipient name" hidden>
+        </label>
+        <label class="field">
+          <span>Item</span>
+          <select name="productId" data-dispatch-product-select required>
+            ${renderDispatchProductOptions(state, "Sales Representative")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Quantity</span>
+          <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
         </label>
         <label class="field">
           <span>Destination / drop-off point</span>
@@ -781,14 +797,23 @@ function assignmentDisplayStatus(assignment) {
   return assignment.status;
 }
 
+function assignmentVariance(assignment) {
+  return Number(assignment.assigned || 0) - Number(assignment.sold || 0) - Number(assignment.returned || 0);
+}
+
+function hasAssignmentVariance(assignment) {
+  return Math.abs(assignmentVariance(assignment)) > 0.0001;
+}
+
 function renderAssignmentRows(state, permissions) {
   const productMap = getProductMap(state.products);
 
   return state.stockAssignments.map((assignment) => {
     const product = productMap.get(assignment.productId);
-    const outstanding = assignmentOutstanding(assignment);
+    const variance = assignmentVariance(assignment);
+    const hasVariance = hasAssignmentVariance(assignment);
     const soldPercent = assignment.assigned ? (assignment.sold / assignment.assigned) * 100 : 0;
-    const reconcileBlocked = outstanding > 0 && !assignment.varianceFlagged;
+    const reconcileBlocked = hasVariance && !assignment.varianceFlagged;
     const searchIndex = [
       assignment.id,
       assignment.repName,
@@ -798,7 +823,13 @@ function renderAssignmentRows(state, permissions) {
     ].join(" ").toLowerCase();
 
     return `
-      <tr data-search-index="${escapeHtml(searchIndex)}">
+      <tr
+        data-assignment-row
+        data-assignment-rep="${escapeHtml(assignment.repName)}"
+        data-assignment-date="${escapeHtml(String(assignment.assignedAt || "").slice(0, 10))}"
+        data-assignment-variance="${hasVariance ? "true" : "false"}"
+        data-search-index="${escapeHtml(searchIndex)}"
+      >
         <td>
           <strong>${escapeHtml(assignment.id)}</strong>
           <div class="muted">${formatDate(assignment.assignedAt)} - ${escapeHtml(assignment.routeId)}</div>
@@ -816,7 +847,10 @@ function renderAssignmentRows(state, permissions) {
           </div>
         </td>
         <td>${formatNumber(assignment.returned)}</td>
-        <td><strong>${formatNumber(outstanding)}</strong></td>
+        <td class="assignment-variance-cell ${hasVariance ? "is-discrepant" : ""}">
+          <strong>${formatNumber(variance)}</strong>
+          ${hasVariance ? '<div class="muted">Needs review</div>' : '<div class="muted">Balanced</div>'}
+        </td>
         <td>
           ${statusPill(assignmentDisplayStatus(assignment))}
           ${assignment.varianceNote ? `<div class="muted">${escapeHtml(assignment.varianceNote)}</div>` : ""}
@@ -827,7 +861,7 @@ function renderAssignmentRows(state, permissions) {
               ? `
                 <div class="assignment-actions">
                   ${
-                    outstanding > 0
+                    hasVariance
                       ? `<input class="table-note-input" data-variance-note="${escapeHtml(assignment.id)}" placeholder="Variance note">`
                       : ""
                   }
@@ -835,7 +869,7 @@ function renderAssignmentRows(state, permissions) {
                     iconName: "alert",
                     label: "Flag",
                     className: "js-flag-assignment",
-                    disabled: outstanding <= 0,
+                    disabled: !hasVariance,
                     data: { "assignment-id": assignment.id }
                   })}
                   <span class="reconcile-action-wrap">
@@ -941,6 +975,9 @@ function renderCreditRows(state) {
 
 function renderStockHealthPage(state, permissions) {
   const canAddStock = permissions.canManageProducts || permissions.canAddStock;
+  const visibleProducts = permissions.canManageProducts
+    ? state.products
+    : state.products.filter((product) => product.status !== "inactive");
 
   return `
     <section class="panel inventory-layout">
@@ -967,7 +1004,9 @@ function renderStockHealthPage(state, permissions) {
       </div>
 
       <div class="product-grid">
-        ${state.products.map((product) => renderProductCard(product, permissions)).join("")}
+        ${visibleProducts.length
+          ? visibleProducts.map((product) => renderProductCard(product, permissions)).join("")
+          : '<div class="empty-state">No active stock items available</div>'}
       </div>
     </section>
   `;
@@ -981,14 +1020,46 @@ function renderOverviewPage(state, vision) {
 }
 
 function renderAssignmentsPage(state, permissions) {
+  const representativeNames = managerRepOptions(state);
+
   return `
     <section class="panel inventory-layout">
-      ${panelHeader("Representative stock ledger", "Created automatically when factory dispatch goes to a sales representative")}
+      ${panelHeader(
+        "Representative stock ledger",
+        "Created automatically when factory dispatch goes to a sales representative",
+        textButton({
+          iconName: "download",
+          label: "Export PDF",
+          className: "subtle js-export-assignment-pdf",
+          disabled: !state.stockAssignments.length
+        })
+      )}
+      <div class="assignment-filter-grid">
+        <label class="field">
+          <span>Sales representative</span>
+          <select data-assignment-rep-filter>
+            <option value="">All representatives</option>
+            ${representativeNames.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>From</span>
+          <input type="date" data-assignment-date-from>
+        </label>
+        <label class="field">
+          <span>To</span>
+          <input type="date" data-assignment-date-to>
+        </label>
+        <button class="button subtle" type="button" data-assignment-filter-reset>
+          <span>Clear filters</span>
+        </button>
+      </div>
       ${table(
-        ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Outstanding", "Status", ""],
+        ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Variance", "Status", ""],
         renderAssignmentRows(state, permissions),
         "No representative stock ledger entries yet"
       )}
+      <div class="muted assignment-filter-status" data-assignment-filter-status></div>
     </section>
   `;
 }
@@ -1064,6 +1135,7 @@ export function bindInventory({ root, store, signal }) {
   const clearStockImageButton = qs("#clear-stock-image-file", root);
   const dispatchForm = qs("#stock-dispatch-form", root);
   const dispatchRecipientType = dispatchForm ? qs('select[name="recipientType"]', dispatchForm) : null;
+  const dispatchProductSelect = dispatchForm ? qs("[data-dispatch-product-select]", dispatchForm) : null;
   const dispatchRecipientSelect = dispatchForm ? qs("[data-dispatch-recipient-select]", dispatchForm) : null;
   const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
   const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
@@ -1072,6 +1144,72 @@ export function bindInventory({ root, store, signal }) {
   const requestedStockType = routeParams.get("type");
   const requestedAction = routeParams.get("action");
   let stockImageDataUrl = "";
+
+  const assignmentRepFilter = qs("[data-assignment-rep-filter]", root);
+  const assignmentDateFrom = qs("[data-assignment-date-from]", root);
+  const assignmentDateTo = qs("[data-assignment-date-to]", root);
+  const assignmentFilterStatus = qs("[data-assignment-filter-status]", root);
+
+  function visibleAssignmentRows() {
+    return qsa("[data-assignment-row]", root).filter((row) => !row.hidden);
+  }
+
+  function applyAssignmentFilters() {
+    const repName = String(assignmentRepFilter?.value || "");
+    const dateFrom = String(assignmentDateFrom?.value || "");
+    const dateTo = String(assignmentDateTo?.value || "");
+    const allRows = qsa("[data-assignment-row]", root);
+
+    allRows.forEach((row) => {
+      const assignedDate = String(row.dataset.assignmentDate || "");
+      const repMatches = !repName || row.dataset.assignmentRep === repName;
+      const fromMatches = !dateFrom || assignedDate >= dateFrom;
+      const toMatches = !dateTo || assignedDate <= dateTo;
+      row.hidden = !(repMatches && fromMatches && toMatches);
+    });
+
+    if (assignmentFilterStatus) {
+      const visibleCount = visibleAssignmentRows().length;
+      assignmentFilterStatus.textContent = `${formatNumber(visibleCount)} of ${formatNumber(allRows.length)} ledger entries shown`;
+    }
+  }
+
+  [assignmentRepFilter, assignmentDateFrom, assignmentDateTo].filter(Boolean).forEach((control) => {
+    control.addEventListener("change", applyAssignmentFilters);
+  });
+
+  qs("[data-assignment-filter-reset]", root)?.addEventListener("click", () => {
+    if (assignmentRepFilter) assignmentRepFilter.value = "";
+    if (assignmentDateFrom) assignmentDateFrom.value = "";
+    if (assignmentDateTo) assignmentDateTo.value = "";
+    applyAssignmentFilters();
+  });
+
+  qs(".js-export-assignment-pdf", root)?.addEventListener("click", () => {
+    const rows = visibleAssignmentRows().map((row) => {
+      const cells = [...row.querySelectorAll("td")].slice(0, 8);
+
+      return {
+        cells: cells.map((cell) => String(cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim()),
+        isVariance: row.dataset.assignmentVariance === "true"
+      };
+    });
+    const repLabel = assignmentRepFilter?.value || "All representatives";
+    const periodLabel = [assignmentDateFrom?.value, assignmentDateTo?.value].filter(Boolean).join(" to ") || "All dates";
+
+    printTabularReport({
+      title: "DistroIQ Representative Stock Ledger",
+      subtitle: `${repLabel} - ${periodLabel} - Generated ${new Date().toLocaleString()}`,
+      filename: `distroiq-representative-stock-ledger-${todayISO()}.html`,
+      sections: [{
+        title: "Assignments and variances",
+        headers: ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Variance", "Status"],
+        rows
+      }]
+    });
+  });
+
+  applyAssignmentFilters();
 
   function applyStockTypeFilter() {
     qsa(".product-card", root).forEach((card) => {
@@ -1486,8 +1624,23 @@ export function bindInventory({ root, store, signal }) {
     updateOtherRecipientField();
   }
 
+  function updateDispatchProductOptions() {
+    if (!dispatchRecipientType || !dispatchProductSelect) return;
+
+    const selectedProductId = dispatchProductSelect.value;
+    dispatchProductSelect.innerHTML = renderDispatchProductOptions(
+      store.getState(),
+      dispatchRecipientType.value,
+      selectedProductId
+    );
+  }
+
   updateDispatchRecipientOptions();
-  dispatchRecipientType?.addEventListener("change", updateDispatchRecipientOptions);
+  updateDispatchProductOptions();
+  dispatchRecipientType?.addEventListener("change", () => {
+    updateDispatchRecipientOptions();
+    updateDispatchProductOptions();
+  });
   dispatchRecipientSelect?.addEventListener("change", updateOtherRecipientField);
 
   dispatchForm?.addEventListener("submit", (event) => {
@@ -1514,6 +1667,14 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
+    if (
+      String(formData.get("recipientType") || "").toLowerCase().includes("representative") &&
+      stockCategoryIdForProduct(product) !== FINISHED_PRODUCTS_CATEGORY
+    ) {
+      if (message) message.textContent = "Only finished products can be assigned to a sales representative.";
+      return;
+    }
+
     store.dispatch({
       type: "RECORD_STOCK_DISPATCH",
       productId,
@@ -1530,6 +1691,7 @@ export function bindInventory({ root, store, signal }) {
     dispatchForm.elements.dispatchDate.value = todayISO();
     dispatchForm.elements.staffName.value = currentStaffName(store.getState());
     updateDispatchRecipientOptions();
+    updateDispatchProductOptions();
   });
 
   qsa(".js-restock-product", root).forEach((button) => {

@@ -143,6 +143,119 @@
   outline-offset: 0;
 }
 
+.auth-role-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.auth-role-field legend {
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 850;
+}
+
+.auth-role-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.auth-role-option {
+  position: relative;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) 18px;
+  min-height: 50px;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 850;
+  transition: border-color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
+}
+
+.auth-role-option:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
+}
+
+.auth-role-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+}
+
+.auth-role-icon {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--navy);
+}
+
+.auth-role-icon svg,
+.auth-role-check svg {
+  width: 17px;
+  height: 17px;
+}
+
+.auth-role-check {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  color: transparent;
+}
+
+.auth-role-option:hover {
+  border-color: var(--mint-strong);
+  background: var(--mint-soft);
+}
+
+.auth-role-option:has(input:checked) {
+  border-color: var(--mint-strong);
+  background: var(--mint-soft);
+  box-shadow: 0 0 0 2px rgba(25, 185, 133, 0.12);
+}
+
+.auth-role-option:has(input:checked) .auth-role-icon {
+  background: var(--navy);
+  color: #ffffff;
+}
+
+.auth-role-option:has(input:checked) .auth-role-check {
+  border-color: var(--mint-dark);
+  background: var(--mint-dark);
+  color: #ffffff;
+}
+
+.auth-role-option:has(input:focus-visible) {
+  outline: 3px solid rgba(25, 185, 133, 0.18);
+  outline-offset: 1px;
+}
+
+@media (max-width: 430px) {
+  .auth-role-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .auth-role-option:last-child:nth-child(odd) {
+    grid-column: auto;
+  }
+}
+
 .auth-password-control {
   position: relative;
   display: block;
@@ -1186,6 +1299,36 @@
   min-width: 190px;
 }
 
+.assignment-filter-grid {
+  display: grid;
+  grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(150px, 1fr)) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+}
+
+.assignment-filter-grid .button {
+  min-height: 44px;
+}
+
+.assignment-filter-status {
+  margin-top: 12px;
+}
+
+.assignment-variance-cell {
+  color: var(--mint-dark);
+}
+
+.assignment-variance-cell.is-discrepant,
+.assignment-variance-cell.is-discrepant .muted {
+  color: var(--red);
+}
+
+.assignment-variance-cell.is-discrepant {
+  background: rgba(192, 57, 47, 0.08);
+  box-shadow: inset 3px 0 0 var(--red);
+}
+
 .reconcile-action-wrap {
   display: grid;
   gap: 6px;
@@ -1214,6 +1357,18 @@
 .reconcile-action-wrap:hover .assignment-action-hint,
 .reconcile-action-wrap:focus-within .assignment-action-hint {
   display: block;
+}
+
+@media (max-width: 860px) {
+  .assignment-filter-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .assignment-filter-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .rep-activity-list {

@@ -208,9 +208,13 @@ export function scopeStateForCurrentRole(state) {
     return order.repUserId === userId || (actorName && repName === actorName);
   });
   const customerIds = new Set(orders.map((order) => order.retailerId));
+  const activeProductIds = new Set((state.products || [])
+    .filter((product) => product.status !== "inactive")
+    .map((product) => product.id));
   const stockAssignments = (state.stockAssignments || []).filter((assignment) => {
     const repName = String(assignment.repName || "").trim().toLowerCase();
-    return assignment.repUserId === userId || (actorName && repName === actorName);
+    const belongsToRepresentative = assignment.repUserId === userId || (actorName && repName === actorName);
+    return belongsToRepresentative && activeProductIds.has(assignment.productId);
   });
   const assignedProductIds = new Set(stockAssignments.map((assignment) => assignment.productId));
   const productIds = new Set([

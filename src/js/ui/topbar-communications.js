@@ -51,7 +51,7 @@ function closeOverlays() {
 
 function positionPopover(popover, trigger) {
   const rect = trigger.getBoundingClientRect();
-  const width = Math.min(420, window.innerWidth - 24);
+  const width = Math.min(340, window.innerWidth - 24);
   const left = Math.min(Math.max(12, rect.left + rect.width / 2 - width / 2), window.innerWidth - width - 12);
 
   popover.style.width = `${width}px`;

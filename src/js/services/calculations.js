@@ -27,6 +27,64 @@ export function isRepresentativeReturnEligible(assignment, referenceDate = new D
   return daysSinceAssignment >= 0 && daysSinceAssignment < REPRESENTATIVE_RETURN_GRACE_DAYS;
 }
 
+function normalizedValue(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function linkedAssignmentIds(transaction) {
+  return [
+    transaction.assignmentId,
+    ...(transaction.assignmentIds || []),
+    ...(transaction.assignmentAllocations || []).map((allocation) => allocation.assignmentId)
+  ].map((id) => String(id || "")).filter(Boolean);
+}
+
+export function getReturnableCustomerChoices(state, {
+  productId,
+  repName = "",
+  repUserId = "",
+  assignmentIds = []
+} = {}) {
+  if (!productId) return [];
+
+  const requestedAssignmentIds = new Set((assignmentIds || []).map((id) => String(id || "")).filter(Boolean));
+  const choices = new Map();
+
+  (state.stockTransactions || [])
+    .filter((transaction) => ["sale", "return"].includes(normalizedValue(transaction.type)))
+    .filter((transaction) => transaction.productId === productId)
+    .filter((transaction) => {
+      if (repUserId && transaction.repUserId) return transaction.repUserId === repUserId;
+      return !repName || normalizedValue(transaction.recordedBy) === normalizedValue(repName);
+    })
+    .filter((transaction) => {
+      if (!requestedAssignmentIds.size) return true;
+      const linkedIds = linkedAssignmentIds(transaction);
+      return !linkedIds.length || linkedIds.some((id) => requestedAssignmentIds.has(id));
+    })
+    .forEach((transaction) => {
+      const customerName = String(transaction.partyName || "Walk-in customer").trim();
+      const rawCustomerId = String(transaction.customerId || "").trim();
+      const customerId = rawCustomerId === "__walk_in__" ? "" : rawCustomerId;
+      const key = customerId ? `id:${customerId}` : `name:${normalizedValue(customerName)}`;
+      const existing = choices.get(key) || {
+        key,
+        customerId,
+        customerName,
+        customerType: transaction.partyType || "Customer",
+        quantity: 0
+      };
+      const direction = normalizedValue(transaction.type) === "return" ? -1 : 1;
+
+      existing.quantity += direction * Number(transaction.quantity || 0);
+      choices.set(key, existing);
+    });
+
+  return [...choices.values()]
+    .filter((choice) => choice.quantity > 0)
+    .sort((a, b) => a.customerName.localeCompare(b.customerName));
+}
+
 export function stockCategoryIdForProduct(product) {
   const category = String(product.stockCategory || product.category || "").toLowerCase();
 

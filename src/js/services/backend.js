@@ -95,6 +95,44 @@ function mapFeatureModule(row) {
   };
 }
 
+function mapCreditLimit(row, accountByMembershipId = new Map()) {
+  const account = accountByMembershipId.get(row.membership_id);
+
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    partyType: row.party_type === "sales_rep" ? "Sales Representative" : "Supermarket",
+    partyName: row.party_name,
+    repUserId: account?.userId || "",
+    limit: Number(row.limit_amount || 0),
+    balance: Number(row.balance_amount || 0),
+    previousLimit: Number(row.previous_limit_amount || 0),
+    discountPercent: Number(row.discount_percent || 0),
+    paymentPeriodDays: Number(row.payment_period_days ?? 14),
+    latePenaltyPercent: Number(row.late_penalty_percent || 0),
+    changedBy: row.changed_by_name || "Manager",
+    changedAt: row.changed_at
+  };
+}
+
+function mapCreditLimitHistory(row) {
+  return {
+    id: row.id,
+    creditLimitId: row.credit_limit_id,
+    clientId: row.client_id,
+    partyType: row.party_type === "sales_rep" ? "Sales Representative" : "Supermarket",
+    partyName: row.party_name,
+    previousLimit: Number(row.previous_limit_amount || 0),
+    nextLimit: Number(row.new_limit_amount || 0),
+    discountPercent: Number(row.discount_percent || 0),
+    paymentPeriodDays: Number(row.payment_period_days ?? 14),
+    latePenaltyPercent: Number(row.late_penalty_percent || 0),
+    changedBy: row.changed_by_name || "Manager",
+    reason: "Credit review",
+    changedAt: row.changed_at
+  };
+}
+
 function mapPlatformClient(row) {
   return {
     id: row.client_id || row.id,
@@ -199,6 +237,10 @@ function friendlyEdgeFunctionMessage(message, fallback = "The request could not 
 
   if (lower.includes("password_reset_required")) {
     return "Your Supabase database is missing the password-change field. Run the updated schema, then try again.";
+  }
+
+  if (lower.includes("credit limit email service is not configured")) {
+    return "The credit-limit email service is not ready yet.";
   }
 
   if (lower.includes("already invited for this company")) {
@@ -312,6 +354,8 @@ export async function loadWorkspace() {
     { data: inviteRows, error: inviteError },
     { data: featureModuleRows, error: featureModuleError },
     { data: activityRows, error: activityError },
+    { data: creditLimitRows, error: creditLimitError },
+    { data: creditHistoryRows, error: creditHistoryError },
     { data: messageRows, error: messageError }
   ] = await Promise.all([
     supabase
@@ -333,6 +377,16 @@ export async function loadWorkspace() {
       .select("id, client_id, action_type, record_type, record_label, actor_user_id, actor_name, actor_email, summary, created_at")
       .eq("client_id", client.id)
       .order("created_at", { ascending: false }),
+    supabase
+      .from("credit_limits")
+      .select("id, client_id, party_type, party_name, membership_id, limit_amount, balance_amount, previous_limit_amount, discount_percent, payment_period_days, late_penalty_percent, changed_by_name, changed_at")
+      .eq("client_id", client.id)
+      .order("changed_at", { ascending: false }),
+    supabase
+      .from("credit_limit_history")
+      .select("id, client_id, credit_limit_id, party_type, party_name, previous_limit_amount, new_limit_amount, discount_percent, payment_period_days, late_penalty_percent, changed_by_name, changed_at")
+      .eq("client_id", client.id)
+      .order("changed_at", { ascending: false }),
     supabase.rpc("get_my_workspace_messages", {
       p_client_id: client.id
     })
@@ -354,16 +408,29 @@ export async function loadWorkspace() {
     console.warn("Feature modules could not be loaded:", featureModuleError.message);
   }
 
+  if (creditLimitError) {
+    console.warn("Credit limits could not be loaded:", creditLimitError.message);
+  }
+
+  if (creditHistoryError) {
+    console.warn("Credit limit history could not be loaded:", creditHistoryError.message);
+  }
+
   if (messageError) {
     console.warn("Messages could not be loaded:", messageError.message);
   }
 
+  const accounts = (accountRows || []).map(mapAccount);
+  const accountByMembershipId = new Map(accounts.map((account) => [account.id, account]));
+
   return {
     client,
-    accounts: (accountRows || []).map(mapAccount),
+    accounts,
     invites: (inviteRows || []).map(mapInvite),
     featureModules: featureModuleError ? [] : (featureModuleRows || []).map(mapFeatureModule),
     activityLogs: activityError ? [] : (activityRows || []).map(mapActivityLog),
+    creditLimits: creditLimitError ? undefined : (creditLimitRows || []).map((row) => mapCreditLimit(row, accountByMembershipId)),
+    creditLimitHistory: creditHistoryError ? undefined : (creditHistoryRows || []).map(mapCreditLimitHistory),
     messages: messageError ? [] : (messageRows || []).map(mapWorkspaceMessage)
   };
 }
@@ -651,6 +718,25 @@ export async function inviteAccount({ client, name, email, role }) {
         : invite
     ))
   };
+}
+
+export async function saveRepresentativeCreditLimit(payload) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.functions.invoke("credit-limit-notification", {
+    body: payload
+  });
+
+  if (error) {
+    throw new Error(await edgeFunctionErrorMessage(error, "The credit-limit email could not be sent."));
+  }
+
+  if (data?.error) {
+    throw new Error(friendlyEdgeFunctionMessage(data.error, "The credit-limit email could not be sent."));
+  }
+
+  return data;
 }
 
 export async function activateCurrentMembership(clientId) {

@@ -211,6 +211,87 @@ add column if not exists payment_period_days integer not null default 14 check (
 alter table public.credit_limits
 add column if not exists late_penalty_percent numeric(6, 2) not null default 0 check (late_penalty_percent >= 0 and late_penalty_percent <= 100);
 
+create table if not exists public.credit_limit_history (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  credit_limit_id uuid not null references public.credit_limits(id) on delete restrict,
+  party_type text not null,
+  party_name text not null,
+  previous_limit_amount numeric(14, 2) not null default 0,
+  new_limit_amount numeric(14, 2) not null default 0,
+  discount_percent numeric(6, 2) not null default 0,
+  payment_period_days integer not null default 14,
+  late_penalty_percent numeric(6, 2) not null default 0,
+  changed_by_user_id uuid references auth.users(id) on delete set null,
+  changed_by_name text not null default 'Manager',
+  changed_at timestamptz not null default now()
+);
+
+create index if not exists credit_limit_history_client_changed_at_idx
+on public.credit_limit_history (client_id, changed_at desc);
+
+create or replace function public.capture_credit_limit_history()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor_user_id uuid := coalesce(new.changed_by_user_id, auth.uid());
+  v_actor_name text;
+begin
+  if tg_op = 'UPDATE'
+    and old.limit_amount is not distinct from new.limit_amount
+    and old.discount_percent is not distinct from new.discount_percent
+    and old.payment_period_days is not distinct from new.payment_period_days
+    and old.late_penalty_percent is not distinct from new.late_penalty_percent then
+    return new;
+  end if;
+
+  select m.name
+  into v_actor_name
+  from public.memberships m
+  where m.client_id = new.client_id
+    and m.user_id = v_actor_user_id
+  limit 1;
+
+  insert into public.credit_limit_history (
+    client_id,
+    credit_limit_id,
+    party_type,
+    party_name,
+    previous_limit_amount,
+    new_limit_amount,
+    discount_percent,
+    payment_period_days,
+    late_penalty_percent,
+    changed_by_user_id,
+    changed_by_name,
+    changed_at
+  ) values (
+    new.client_id,
+    new.id,
+    new.party_type,
+    new.party_name,
+    case when tg_op = 'INSERT' then 0 else old.limit_amount end,
+    new.limit_amount,
+    new.discount_percent,
+    new.payment_period_days,
+    new.late_penalty_percent,
+    v_actor_user_id,
+    coalesce(v_actor_name, new.changed_by_name, 'Manager'),
+    coalesce(new.changed_at, now())
+  );
+
+  return new;
+end;
+$$;
+
+drop trigger if exists credit_limit_history_capture on public.credit_limits;
+create trigger credit_limit_history_capture
+after insert or update on public.credit_limits
+for each row execute function public.capture_credit_limit_history();
+
 create table if not exists public.platform_admins (
   user_id uuid primary key references auth.users(id) on delete cascade,
   email text not null unique,
@@ -288,6 +369,7 @@ alter table public.stock_products enable row level security;
 alter table public.stock_assignments enable row level security;
 alter table public.stock_transactions enable row level security;
 alter table public.credit_limits enable row level security;
+alter table public.credit_limit_history enable row level security;
 alter table public.platform_admins enable row level security;
 alter table public.platform_feature_modules enable row level security;
 alter table public.platform_email_templates enable row level security;
@@ -1134,6 +1216,8 @@ grant select, insert, update on public.stock_products to authenticated;
 grant select, insert, update on public.stock_assignments to authenticated;
 grant select, insert, update on public.stock_transactions to authenticated;
 grant select, insert, update on public.credit_limits to authenticated;
+revoke insert, update, delete on public.credit_limit_history from authenticated;
+grant select on public.credit_limit_history to authenticated;
 grant select on public.platform_admins to authenticated;
 grant select, insert, update on public.platform_feature_modules to authenticated;
 grant select, insert, update on public.platform_email_templates to authenticated;
@@ -1372,3 +1456,12 @@ for all
 to authenticated
 using (public.has_client_role(client_id, array['manager', 'accountant', 'ceo']))
 with check (public.has_client_role(client_id, array['manager', 'accountant', 'ceo']));
+
+drop policy if exists "credit_limit_history_select_by_client" on public.credit_limit_history;
+create policy "credit_limit_history_select_by_client"
+on public.credit_limit_history
+for select
+to authenticated
+using (public.is_client_member(client_id));
+
+drop policy if exists "credit_limit_history_insert_by_manager_roles" on public.credit_limit_history;

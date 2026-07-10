@@ -6,7 +6,7 @@ import {
   getInvoiceAging,
   getRetailerMap
 } from "../services/calculations.js";
-import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
+import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import {
   currentUserPermissions,
   currentUserRole,
@@ -14,6 +14,7 @@ import {
   salesRepresentativeNames
 } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
+import { saveRepresentativeCreditLimit } from "../services/backend.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -259,8 +260,10 @@ function renderRepresentativeCreditManager(state, permissions) {
             ${representatives.map((account) => `
               <option
                 value="${escapeHtml(account.userId || account.id || account.name)}"
+                data-rep-membership-id="${escapeHtml(account.id || "")}"
                 data-rep-name="${escapeHtml(account.name)}"
                 data-rep-user-id="${escapeHtml(account.userId || "")}"
+                data-rep-email="${escapeHtml(account.email || "")}"
               >
                 ${escapeHtml(account.name)}
               </option>
@@ -321,7 +324,7 @@ function renderCreditHistoryRows(state) {
         <td>${escapeHtml(entry.reason || "Manager adjustment")}</td>
         <td>
           ${escapeHtml(entry.changedBy)}
-          <div class="muted">${formatDate(entry.changedAt?.slice(0, 10))}</div>
+          <div class="muted">${formatDateTime(entry.changedAt)}</div>
         </td>
       </tr>
     `;
@@ -1102,7 +1105,7 @@ export function bindFinance({ root, store }) {
   const creditForm = qs("#credit-limit-form", root);
   const repCreditForm = qs("#rep-credit-limit-form", root);
 
-  repCreditForm?.addEventListener("submit", (event) => {
+  repCreditForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(repCreditForm);
     const message = qs("#rep-credit-limit-message", root);
@@ -1110,6 +1113,7 @@ export function bindFinance({ root, store }) {
     const selectedOption = repSelect?.selectedOptions?.[0];
     const limit = Number(formData.get("limit") || 0);
     const paymentPeriodDays = Number(formData.get("paymentPeriodDays") || 1);
+    const submitButton = repCreditForm.querySelector('button[type="submit"]');
 
     if (message) message.textContent = "";
 
@@ -1123,14 +1127,46 @@ export function bindFinance({ root, store }) {
       return;
     }
 
+    const state = store.getState();
+    const repUserId = String(selectedOption.dataset.repUserId || "");
+    const repName = String(selectedOption.dataset.repName || "Sales Representative");
+    const existingLimit = (state.creditLimits || []).find((item) => (
+      (repUserId && item.repUserId === repUserId) ||
+      (
+        String(item.partyType || "").toLowerCase().includes("representative") &&
+        String(item.partyName || "").trim().toLowerCase() === repName.trim().toLowerCase()
+      )
+    ));
+    let emailSent = false;
+    let emailFailure = "";
+
+    if (submitButton) submitButton.disabled = true;
+
+    try {
+      const saveResult = await saveRepresentativeCreditLimit({
+        clientId: state.client?.id,
+        representativeMembershipId: selectedOption.dataset.repMembershipId,
+        previousLimit: Number(existingLimit?.limit || 0),
+        newLimit: limit,
+        paymentPeriodDays,
+        currencySymbol: currencySymbolFor(state.client)
+      });
+      emailSent = saveResult?.emailSent === true;
+      emailFailure = saveResult?.emailError || "";
+    } catch (error) {
+      emailFailure = error.message;
+    }
+
     store.dispatch({
       type: "UPSERT_REP_CREDIT_LIMIT",
-      repName: selectedOption.dataset.repName,
-      repUserId: selectedOption.dataset.repUserId,
+      repName,
+      repUserId,
       limit,
       paymentPeriodDays,
       reason: formData.get("reason"),
-      message: "Representative credit limit saved"
+      message: emailSent
+        ? "Representative credit limit saved and emailed"
+        : `Representative credit limit saved. ${emailFailure || "Email could not be sent."}`
     });
   });
 

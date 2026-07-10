@@ -164,6 +164,7 @@ const PLATFORM_NAV_ITEMS = [
 let activeAuthFormFlows = 0;
 let activeViewAbortController = null;
 let featureModuleRefreshPending = false;
+let selectedSearchSuggestion = "";
 const FEATURE_MODULE_REFRESH_MS = 5000;
 
 searchSuggestions.className = "search-suggestions";
@@ -401,7 +402,11 @@ function searchSuggestionLabel(item) {
 function updateSearchSuggestions() {
   const query = String(globalSearch.value || "").trim().toLowerCase();
 
-  if (globalSearch.disabled || query.length < 3) {
+  if (
+    globalSearch.disabled ||
+    query.length < 2 ||
+    (selectedSearchSuggestion && query === selectedSearchSuggestion.toLowerCase())
+  ) {
     searchSuggestions.hidden = true;
     searchSuggestions.innerHTML = "";
     return;
@@ -472,7 +477,8 @@ function render() {
   updateSearchSuggestions();
 }
 
-globalSearch.addEventListener("input", () => {
+globalSearch.addEventListener("input", (event) => {
+  if (event.isTrusted) selectedSearchSuggestion = "";
   applySearchFilter(viewRoot, globalSearch.value);
   updateSearchSuggestions();
 });
@@ -493,9 +499,11 @@ searchSuggestions.addEventListener("click", (event) => {
   const button = event.target.closest?.("[data-search-suggestion]");
   if (!button) return;
 
-  globalSearch.value = button.dataset.searchSuggestion || "";
+  selectedSearchSuggestion = button.dataset.searchSuggestion || "";
+  globalSearch.value = selectedSearchSuggestion;
+  applySearchFilter(viewRoot, globalSearch.value);
   searchSuggestions.hidden = true;
-  globalSearch.dispatchEvent(new Event("input", { bubbles: true }));
+  searchSuggestions.innerHTML = "";
 });
 
 bindTopbarCommunications({ store, notificationsButton, messagesButton });

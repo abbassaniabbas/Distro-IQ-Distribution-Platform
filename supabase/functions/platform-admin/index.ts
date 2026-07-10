@@ -438,6 +438,7 @@ async function exportClientData(adminClient: ReturnType<typeof createClient>, ca
     "stock_assignments",
     "stock_transactions",
     "credit_limits",
+    "credit_limit_history",
     "platform_feature_modules",
     "platform_email_templates",
     "platform_document_sequences",

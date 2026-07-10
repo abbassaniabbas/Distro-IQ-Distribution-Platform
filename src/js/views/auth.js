@@ -76,17 +76,29 @@ function renderAuthTab({ href, label, active }) {
 }
 
 function renderLoginRoleSelector() {
+  const roleIcons = {
+    sales_rep: "retailers",
+    manager: "dashboard",
+    store_keeper: "inventory",
+    accountant: "finance",
+    ceo: "building"
+  };
+
   return `
-    <label class="field span-full auth-field">
-      <span>Role</span>
-      <select name="role" aria-label="Role">
-        <option value="">Select your role</option>
+    <fieldset class="auth-role-field span-full">
+      <legend>Choose your role</legend>
+      <div class="auth-role-grid" role="radiogroup" aria-label="Role">
         ${ROLE_OPTIONS.map((role) => `
-          <option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>
+          <label class="auth-role-option">
+            <input type="radio" name="role" value="${escapeHtml(role.value)}">
+            <span class="auth-role-icon">${icon(roleIcons[role.value] || "userCheck")}</span>
+            <span>${escapeHtml(role.label)}</span>
+            <span class="auth-role-check">${icon("check")}</span>
+          </label>
         `).join("")}
-      </select>
+      </div>
       ${renderFieldError("role")}
-    </label>
+    </fieldset>
   `;
 }
 

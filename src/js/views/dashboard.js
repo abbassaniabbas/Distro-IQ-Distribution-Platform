@@ -5,6 +5,7 @@ import {
   calculateMetrics,
   calculateVisionMetrics,
   getFinancialSalesLines,
+  getReturnableCustomerChoices,
   getCreditLimitForParty,
   getCustomerRating,
   getRepresentativeDailyCreditUsed,
@@ -22,6 +23,8 @@ import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+
+const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -954,6 +957,10 @@ function renderCeoDashboard(state) {
   `;
 }
 
+function activeStockProducts(products) {
+  return (products || []).filter((product) => product.status !== "inactive");
+}
+
 function storeKeeperCategorySummary(state) {
   const categories = [
     {
@@ -974,7 +981,7 @@ function storeKeeperCategorySummary(state) {
   ];
 
   return categories.map((category) => {
-    const products = (state.products || []).filter((product) => stockCategoryIdForProduct(product) === category.id);
+    const products = activeStockProducts(state.products).filter((product) => stockCategoryIdForProduct(product) === category.id);
     const units = products.reduce((total, product) => total + Number(product.stock || 0), 0);
     const lowCount = products.filter((product) => getStockHealth(product).status !== "ready").length;
 
@@ -1004,7 +1011,7 @@ function renderStoreKeeperCategoryCards(state) {
 
 function renderStoreKeeperAlertRows(state, permissions) {
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
-  const lowStockProducts = getLowStockProducts(state.products || []).slice(0, 5);
+  const lowStockProducts = getLowStockProducts(activeStockProducts(state.products)).slice(0, 5);
 
   if (!lowStockProducts.length) {
     return '<div class="empty-state">No low-stock alerts</div>';
@@ -1076,8 +1083,9 @@ function renderStoreKeeperDispatchRows(state) {
 }
 
 function renderStoreKeeperDashboard(state, permissions) {
-  const vision = calculateVisionMetrics(state);
-  const lowStockProducts = getLowStockProducts(state.products || []);
+  const activeProducts = activeStockProducts(state.products);
+  const vision = calculateVisionMetrics({ ...state, products: activeProducts });
+  const lowStockProducts = getLowStockProducts(activeProducts);
   const dispatchCount = storeKeeperDispatches(state, 0).length;
   const movementCount = (state.stockTransactions || []).length;
 
@@ -1693,11 +1701,11 @@ function renderRepAssignmentOptions(assignments, mode = "sale") {
   `).join("");
 }
 
-function renderRepCustomerField(customers, prefix = "") {
+function renderRepCustomerField(customers, prefix = "", allowWalkIn = false) {
   const customerIdName = `${prefix}CustomerId`;
   const customerNameName = `${prefix}CustomerName`;
 
-  if (!customers.length) {
+  if (!customers.length && !allowWalkIn) {
     return `
       <label class="field">
         <span>Customer</span>
@@ -1709,12 +1717,25 @@ function renderRepCustomerField(customers, prefix = "") {
   return `
     <label class="field">
       <span>Customer</span>
-      <select name="${escapeHtml(customerIdName)}" required>
+      <select name="${escapeHtml(customerIdName)}" ${allowWalkIn ? "data-rep-sale-customer" : ""} required>
         <option value="">Pick customer</option>
+        ${allowWalkIn ? `<option value="${WALK_IN_CUSTOMER_ID}">Walk-in customer</option>` : ""}
         ${customers.map((customer) => `
           <option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}</option>
         `).join("")}
       </select>
+    </label>
+  `;
+}
+
+function renderRepReturnCustomerField() {
+  return `
+    <label class="field">
+      <span>Customer who bought it</span>
+      <select name="returnCustomerId" data-rep-return-customer required disabled>
+        <option value="">Select a product first</option>
+      </select>
+      <small class="muted" data-return-customer-note>Only customers recorded for the selected product will appear.</small>
     </label>
   `;
 }
@@ -1745,14 +1766,15 @@ function renderRepQuickLog(state, assignments) {
             <input name="saleQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
           </label>
 
-          ${renderRepCustomerField(customers, "sale")}
+          ${renderRepCustomerField(customers, "sale", true)}
 
           <label class="field">
             <span>Payment</span>
-            <select name="salePaymentType">
+            <select name="salePaymentType" data-rep-sale-payment>
               <option value="cash">Cash</option>
               <option value="credit">Credit</option>
             </select>
+            <small class="muted" data-walk-in-payment-note hidden>Walk-in sales are cash only.</small>
           </label>
 
           <span id="rep-sale-message" class="rep-form-message" role="status" aria-live="polite"></span>
@@ -1780,7 +1802,7 @@ function renderRepQuickLog(state, assignments) {
             <input name="returnQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
           </label>
 
-          ${renderRepCustomerField(customers, "return")}
+          ${renderRepReturnCustomerField()}
 
           <label class="field">
             <span>Adjustment</span>
@@ -2393,11 +2415,75 @@ function bindSalesRepDashboard({ root, store }) {
   const saleForm = qs("#rep-sale-form", root);
   const returnForm = qs("#rep-return-form", root);
   const assignmentSelects = qsa("[data-rep-assignment-select]", root);
+  const saleCustomerSelect = qs("[data-rep-sale-customer]", root);
+  const salePaymentSelect = qs("[data-rep-sale-payment]", root);
+  const walkInPaymentNote = qs("[data-walk-in-payment-note]", root);
+  const returnProductSelect = qs('select[name="returnAssignmentId"]', root);
+  const returnCustomerSelect = qs("[data-rep-return-customer]", root);
+  const returnCustomerNote = qs("[data-return-customer-note]", root);
+
+  function applyWalkInPaymentRule() {
+    if (!saleCustomerSelect || !salePaymentSelect) return;
+
+    const isWalkIn = saleCustomerSelect.value === WALK_IN_CUSTOMER_ID;
+    const creditOption = [...salePaymentSelect.options].find((option) => option.value === "credit");
+    if (creditOption) creditOption.disabled = isWalkIn;
+    if (isWalkIn) salePaymentSelect.value = "cash";
+    if (walkInPaymentNote) walkInPaymentNote.hidden = !isWalkIn;
+  }
+
+  saleCustomerSelect?.addEventListener("change", applyWalkInPaymentRule);
+  applyWalkInPaymentRule();
+
+  function updateReturnCustomerOptions() {
+    if (!returnProductSelect || !returnCustomerSelect) return;
+
+    const state = store.getState();
+    const repName = currentRepName(state);
+    const productId = returnProductSelect.value;
+    const eligibleAssignments = buildRepAssignments(state, repName)
+      .filter((assignment) => assignment.productId === productId)
+      .filter((assignment) => isRepresentativeReturnEligible(assignment, todayISO()))
+      .filter((assignment) => Number(assignment.sold || 0) > 0);
+    const choices = getReturnableCustomerChoices(state, {
+      productId,
+      repName,
+      repUserId: state.user?.id || "",
+      assignmentIds: eligibleAssignments.map((assignment) => assignment.id)
+    });
+
+    returnCustomerSelect.innerHTML = choices.length
+      ? [
+          '<option value="">Pick customer</option>',
+          ...choices.map((choice) => `
+            <option
+              value="${escapeHtml(choice.key)}"
+              data-customer-id="${escapeHtml(choice.customerId)}"
+              data-customer-name="${escapeHtml(choice.customerName)}"
+              data-customer-type="${escapeHtml(choice.customerType)}"
+              data-returnable-quantity="${escapeHtml(choice.quantity)}"
+            >
+              ${escapeHtml(choice.customerName)} (${formatNumber(choice.quantity)} sold)
+            </option>
+          `)
+        ].join("")
+      : `<option value="">${productId ? "No customer sales available for this product" : "Select a product first"}</option>`;
+    returnCustomerSelect.disabled = !choices.length;
+    if (returnCustomerNote) {
+      returnCustomerNote.textContent = choices.length
+        ? "Choose the customer returning this product."
+        : "Only customers recorded for the selected product will appear.";
+    }
+  }
+
+  returnProductSelect?.addEventListener("change", updateReturnCustomerOptions);
+  updateReturnCustomerOptions();
 
   qsa(".js-fill-rep-product", root).forEach((button) => {
     button.addEventListener("click", () => {
       assignmentSelects.forEach((select) => {
         select.value = button.dataset.productId;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
       });
       assignmentSelects[0]?.focus();
     });
@@ -2412,7 +2498,14 @@ function bindSalesRepDashboard({ root, store }) {
     const prefix = transactionType === "return" ? "return" : "sale";
     const message = qs(`#rep-${prefix}-message`, root);
     const productId = String(formData.get(`${prefix}AssignmentId`) || "");
-    const customerId = String(formData.get(`${prefix}CustomerId`) || "");
+    const selectedCustomerId = String(formData.get(`${prefix}CustomerId`) || "");
+    const isWalkInSale = transactionType === "sale" && selectedCustomerId === WALK_IN_CUSTOMER_ID;
+    const selectedReturnOption = transactionType === "return" ? returnCustomerSelect?.selectedOptions?.[0] : null;
+    const returnCustomerId = String(selectedReturnOption?.dataset.customerId || "");
+    const returnCustomerName = String(selectedReturnOption?.dataset.customerName || "");
+    const returnCustomerType = String(selectedReturnOption?.dataset.customerType || "Customer");
+    const returnableCustomerQuantity = Number(selectedReturnOption?.dataset.returnableQuantity || 0);
+    const customerId = transactionType === "return" ? returnCustomerId : isWalkInSale ? "" : selectedCustomerId;
     const typedCustomerName = String(formData.get(`${prefix}CustomerName`) || "").trim();
     const quantity = Number(formData.get(`${prefix}Quantity`) || 0);
     const paymentType = String(formData.get(`${prefix}PaymentType`) || "cash");
@@ -2428,7 +2521,9 @@ function bindSalesRepDashboard({ root, store }) {
       ));
     const product = (state.products || []).find((item) => item.id === productId);
     const customer = (state.retailers || []).find((item) => item.id === customerId);
-    const customerName = customer?.name || typedCustomerName;
+    const customerName = transactionType === "return"
+      ? returnCustomerName
+      : isWalkInSale ? "Walk-in customer" : customer?.name || typedCustomerName;
     const isCreditSale = transactionType === "sale" && normalized(paymentType).includes("credit");
     const availableQuantity = selectedAssignments.reduce((total, assignment) => (
       total + (transactionType === "return" ? Number(assignment.sold || 0) : assignment.outstanding)
@@ -2446,13 +2541,13 @@ function bindSalesRepDashboard({ root, store }) {
       return;
     }
 
-    if (customerId && !customer) {
+    if (transactionType === "sale" && selectedCustomerId && !isWalkInSale && !customer) {
       setRepMessage(message, "Pick a valid customer.", "error");
       return;
     }
 
     if (!customerName) {
-      setRepMessage(message, "Enter the customer name.", "error");
+      setRepMessage(message, transactionType === "return" ? "Choose the customer who bought this product." : "Enter the customer name.", "error");
       return;
     }
 
@@ -2461,9 +2556,19 @@ function bindSalesRepDashboard({ root, store }) {
       return;
     }
 
+    if (isWalkInSale && normalized(paymentType) !== "cash") {
+      setRepMessage(message, "Walk-in customers can only pay with cash.", "error");
+      return;
+    }
+
     if (quantity > availableQuantity) {
       const detail = transactionType === "return" ? "sold units can be returned within 7 days" : "left";
       setRepMessage(message, `Only ${formatNumber(availableQuantity)} ${detail} for this product.`, "error");
+      return;
+    }
+
+    if (transactionType === "return" && quantity > returnableCustomerQuantity) {
+      setRepMessage(message, `Only ${formatNumber(returnableCustomerQuantity)} sold to this customer can be returned.`, "error");
       return;
     }
 
@@ -2496,7 +2601,9 @@ function bindSalesRepDashboard({ root, store }) {
       productId,
       customerId,
       customerName,
-      customerType: customer?.channel || customer?.type || "Customer",
+      customerType: transactionType === "return"
+        ? returnCustomerType
+        : isWalkInSale ? "Walk-in" : customer?.channel || customer?.type || "Customer",
       quantity,
       transactionType,
       paymentType,

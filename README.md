@@ -40,6 +40,16 @@ The server prints the local URL. By default it starts at `http://127.0.0.1:8080`
 supabase functions deploy invite-user
 ```
 
+5. Configure and deploy the credit-limit notification function. Replace the sender with a verified address from your Resend account:
+
+```bash
+supabase secrets set RESEND_API_KEY=your_resend_api_key
+supabase secrets set DISTROIQ_FROM_EMAIL="DistroIQ <credit@yourdomain.com>"
+supabase functions deploy credit-limit-notification
+```
+
+This function emails a Sales Representative whenever their working credit limit changes. The limit is still saved if the email provider is temporarily unavailable, and the app reports the delivery failure clearly.
+
 The Edge Function uses Supabase environment variables already available in deployed functions: `SUPABASE_URL`, `SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY`.
 
 ## Structure

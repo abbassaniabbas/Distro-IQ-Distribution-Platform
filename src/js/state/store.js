@@ -1,6 +1,11 @@
 import seedData from "../data/seed-data.js";
 import { createActivityLog, getCurrentActor } from "../services/activity.js";
-import { assignmentOutstanding, isRepresentativeReturnEligible } from "../services/calculations.js";
+import {
+  assignmentOutstanding,
+  getReturnableCustomerChoices,
+  isRepresentativeReturnEligible,
+  stockCategoryIdForProduct
+} from "../services/calculations.js";
 import { salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
@@ -25,6 +30,42 @@ function mergeSeedRecords(existing, defaults) {
   const missingDefaults = defaultRecords.filter((item) => !existingIds.has(item.id));
 
   return [...mergedExisting, ...missingDefaults];
+}
+
+function mergeCreditHistoryRecords(existing, remote) {
+  const remoteRecords = Array.isArray(remote) ? clone(remote) : [];
+  const localOnly = (Array.isArray(existing) ? clone(existing) : []).filter((localEntry) => (
+    !remoteRecords.some((remoteEntry) => {
+      const sameChange = (
+        normalized(localEntry.partyName) === normalized(remoteEntry.partyName) &&
+        Number(localEntry.previousLimit || 0) === Number(remoteEntry.previousLimit || 0) &&
+        Number(localEntry.nextLimit || 0) === Number(remoteEntry.nextLimit || 0) &&
+        normalized(localEntry.changedBy) === normalized(remoteEntry.changedBy)
+      );
+      const timeDifference = Math.abs(
+        new Date(localEntry.changedAt || 0).getTime() - new Date(remoteEntry.changedAt || 0).getTime()
+      );
+
+      return sameChange && timeDifference <= 300000;
+    })
+  ));
+
+  return [...remoteRecords, ...localOnly];
+}
+
+function mergeCreditLimitRecords(existing, remote) {
+  const remoteRecords = Array.isArray(remote) ? clone(remote) : [];
+  const localOnly = (Array.isArray(existing) ? clone(existing) : []).filter((localLimit) => (
+    !remoteRecords.some((remoteLimit) => (
+      (localLimit.repUserId && remoteLimit.repUserId && localLimit.repUserId === remoteLimit.repUserId) ||
+      (
+        normalized(localLimit.partyType) === normalized(remoteLimit.partyType) &&
+        normalized(localLimit.partyName) === normalized(remoteLimit.partyName)
+      )
+    ))
+  ));
+
+  return [...remoteRecords, ...localOnly];
 }
 
 function todayISO() {
@@ -69,6 +110,10 @@ function boundedPercent(value) {
 function normalizedPaymentPeriod(value, fallback = 14) {
   const nextValue = Number(value ?? fallback);
   return Math.max(0, Number.isFinite(nextValue) ? Math.round(nextValue) : fallback);
+}
+
+function stockAssignmentVariance(assignment) {
+  return Number(assignment?.assigned || 0) - Number(assignment?.sold || 0) - Number(assignment?.returned || 0);
 }
 
 function quickSaleOrderId(transaction) {
@@ -470,7 +515,8 @@ function createDispatchSalesOrder(state, {
   recipientType,
   destination,
   dispatchDate,
-  staffName
+  staffName,
+  repUserId = ""
 }) {
   const customer = findRetailerByName(state, recipientName);
   const dispatchesToRepresentative = String(recipientType || "").toLowerCase().includes("representative");
@@ -494,7 +540,7 @@ function createDispatchSalesOrder(state, {
       createdAt: dispatchDate,
       updatedAt: dispatchDate,
       repName: dispatchesToRepresentative ? recipientName : staffName,
-      repUserId: state.user?.id || "",
+      repUserId: dispatchesToRepresentative ? repUserId : state.user?.id || "",
       items: [
         {
           productId: product.id,
@@ -550,7 +596,11 @@ function reducer(currentState, action) {
         featureModules: Array.isArray(action.featureModules) ? action.featureModules : state.featureModules,
         messages: Array.isArray(action.messages) ? action.messages : state.messages,
         notificationReadAt: action.notificationReadAt || state.notificationReadAt,
-        activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs
+        activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
+        creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(state.creditLimits, action.creditLimits) : state.creditLimits,
+        creditLimitHistory: Array.isArray(action.creditLimitHistory)
+          ? mergeCreditHistoryRecords(state.creditLimitHistory, action.creditLimitHistory)
+          : state.creditLimitHistory
       };
     }
 
@@ -566,6 +616,10 @@ function reducer(currentState, action) {
         messages: Array.isArray(action.messages) ? action.messages : state.messages,
         notificationReadAt: action.notificationReadAt || state.notificationReadAt,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
+        creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(state.creditLimits, action.creditLimits) : state.creditLimits,
+        creditLimitHistory: Array.isArray(action.creditLimitHistory)
+          ? mergeCreditHistoryRecords(state.creditLimitHistory, action.creditLimitHistory)
+          : state.creditLimitHistory,
         backend: {
           ...state.backend,
           configured: true,
@@ -963,8 +1017,22 @@ function reducer(currentState, action) {
       const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
       const customerName = customer?.name || action.customerName || "Walk-in customer";
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
+      const isWalkInSale = transactionType === "sale" && !customer && normalized(customerName) === "walk-in customer";
+      const returnableCustomer = transactionType === "return"
+        ? getReturnableCustomerChoices(state, {
+            productId,
+            repName,
+            repUserId: state.user?.id || "",
+            assignmentIds: eligibleAssignments.map((assignment) => assignment.id)
+          }).find((choice) => (
+            (customer?.id && choice.customerId === customer.id) ||
+            (!customer?.id && normalized(choice.customerName) === normalized(customerName))
+          ))
+        : null;
 
       if (!product || !quantity || !eligibleAssignments.length || quantity > availableQuantity) return state;
+      if (isWalkInSale && normalized(paymentType) !== "cash") return state;
+      if (transactionType === "return" && (!returnableCustomer || quantity > returnableCustomer.quantity)) return state;
 
       let remainingQuantity = quantity;
       const assignmentAllocations = [];
@@ -1217,9 +1285,21 @@ function reducer(currentState, action) {
       const staffName = String(action.staffName || currentActorName(state)).trim();
       const dispatchDate = action.dispatchDate || todayISO();
       const transactionId = createId("TXN");
+      const representativeAccount = isRepresentativeDispatch
+        ? (state.accounts || []).find((account) => (
+            normalized(account.name) === normalized(recipientName) &&
+            ["sales_rep", "sales representative"].includes(normalized(account.role).replaceAll("-", "_"))
+          ))
+        : null;
       let orderId = "";
 
-      if (!product || !quantity || Number(product.stock || 0) < quantity) {
+      if (
+        !product ||
+        product.status === "inactive" ||
+        !quantity ||
+        Number(product.stock || 0) < quantity ||
+        (isRepresentativeDispatch && stockCategoryIdForProduct(product) !== "finished_products")
+      ) {
         return state;
       }
 
@@ -1236,6 +1316,8 @@ function reducer(currentState, action) {
             id: createId("ASN"),
             routeId: routeId || destination || "Factory dispatch",
             repName: recipientName,
+            repUserId: representativeAccount?.userId || "",
+            repMembershipId: representativeAccount?.id || "",
             productId: product.id,
             assignedAt: dispatchDate,
             assigned: quantity,
@@ -1258,7 +1340,8 @@ function reducer(currentState, action) {
           recipientType,
           destination,
           dispatchDate,
-          staffName
+          staffName,
+          repUserId: representativeAccount?.userId || ""
         });
       }
 
@@ -1310,7 +1393,7 @@ function reducer(currentState, action) {
 
     case "FLAG_ASSIGNMENT_VARIANCE": {
       const assignment = state.stockAssignments.find((item) => item.id === action.assignmentId);
-      if (assignment) {
+      if (assignment && Math.abs(stockAssignmentVariance(assignment)) > 0.0001) {
         assignment.status = "variance";
         assignment.varianceFlagged = true;
         assignment.varianceNote = String(action.note || "Manager requested explanation").trim();
@@ -1329,8 +1412,8 @@ function reducer(currentState, action) {
     case "RECONCILE_ASSIGNMENT": {
       const assignment = state.stockAssignments.find((item) => item.id === action.assignmentId);
       if (assignment) {
-        const outstanding = assignmentOutstanding(assignment);
-        if (outstanding > 0 && !assignment.varianceFlagged) return state;
+        const hasVariance = Math.abs(stockAssignmentVariance(assignment)) > 0.0001;
+        if (hasVariance && !assignment.varianceFlagged) return state;
 
         assignment.status = "reconciled";
         assignment.reconciledAt = new Date().toISOString();
