@@ -17,8 +17,8 @@ import {
   getStockHealth,
   stockCategoryIdForProduct
 } from "../services/calculations.js";
-import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
-import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
+import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
+import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -58,6 +58,29 @@ function currentRepName(state) {
     state.stockAssignments?.[0]?.repName ||
     "Sales Representative"
   );
+}
+
+function dashboardIdentity(state, role = currentUserRole(state)) {
+  const account = accountForUser(state);
+  const name = account?.name || state.user?.user_metadata?.full_name || state.user?.email || "Team member";
+  const companyName = state.client?.companyName || "DistroIQ workspace";
+  const roleLabels = {
+    ceo: "CEO",
+    manager: "Manager",
+    store_keeper: "Store Keeper",
+    accountant: "Accountant",
+    sales_rep: "Sales Representative"
+  };
+
+  return `
+    <header class="dashboard-identity">
+      <div>
+        <strong>${escapeHtml(name)}</strong>
+        <span>${escapeHtml(roleLabels[role] || statusText(role))}</span>
+      </div>
+      <small>${escapeHtml(companyName)}</small>
+    </header>
+  `;
 }
 
 function buildRepAssignments(state, repName = "") {
@@ -883,6 +906,7 @@ function renderCeoDashboard(state) {
 
   return `
     <section class="view dashboard-view ceo-dashboard">
+      ${dashboardIdentity(state, "ceo")}
       <section class="ceo-command-strip">
         <div>
           <span class="eyebrow">CEO portal</span>
@@ -953,6 +977,7 @@ function renderCeoDashboard(state) {
           ${renderCeoCustomerRatings(supermarketRows)}
         </section>
       </div>
+      ${isModuleEnabled(state, "field_reports") ? renderManagerReportReview(state, { readOnly: true }) : ""}
     </section>
   `;
 }
@@ -1091,6 +1116,7 @@ function renderStoreKeeperDashboard(state, permissions) {
 
   return `
     <section class="view dashboard-view storekeeper-dashboard">
+      ${dashboardIdentity(state, "store_keeper")}
       <section class="ceo-command-strip storekeeper-command-strip">
         <div>
           <span class="eyebrow">Store Keeper portal</span>
@@ -1391,16 +1417,21 @@ function renderManagerOperationsLayout(state, permissions, vision) {
   `;
 }
 
-function renderManagerReportRows(state) {
+function reportLinesFor(report, state) {
   const transactionMap = new Map((state.stockTransactions || []).map((transaction) => [transaction.id, transaction]));
 
+  return (report.reportLines || []).length
+    ? report.reportLines
+    : (report.transactionIds || [])
+      .map((transactionId) => transactionMap.get(transactionId))
+      .filter(Boolean)
+      .map((transaction) => repTransactionLine(transaction, state));
+}
+
+function renderManagerReportRows(state, { readOnly = false } = {}) {
+
   return (state.salesReports || []).map((report) => {
-    const reportLines = (report.reportLines || []).length
-      ? report.reportLines
-      : (report.transactionIds || [])
-        .map((transactionId) => transactionMap.get(transactionId))
-        .filter(Boolean)
-        .map((transaction) => repTransactionLine(transaction, state));
+    const reportLines = reportLinesFor(report, state);
     const linePreview = reportLines
       .slice(0, 2)
       .map((line) => [line.customerName, line.productName, line.returnDisposition].filter(Boolean).join(" - "))
@@ -1435,19 +1466,27 @@ function renderManagerReportRows(state) {
         <td>
           <div class="row-actions">
             ${textButton({
-              iconName: "alert",
-              label: "Flag",
-              className: "js-flag-report",
-              disabled: report.status === "flagged",
+              iconName: "eye",
+              label: "View details",
+              className: "subtle js-view-report-details",
               data: { "report-id": report.id }
             })}
-            ${textButton({
-              iconName: "check",
-              label: report.status === "reviewed" ? "Reviewed" : "Review",
-              className: "primary js-review-report",
-              disabled: report.status === "reviewed",
-              data: { "report-id": report.id }
-            })}
+            ${readOnly ? "" : `
+              ${textButton({
+                iconName: "alert",
+                label: "Flag",
+                className: "js-flag-report",
+                disabled: report.status === "flagged",
+                data: { "report-id": report.id }
+              })}
+              ${textButton({
+                iconName: "check",
+                label: report.status === "reviewed" ? "Reviewed" : "Review",
+                className: "primary js-review-report",
+                disabled: report.status === "reviewed",
+                data: { "report-id": report.id }
+              })}
+            `}
           </div>
         </td>
       </tr>
@@ -1525,10 +1564,75 @@ function renderManagerSalesOperations(state) {
   `;
 }
 
-function renderManagerReportReview(state) {
+function renderReportDetails(report, state) {
+  const lines = reportLinesFor(report, state);
+
+  return `
+    <div class="report-detail-summary">
+      <div><span>Sales representative</span><strong>${escapeHtml(report.repName || "Unassigned")}</strong></div>
+      <div><span>Report date</span><strong>${formatDate(report.reportDate)}</strong></div>
+      <div><span>Total sales</span><strong>${formatCurrency(report.salesAmount)}</strong></div>
+      <div><span>Units</span><strong>${formatNumber(report.unitsSold)} sold / ${formatNumber(report.unitsReturned)} returned</strong></div>
+      <div><span>Cash</span><strong>${formatCurrency(report.cashAmount)}</strong></div>
+      <div><span>Credit</span><strong>${formatCurrency(report.creditAmount)}</strong></div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Activity</th>
+            <th>Customer</th>
+            <th>Product</th>
+            <th>Quantity</th>
+            <th>Payment</th>
+            <th>Amount</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${lines.length ? lines.map((line) => `
+            <tr>
+              <td>
+                <strong>${escapeHtml(line.type || "Sale")}</strong>
+                ${line.returnDisposition ? `<div class="muted">${escapeHtml(line.returnDisposition)}</div>` : ""}
+              </td>
+              <td>${escapeHtml(line.customerName || "Customer")}</td>
+              <td>${escapeHtml(line.productName || "Product")}</td>
+              <td>${formatNumber(line.quantity)}</td>
+              <td>${escapeHtml(statusText(line.paymentType || "cash"))}</td>
+              <td>${formatCurrency(line.amount)}</td>
+            </tr>
+          `).join("") : '<tr><td colspan="6">No linked sale or return records</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+    <div class="report-detail-note">
+      <span class="eyebrow">Review note</span>
+      <p>${escapeHtml(report.reviewNote || "No review query has been added.")}</p>
+    </div>
+  `;
+}
+
+function renderReportDetailsModal() {
+  return `
+    <div id="report-details-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal report-details-modal" role="dialog" aria-modal="true" aria-labelledby="report-details-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Submitted sales report</span>
+            <h2 id="report-details-title">Report details</h2>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close report details", className: "js-close-report-details" })}
+        </header>
+        <div id="report-details-content" class="report-details-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function renderManagerReportReview(state, { readOnly = false } = {}) {
   return `
     <section class="panel" id="manager-report-review">
-      ${panelHeader("Report review", "Submitted representative reports can be reviewed or flagged for correction")}
+      ${panelHeader("Submitted sales reports", readOnly ? "Open any report to see its customers, products, quantities, and payment details" : "Open a report for full details, then review it or flag it for correction")}
       <div class="table-wrap">
         <table class="data-table">
           <thead>
@@ -1541,10 +1645,11 @@ function renderManagerReportReview(state) {
               <th></th>
             </tr>
           </thead>
-          <tbody>${renderManagerReportRows(state) || '<tr><td colspan="6">No submitted reports yet</td></tr>'}</tbody>
+          <tbody>${renderManagerReportRows(state, { readOnly }) || '<tr><td colspan="6">No submitted reports yet</td></tr>'}</tbody>
         </table>
       </div>
     </section>
+    ${renderReportDetailsModal()}
   `;
 }
 
@@ -1948,6 +2053,7 @@ function renderSalesRepDashboard(state) {
 
   return `
     <section class="view dashboard-view sales-rep-portal">
+      ${dashboardIdentity(state, "sales_rep")}
       <section class="rep-hero">
         <div>
           <span class="eyebrow">Today</span>
@@ -2139,6 +2245,7 @@ function renderAccountantDashboard(state) {
 
   return `
     <section class="view dashboard-view accountant-dashboard">
+      ${dashboardIdentity(state, "accountant")}
       <div class="metric-grid">
         ${metricCard({
           label: "Reported sales",
@@ -2228,6 +2335,7 @@ export function renderDashboard({ state }) {
 
   return `
     <section class="view dashboard-view">
+      ${dashboardIdentity(state, role)}
       <div class="metric-grid">
         ${metricCard({
           label: "Tracked flow",
@@ -2301,6 +2409,8 @@ export function renderDashboard({ state }) {
 }
 
 export function bindDashboard({ root, store }) {
+  bindSubmittedReportDetails({ root, store });
+
   if (root.querySelector(".sales-rep-portal")) {
     bindSalesRepDashboard({ root, store });
     return;
@@ -2358,6 +2468,37 @@ export function bindDashboard({ root, store }) {
         message: "Report flagged"
       });
     });
+  });
+}
+
+function bindSubmittedReportDetails({ root, store }) {
+  const modal = qs("#report-details-modal", root);
+  const content = qs("#report-details-content", root);
+  const title = qs("#report-details-title", root);
+
+  if (!modal || !content) return;
+
+  function closeModal() {
+    modal.hidden = true;
+  }
+
+  qsa(".js-view-report-details", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const report = (store.getState().salesReports || []).find((item) => item.id === button.dataset.reportId);
+      if (!report) return;
+
+      content.innerHTML = renderReportDetails(report, store.getState());
+      if (title) title.textContent = `${report.repName || "Representative"} - ${formatDate(report.reportDate)}`;
+      modal.hidden = false;
+      modal.focus();
+    });
+  });
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal || event.target.closest(".js-close-report-details")) closeModal();
+  });
+  modal.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeModal();
   });
 }
 

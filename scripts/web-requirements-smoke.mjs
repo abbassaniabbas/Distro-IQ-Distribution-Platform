@@ -5,6 +5,7 @@ import { scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
 import { renderAuth } from "../src/js/views/auth.js";
 import { renderDashboard } from "../src/js/views/dashboard.js";
+import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
 
 globalThis.window = { location: { hash: "#/dashboard" } };
@@ -13,6 +14,8 @@ const client = { id: "client-test", companyName: "Test Factory", currencySymbol:
 const accounts = [
   { id: "membership-rep", userId: "user-rep", name: "Amina Rep", email: "amina@example.com", role: "sales_rep", status: "active" },
   { id: "membership-manager", userId: "user-manager", name: "Musa Manager", email: "musa@example.com", role: "manager", status: "active" },
+  { id: "membership-ceo", userId: "user-ceo", name: "Chioma CEO", email: "chioma@example.com", role: "ceo", status: "active" },
+  { id: "membership-accountant", userId: "user-accountant", name: "Bola Accountant", email: "bola@example.com", role: "accountant", status: "active" },
   { id: "membership-store", userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" }
 ];
 const store = createStore();
@@ -172,6 +175,28 @@ const repDashboard = renderDashboard({ state: scopeStateForCurrentRole(state) })
 assert.match(repDashboard, /Walk-in customer/, "walk-in sale must appear in the current daily report");
 assert.match(repDashboard, /Plantain Chips/);
 
+store.dispatch({
+  type: "SUBMIT_REP_REPORT",
+  repName: "Amina Rep",
+  reportDate: "2026-07-10",
+  salesAmount: 1000,
+  cashAmount: 1000,
+  creditAmount: 0,
+  unitsSold: 2,
+  unitsReturned: 1,
+  transactionIds: [sale.id],
+  reportLines: [{
+    transactionId: sale.id,
+    type: "Sale",
+    productId: "SKU-CHIPS",
+    productName: "Plantain Chips",
+    customerName: "Walk-in customer",
+    quantity: 2,
+    amount: 1000,
+    paymentType: "cash"
+  }]
+});
+
 store.dispatch({ type: "TOGGLE_PRODUCT_STATUS", productId: "SKU-CHIPS" });
 state = store.getState();
 const repScope = scopeStateForCurrentRole(state);
@@ -188,8 +213,84 @@ globalThis.window.location.hash = "#/inventory?tab=assignments";
 const ledger = renderInventory({ state: store.getState() });
 assert.match(ledger, /data-assignment-rep-filter/);
 assert.match(ledger, /js-export-assignment-pdf/);
-assert.match(ledger, /assignment-variance-cell is-discrepant/);
-assert.match(ledger, />18<\/strong>/, "variance must reflect assigned minus sold and returned");
+assert.doesNotMatch(ledger, /assignment-variance-cell is-discrepant/, "open stock in hand must not be shown as a discrepancy");
+assert.match(ledger, />18<\/strong>[\s\S]*Still with representative/, "the ledger must show unsold stock as stock in hand");
+assert.match(ledger, />0<\/strong>[\s\S]*No discrepancy/, "variance must stay at zero until the remainder is flagged");
+
+const managerDashboard = renderDashboard({ state: store.getState() });
+assert.match(managerDashboard, /Submitted sales reports/);
+assert.match(managerDashboard, /js-view-report-details/);
+assert.match(managerDashboard, /Musa Manager/);
+assert.match(managerDashboard, /Test Factory/);
+
+authenticate("user-ceo");
+const ceoDashboard = renderDashboard({ state: store.getState() });
+assert.match(ceoDashboard, /Submitted sales reports/, "CEO must see submitted representative reports");
+assert.match(ceoDashboard, /js-view-report-details/, "CEO must be able to open the detailed report view");
+assert.doesNotMatch(ceoDashboard, /js-review-report/, "CEO report access must remain read-only");
+assert.match(ceoDashboard, /Chioma CEO/);
+
+authenticate("user-store");
+assert.match(renderDashboard({ state: store.getState() }), /Tola Store/);
+authenticate("user-accountant");
+assert.match(renderDashboard({ state: store.getState() }), /Bola Accountant/);
+
+authenticate("user-manager");
+store.getState().creditLimits = Array.from({ length: 12 }, (_, index) => ({
+  id: `CRD-${index + 1}`,
+  partyType: index === 0 ? "Sales Representative" : "Customer",
+  partyName: index === 0 ? "Amina Rep" : index === 1 ? "Sahad Stores" : `Customer ${index + 1}`,
+  limit: 100000,
+  balance: (12 - index) * 5000,
+  previousLimit: 80000,
+  changedBy: "Musa Manager",
+  changedAt: `2026-07-${String(10 - Math.floor(index / 2)).padStart(2, "0")}T08:00:00Z`,
+  paymentPeriodDays: 14
+}));
+store.getState().creditLimitHistory = Array.from({ length: 12 }, (_, index) => ({
+  id: `CLH-${index + 1}`,
+  partyType: "Customer",
+  partyName: `Customer ${index + 1}`,
+  previousLimit: 80000,
+  nextLimit: 100000,
+  changedBy: "Musa Manager",
+  changedAt: `2026-07-${String(10 - Math.floor(index / 2)).padStart(2, "0")}T08:00:00Z`
+}));
+globalThis.window.location.hash = "#/inventory?tab=credit";
+const creditPage = renderInventory({ state: store.getState() });
+assert.match(creditPage, /Sales representative credit limits/);
+assert.match(creditPage, /Customer credit limits/);
+assert.match(creditPage, /Amina Rep/);
+assert.match(creditPage, /Sahad Stores/);
+
+store.getState().orders = [{
+  id: "ORD-CREDIT-AGING",
+  customerName: "Sahad Stores",
+  retailerId: "",
+  paymentType: "credit",
+  paymentStatus: "open",
+  createdAt: "2026-06-01",
+  dueAt: "2026-06-15",
+  items: [{ productId: "SKU-CHIPS", quantity: 3, unitPrice: 500 }]
+}];
+const financePage = renderFinance({ state: store.getState() });
+assert.equal((financePage.match(/data-finance-page-row="credit-exposure"/g) || []).length, 12);
+assert.equal((financePage.match(/hidden data-finance-page-row="credit-exposure"/g) || []).length, 2);
+assert.equal((financePage.match(/data-finance-page-row="credit-history"/g) || []).length, 12);
+assert.equal((financePage.match(/hidden data-finance-page-row="credit-history"/g) || []).length, 2);
+assert.match(financePage, /31\+ days[\s\S]*₦1,500/, "open credit orders must feed the credit-aging view");
+
+const movementTemplate = store.getState().stockTransactions[0];
+store.getState().stockTransactions = Array.from({ length: 12 }, (_, index) => ({
+  ...movementTemplate,
+  id: `TXN-PAGE-${index + 1}`,
+  date: `2026-07-${String(10 - Math.floor(index / 2)).padStart(2, "0")}`
+}));
+globalThis.window.location.hash = "#/inventory?tab=movement-history";
+const movementPage = renderInventory({ state: store.getState() });
+assert.equal((movementPage.match(/data-movement-row/g) || []).length, 12);
+assert.equal((movementPage.match(/hidden data-movement-row/g) || []).length, 2, "movement history must initially show no more than 10 rows");
+assert.match(movementPage, /data-movement-pagination/);
 
 store.dispatch({ type: "TOGGLE_PRODUCT_STATUS", productId: "SKU-CHIPS" });
 authenticate("user-rep");

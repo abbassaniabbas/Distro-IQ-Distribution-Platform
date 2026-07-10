@@ -636,9 +636,10 @@ export function getInvoiceAging(invoices, today = new Date()) {
     .filter((invoice) => invoice.status !== "paid")
     .forEach((invoice) => {
       const dueDate = new Date(`${invoice.dueAt}T12:00:00`);
+      if (Number.isNaN(dueDate.getTime())) return;
       const daysPastDue = Math.floor((today - dueDate) / 86400000);
       const bucket = buckets.find((item) => daysPastDue >= item.min && daysPastDue <= item.max);
-      bucket.total += invoice.amount;
+      if (bucket) bucket.total += Number(invoice.amount || 0);
     });
 
   const maxValue = Math.max(...buckets.map((bucket) => bucket.total), 1);

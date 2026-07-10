@@ -20,6 +20,7 @@ import { metricCard, panelHeader, progressBar, statusPill, table, textButton } f
 import { icon } from "../ui/icons.js";
 
 const DEFAULT_FINANCE_TAB = "overview";
+const FINANCE_PAGE_SIZE = 10;
 
 function financeRouteParams() {
   if (typeof window === "undefined") return new URLSearchParams();
@@ -75,8 +76,51 @@ function renderFinanceSubtabs(activeTabId, state) {
   `;
 }
 
-function renderAgingRows(invoices) {
-  return getInvoiceAging(invoices)
+function addDays(dateValue, days) {
+  const date = parseLocalDate(dateValue);
+  if (!date) return dateValue || "";
+  date.setDate(date.getDate() + Number(days || 0));
+  return date.toISOString().slice(0, 10);
+}
+
+function financeInvoices(state) {
+  const invoices = [...(state.invoices || [])];
+  const linkedOrderIds = new Set(invoices.map((invoice) => invoice.orderId).filter(Boolean));
+  const limitsByName = new Map((state.creditLimits || []).map((limit) => [String(limit.partyName || "").trim().toLowerCase(), limit]));
+
+  (state.orders || [])
+    .filter((order) => String(order.paymentType || "").toLowerCase().includes("credit"))
+    .filter((order) => String(order.paymentStatus || "open").toLowerCase() !== "paid")
+    .filter((order) => !linkedOrderIds.has(order.id))
+    .forEach((order) => {
+      const customerName = order.customerName || "Customer";
+      const limit = limitsByName.get(String(customerName).trim().toLowerCase());
+      const issuedAt = dateOnly(order.createdAt || order.updatedAt);
+      const dueAt = order.dueAt && order.dueAt !== issuedAt
+        ? dateOnly(order.dueAt)
+        : addDays(issuedAt, limit?.paymentPeriodDays ?? 14);
+      const amount = (order.items || []).reduce((total, item) => (
+        total + Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)
+      ), 0);
+
+      invoices.push({
+        id: `INV-${order.id}`,
+        orderId: order.id,
+        retailerId: order.retailerId || "",
+        customerName,
+        issuedAt,
+        dueAt,
+        amount,
+        status: "open",
+        derived: true
+      });
+    });
+
+  return invoices;
+}
+
+function renderAgingRows(state) {
+  return getInvoiceAging(financeInvoices(state))
     .map(
       (bucket) => `
         <div class="aging-row" data-search-index="${escapeHtml(bucket.label.toLowerCase())}">
@@ -105,7 +149,7 @@ function renderInvoiceRows(state, permissions) {
   const retailerMap = getRetailerMap(state.retailers);
   const canUpdateCredit = permissions.canSetCreditLimits;
 
-  return state.invoices.map((invoice) => {
+  return financeInvoices(state).map((invoice) => {
     const retailer = retailerMap.get(invoice.retailerId);
     const searchIndex = [
       invoice.id,
@@ -132,7 +176,7 @@ function renderInvoiceRows(state, permissions) {
               iconName: "check",
               label: invoice.status === "paid" ? "Paid" : "Mark paid",
               className: invoice.status === "paid" ? "" : "primary js-mark-paid",
-              disabled: invoice.status === "paid" || !canUpdateCredit,
+              disabled: invoice.status === "paid" || !canUpdateCredit || invoice.derived,
               data: { "invoice-id": invoice.id }
             })}
           </div>
@@ -143,7 +187,9 @@ function renderInvoiceRows(state, permissions) {
 }
 
 function renderCreditExposureRows(state) {
-  return state.creditLimits.map((limit) => {
+  return [...(state.creditLimits || [])]
+    .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0))
+    .map((limit, index) => {
     const usagePercent = limit.limit ? (Number(limit.balance || 0) / Number(limit.limit || 0)) * 100 : 100;
     const remaining = Math.max(0, Number(limit.limit || 0) - Number(limit.balance || 0));
     const status = usagePercent >= 100 ? "credit_hold" : usagePercent >= 85 ? "credit_watch" : "credit_clear";
@@ -154,7 +200,7 @@ function renderCreditExposureRows(state) {
     ].join(" ").toLowerCase();
 
     return `
-      <tr data-search-index="${escapeHtml(searchIndex)}">
+      <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="credit-exposure" data-search-index="${escapeHtml(searchIndex)}">
         <td>
           <strong>${escapeHtml(limit.partyName)}</strong>
           <div class="muted">${escapeHtml(limit.partyType)}</div>
@@ -300,7 +346,9 @@ function renderRepresentativeCreditManager(state, permissions) {
 }
 
 function renderCreditHistoryRows(state) {
-  return (state.creditLimitHistory || []).map((entry) => {
+  return [...(state.creditLimitHistory || [])]
+    .sort((a, b) => String(b.changedAt || "").localeCompare(String(a.changedAt || "")))
+    .map((entry, index) => {
     const searchIndex = [
       entry.partyName,
       entry.partyType,
@@ -309,7 +357,7 @@ function renderCreditHistoryRows(state) {
     ].join(" ").toLowerCase();
 
     return `
-      <tr data-search-index="${escapeHtml(searchIndex)}">
+      <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="credit-history" data-search-index="${escapeHtml(searchIndex)}">
         <td>
           <strong>${escapeHtml(entry.partyName)}</strong>
           <div class="muted">${escapeHtml(entry.partyType)}</div>
@@ -822,7 +870,7 @@ export function renderFinance({ state }) {
       <div class="finance-layout">
         <section class="panel">
           ${panelHeader("Credit aging", "Open balances owed by due-date bucket")}
-          <div class="aging-list">${renderAgingRows(state.invoices)}</div>
+          <div class="aging-list">${renderAgingRows(state)}</div>
         </section>
 
         <section class="panel">
@@ -842,6 +890,7 @@ export function renderFinance({ state }) {
           renderCreditExposureRows(state),
           "No credit limits available"
         )}
+        ${renderFinancePagination("credit-exposure")}
       </section>
 
       <section class="panel">
@@ -851,8 +900,19 @@ export function renderFinance({ state }) {
           renderCreditHistoryRows(state),
           "No credit limit changes recorded"
         )}
+        ${renderFinancePagination("credit-history")}
       </section>
     </section>
+  `;
+}
+
+function renderFinancePagination(id) {
+  return `
+    <div class="activity-pagination" data-finance-pagination="${escapeHtml(id)}" hidden>
+      <button class="button" type="button" data-finance-page="prev">Previous</button>
+      <span data-finance-page-status>Page 1 of 1</span>
+      <button class="button" type="button" data-finance-page="next">Next</button>
+    </div>
   `;
 }
 
@@ -1097,7 +1157,61 @@ function exportAccountantReport(root, format) {
   downloadBlob(`distroiq-accountant-report-${datestamp}.csv`, "text/csv;charset=utf-8", csv);
 }
 
+function bindFinancePagination(root) {
+  qsa("[data-finance-pagination]", root).forEach((pagination) => {
+    const id = pagination.dataset.financePagination;
+    const rows = qsa(`[data-finance-page-row="${id}"]`, root);
+    const status = qs("[data-finance-page-status]", pagination);
+    const previous = qs('[data-finance-page="prev"]', pagination);
+    const next = qs('[data-finance-page="next"]', pagination);
+    const globalSearch = qs("#global-search", document);
+    let currentPage = 1;
+
+    if (!rows.length || !status) return;
+
+    function matchingRows() {
+      const query = String(globalSearch?.value || "").trim().toLowerCase();
+      return rows.filter((row) => !query || String(row.dataset.searchIndex || "").includes(query));
+    }
+
+    function applyPage() {
+      const visibleRows = matchingRows();
+      const totalPages = Math.max(1, Math.ceil(visibleRows.length / FINANCE_PAGE_SIZE));
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+
+      rows.forEach((row) => {
+        row.hidden = true;
+      });
+      visibleRows.forEach((row, index) => {
+        row.hidden = Math.floor(index / FINANCE_PAGE_SIZE) + 1 !== currentPage;
+      });
+
+      pagination.hidden = visibleRows.length <= FINANCE_PAGE_SIZE;
+      status.textContent = `${formatNumber(visibleRows.length)} record${visibleRows.length === 1 ? "" : "s"} - page ${formatNumber(currentPage)} of ${formatNumber(totalPages)}`;
+      if (previous) previous.disabled = currentPage === 1;
+      if (next) next.disabled = currentPage === totalPages;
+    }
+
+    previous?.addEventListener("click", () => {
+      currentPage -= 1;
+      applyPage();
+    });
+    next?.addEventListener("click", () => {
+      currentPage += 1;
+      applyPage();
+    });
+    globalSearch?.addEventListener("input", () => {
+      currentPage = 1;
+      applyPage();
+    });
+
+    window.setTimeout(applyPage, 0);
+  });
+}
+
 export function bindFinance({ root, store }) {
+  bindFinancePagination(root);
+
   if (root.querySelector(".accountant-finance")) {
     bindAccountantFinance({ root });
   }

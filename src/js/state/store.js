@@ -461,6 +461,14 @@ function createQuickSaleOrder(state, {
   const paymentLabel = String(paymentType || "cash").toLowerCase();
   const today = todayISO();
   const orderId = createId("ORD");
+  const isCreditSale = paymentLabel.includes("credit");
+  const customerLimit = (state.creditLimits || []).find((limit) => (
+    normalized(limit.partyName) === normalized(customer?.name || customerName)
+  ));
+  const dueDate = new Date(`${today}T12:00:00`);
+  dueDate.setDate(dueDate.getDate() + Number(customerLimit?.paymentPeriodDays ?? 14));
+  const dueAt = dueDate.toISOString().slice(0, 10);
+  const amount = quantity * Number(product.unitPrice || 0);
 
   state.orders = [
     {
@@ -475,8 +483,8 @@ function createQuickSaleOrder(state, {
       priority: "Normal",
       status: "delivered",
       paymentType,
-      paymentStatus: paymentLabel.includes("credit") ? "open" : "paid",
-      dueAt: today,
+      paymentStatus: isCreditSale ? "open" : "paid",
+      dueAt: isCreditSale ? dueAt : today,
       createdAt: today,
       updatedAt: today,
       repName,
@@ -493,6 +501,25 @@ function createQuickSaleOrder(state, {
     },
     ...(state.orders || [])
   ];
+
+  if (isCreditSale) {
+    state.invoices = [
+      {
+        id: createId("INV"),
+        clientId: state.client?.id || "",
+        orderId,
+        transactionId,
+        retailerId: customer?.id || "",
+        customerName: customer?.name || customerName || "Customer",
+        issuedAt: today,
+        dueAt,
+        amount,
+        status: "open",
+        repName
+      },
+      ...(state.invoices || [])
+    ];
+  }
 
   return orderId;
 }

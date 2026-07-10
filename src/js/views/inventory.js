@@ -24,6 +24,7 @@ import { icon } from "../ui/icons.js";
 
 const DEFAULT_STOCK_TAB = "stock-health";
 const DISPATCH_PAGE_SIZE = 10;
+const MOVEMENT_PAGE_SIZE = 10;
 const FINISHED_PRODUCTS_CATEGORY = "finished_products";
 
 function todayISO() {
@@ -759,7 +760,7 @@ function renderMovementRows(state) {
 
   return [...(state.stockTransactions || [])]
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.id || "").localeCompare(String(a.id || "")))
-    .map((transaction) => {
+    .map((transaction, index) => {
       const product = productMap.get(transaction.productId);
       const direction = movementDirection(transaction);
       const searchIndex = [
@@ -771,7 +772,7 @@ function renderMovementRows(state) {
       ].join(" ").toLowerCase();
 
       return `
-        <tr data-search-index="${escapeHtml(searchIndex)}">
+        <tr ${index >= MOVEMENT_PAGE_SIZE ? "hidden " : ""}data-movement-row data-search-index="${escapeHtml(searchIndex)}">
           <td>
             ${statusPill(direction === "in" ? "in_stock" : "dispatched")}
             <div class="muted">${escapeHtml(statusText(transaction.type))}</div>
@@ -797,12 +798,12 @@ function assignmentDisplayStatus(assignment) {
   return assignment.status;
 }
 
-function assignmentVariance(assignment) {
+function assignmentInHand(assignment) {
   return Number(assignment.assigned || 0) - Number(assignment.sold || 0) - Number(assignment.returned || 0);
 }
 
-function hasAssignmentVariance(assignment) {
-  return Math.abs(assignmentVariance(assignment)) > 0.0001;
+function hasStockInHand(assignment) {
+  return Math.abs(assignmentInHand(assignment)) > 0.0001;
 }
 
 function renderAssignmentRows(state, permissions) {
@@ -810,10 +811,11 @@ function renderAssignmentRows(state, permissions) {
 
   return state.stockAssignments.map((assignment) => {
     const product = productMap.get(assignment.productId);
-    const variance = assignmentVariance(assignment);
-    const hasVariance = hasAssignmentVariance(assignment);
+    const inHand = assignmentInHand(assignment);
+    const hasOutstandingStock = hasStockInHand(assignment);
+    const hasVariance = Boolean(assignment.varianceFlagged) && hasOutstandingStock;
     const soldPercent = assignment.assigned ? (assignment.sold / assignment.assigned) * 100 : 0;
-    const reconcileBlocked = hasVariance && !assignment.varianceFlagged;
+    const reconcileBlocked = hasOutstandingStock && !assignment.varianceFlagged;
     const searchIndex = [
       assignment.id,
       assignment.repName,
@@ -847,9 +849,13 @@ function renderAssignmentRows(state, permissions) {
           </div>
         </td>
         <td>${formatNumber(assignment.returned)}</td>
+        <td>
+          <strong>${formatNumber(inHand)}</strong>
+          <div class="muted">Still with representative</div>
+        </td>
         <td class="assignment-variance-cell ${hasVariance ? "is-discrepant" : ""}">
-          <strong>${formatNumber(variance)}</strong>
-          ${hasVariance ? '<div class="muted">Needs review</div>' : '<div class="muted">Balanced</div>'}
+          <strong>${formatNumber(hasVariance ? inHand : 0)}</strong>
+          ${hasVariance ? '<div class="muted">Flagged for review</div>' : '<div class="muted">No discrepancy</div>'}
         </td>
         <td>
           ${statusPill(assignmentDisplayStatus(assignment))}
@@ -861,7 +867,7 @@ function renderAssignmentRows(state, permissions) {
               ? `
                 <div class="assignment-actions">
                   ${
-                    hasVariance
+                    hasOutstandingStock
                       ? `<input class="table-note-input" data-variance-note="${escapeHtml(assignment.id)}" placeholder="Variance note">`
                       : ""
                   }
@@ -869,7 +875,7 @@ function renderAssignmentRows(state, permissions) {
                     iconName: "alert",
                     label: "Flag",
                     className: "js-flag-assignment",
-                    disabled: !hasVariance,
+                    disabled: !hasOutstandingStock,
                     data: { "assignment-id": assignment.id }
                   })}
                   <span class="reconcile-action-wrap">
@@ -938,8 +944,12 @@ function renderTransactionRows(state) {
   });
 }
 
-function renderCreditRows(state) {
-  return state.creditLimits.map((limit) => {
+function isRepresentativeCreditLimit(limit) {
+  return Boolean(limit.repUserId) || String(limit.partyType || "").toLowerCase().includes("representative");
+}
+
+function renderCreditRows(limits) {
+  return limits.map((limit) => {
     const percent = limit.limit ? (limit.balance / limit.limit) * 100 : 0;
     const searchIndex = [
       limit.partyName,
@@ -1023,7 +1033,7 @@ function renderAssignmentsPage(state, permissions) {
   const representativeNames = managerRepOptions(state);
 
   return `
-    <section class="panel inventory-layout">
+    <section class="panel inventory-layout assignment-ledger-panel">
       ${panelHeader(
         "Representative stock ledger",
         "Created automatically when factory dispatch goes to a sales representative",
@@ -1055,7 +1065,7 @@ function renderAssignmentsPage(state, permissions) {
         </button>
       </div>
       ${table(
-        ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Variance", "Status", ""],
+        ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "In hand", "Variance", "Status", ""],
         renderAssignmentRows(state, permissions),
         "No representative stock ledger entries yet"
       )}
@@ -1073,18 +1083,34 @@ function renderTransactionsPage(state) {
         renderMovementRows(state),
         "No stock movement recorded"
       )}
+      <div class="activity-pagination" data-movement-pagination hidden>
+        <button class="button" type="button" data-movement-page="prev">Previous</button>
+        <span data-movement-page-status>Page 1 of 1</span>
+        <button class="button" type="button" data-movement-page="next">Next</button>
+      </div>
     </section>
   `;
 }
 
 function renderCreditPage(state) {
+  const representativeLimits = (state.creditLimits || []).filter(isRepresentativeCreditLimit);
+  const customerLimits = (state.creditLimits || []).filter((limit) => !isRepresentativeCreditLimit(limit));
+
   return `
     <section class="panel inventory-layout">
-      ${panelHeader("Credit limits", "Running balances against manager-approved limits")}
+      ${panelHeader("Sales representative credit limits", "Daily credit allowance and current usage for each representative")}
       ${table(
-        ["Party", "Limit", "Balance usage", "Last change", "Changed by"],
-        renderCreditRows(state),
-        "No credit limits recorded"
+        ["Sales representative", "Daily limit", "Balance usage", "Last change", "Changed by"],
+        renderCreditRows(representativeLimits),
+        "No sales representative credit limits recorded"
+      )}
+    </section>
+    <section class="panel inventory-layout">
+      ${panelHeader("Customer credit limits", "Approved credit terms and running balance for each customer")}
+      ${table(
+        ["Customer", "Credit limit", "Balance usage", "Last change", "Changed by"],
+        renderCreditRows(customerLimits),
+        "No customer credit limits recorded"
       )}
     </section>
   `;
@@ -1187,7 +1213,7 @@ export function bindInventory({ root, store, signal }) {
 
   qs(".js-export-assignment-pdf", root)?.addEventListener("click", () => {
     const rows = visibleAssignmentRows().map((row) => {
-      const cells = [...row.querySelectorAll("td")].slice(0, 8);
+      const cells = [...row.querySelectorAll("td")].slice(0, 9);
 
       return {
         cells: cells.map((cell) => String(cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim()),
@@ -1203,7 +1229,7 @@ export function bindInventory({ root, store, signal }) {
       filename: `distroiq-representative-stock-ledger-${todayISO()}.html`,
       sections: [{
         title: "Assignments and variances",
-        headers: ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "Variance", "Status"],
+        headers: ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "In hand", "Variance", "Status"],
         rows
       }]
     });
@@ -1276,6 +1302,58 @@ export function bindInventory({ root, store, signal }) {
   }
 
   setupDispatchPagination();
+
+  function setupMovementPagination() {
+    const rows = qsa("[data-movement-row]", root);
+    const pagination = qs("[data-movement-pagination]", root);
+    const status = qs("[data-movement-page-status]", root);
+    const prevButton = qs('[data-movement-page="prev"]', root);
+    const nextButton = qs('[data-movement-page="next"]', root);
+    const globalSearch = qs("#global-search", document);
+    let currentPage = 1;
+
+    if (!rows.length || !pagination || !status) return;
+
+    function matchedRows() {
+      const query = String(globalSearch?.value || "").trim().toLowerCase();
+      return rows.filter((row) => !query || String(row.dataset.searchIndex || "").includes(query));
+    }
+
+    function applyPage() {
+      const visibleRows = matchedRows();
+      const totalPages = Math.max(1, Math.ceil(visibleRows.length / MOVEMENT_PAGE_SIZE));
+
+      currentPage = Math.min(Math.max(1, currentPage), totalPages);
+      rows.forEach((row) => {
+        row.hidden = true;
+      });
+      visibleRows.forEach((row, index) => {
+        row.hidden = Math.floor(index / MOVEMENT_PAGE_SIZE) + 1 !== currentPage;
+      });
+
+      pagination.hidden = visibleRows.length <= MOVEMENT_PAGE_SIZE;
+      status.textContent = `${formatNumber(visibleRows.length)} movement${visibleRows.length === 1 ? "" : "s"} - page ${formatNumber(currentPage)} of ${formatNumber(totalPages)}`;
+      if (prevButton) prevButton.disabled = currentPage <= 1;
+      if (nextButton) nextButton.disabled = currentPage >= totalPages;
+    }
+
+    prevButton?.addEventListener("click", () => {
+      currentPage -= 1;
+      applyPage();
+    });
+    nextButton?.addEventListener("click", () => {
+      currentPage += 1;
+      applyPage();
+    });
+    globalSearch?.addEventListener("input", () => {
+      currentPage = 1;
+      applyPage();
+    }, { signal });
+
+    window.setTimeout(applyPage, 0);
+  }
+
+  setupMovementPagination();
 
   function setStockImageUploadState({ fileName = "", error = "" } = {}) {
     if (!stockImageUploadField) return;
