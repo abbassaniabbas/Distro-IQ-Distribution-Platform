@@ -1027,7 +1027,7 @@ function renderStoreKeeperCategoryCards(state) {
           <span class="eyebrow">${escapeHtml(category.label)}</span>
           <strong>${formatNumber(category.units)}</strong>
           <p>${formatNumber(category.products.length)} item${category.products.length === 1 ? "" : "s"} - ${formatNumber(category.lowCount)} low</p>
-          ${statusPill(category.lowCount ? "low" : "ready")}
+          ${category.lowCount ? statusPill("low") : ""}
         </a>
       `).join("")}
     </div>
@@ -1109,10 +1109,9 @@ function renderStoreKeeperDispatchRows(state) {
 
 function renderStoreKeeperDashboard(state, permissions) {
   const activeProducts = activeStockProducts(state.products);
-  const vision = calculateVisionMetrics({ ...state, products: activeProducts });
   const lowStockProducts = getLowStockProducts(activeProducts);
   const dispatchCount = storeKeeperDispatches(state, 0).length;
-  const movementCount = (state.stockTransactions || []).length;
+  const totalStock = activeProducts.reduce((total, product) => total + Number(product.stock || 0), 0);
 
   return `
     <section class="view dashboard-view storekeeper-dashboard">
@@ -1130,28 +1129,22 @@ function renderStoreKeeperDashboard(state, permissions) {
 
       <div class="metric-grid">
         ${metricCard({
-          label: "Finished products",
-          value: formatNumber(vision.finishedStockUnits),
-          meta: "Ready stock in factory",
+          label: "Total stock",
+          value: formatNumber(totalStock),
+          meta: "All stock currently at the factory",
           iconName: "package"
         })}
         ${metricCard({
-          label: "Raw material risks",
-          value: formatNumber(vision.rawMaterialRiskCount),
-          meta: "Below reorder health",
+          label: "Stocks at risk",
+          value: formatNumber(lowStockProducts.length),
+          meta: "Items at or below their minimum level",
           iconName: "alert"
         })}
         ${metricCard({
           label: "Dispatches",
           value: formatNumber(dispatchCount),
-          meta: "Recent factory movements",
+          meta: "Stock sent out from the factory",
           iconName: "truck"
-        })}
-        ${metricCard({
-          label: "Movement records",
-          value: formatNumber(movementCount),
-          meta: "In and out history",
-          iconName: "dashboard"
         })}
       </div>
 

@@ -89,7 +89,7 @@ function safeFilename(value) {
   return String(value || "invoice").replace(/[^a-z0-9_-]+/gi, "-").replace(/^-+|-+$/g, "").toLowerCase();
 }
 
-export function buildInvoiceDocument(invoice, state) {
+export function buildInvoiceDocument(invoice, state, options = {}) {
   const client = state.client || {};
   const companyName = client.documentBusinessName || client.companyName || "DistroIQ Company";
   const items = invoice.items || [];
@@ -129,6 +129,10 @@ export function buildInvoiceDocument(invoice, state) {
           .total { display: flex; justify-content: flex-end; padding: 22px 0; }
           .total div { display: flex; justify-content: space-between; gap: 50px; min-width: 260px; padding-top: 12px; border-top: 2px solid #10243f; font-size: 17px; }
           footer { display: flex; justify-content: space-between; gap: 20px; padding-top: 20px; border-top: 1px solid #dce6eb; color: #657487; font-size: 11px; }
+          ${options.preview ? `
+            body { background: #fff; }
+            .invoice { width: 100%; min-height: 100vh; margin: 0; box-shadow: none; }
+          ` : ""}
           @media print { body { background: #fff; } .invoice { width: 100%; margin: 0; box-shadow: none; } }
           @media (max-width: 600px) { .invoice { padding: 22px; } header, footer { flex-direction: column; } .invoice-title { text-align: left; } .details { grid-template-columns: 1fr; } }
         </style>
@@ -190,7 +194,7 @@ export function openInvoiceQuickView(invoice, state) {
 
   document.body.appendChild(backdrop);
   const frame = backdrop.querySelector(".invoice-preview-frame");
-  if (frame) frame.srcdoc = buildInvoiceDocument(invoice, state);
+  if (frame) frame.srcdoc = buildInvoiceDocument(invoice, state, { preview: true });
 
   function closePreview() {
     document.removeEventListener("keydown", handleKeydown);

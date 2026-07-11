@@ -1514,15 +1514,22 @@
 .invoice-preview-modal {
   width: min(100%, 920px);
   height: min(90vh, 900px);
+  gap: 0;
   overflow: hidden;
+  padding: 0;
+}
+
+.invoice-preview-modal .stock-modal-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
 }
 
 .invoice-preview-frame {
   width: 100%;
   min-height: 0;
   height: 100%;
-  border: 1px solid var(--line);
-  background: #eef3f5;
+  border: 0;
+  background: #ffffff;
 }
 
 .assignment-filter-grid {
