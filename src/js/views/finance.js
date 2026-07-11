@@ -342,9 +342,20 @@ function renderRepresentativeCreditManager(state, permissions) {
   `;
 }
 
-function renderCreditHistoryRows(state) {
+function isRepresentativeCreditHistory(entry) {
+  return String(entry.partyType || "").toLowerCase().includes("representative");
+}
+
+function creditHistoryEntries(state, accountType) {
   return [...(state.creditLimitHistory || [])]
+    .filter((entry) => accountType === "representative" ? isRepresentativeCreditHistory(entry) : !isRepresentativeCreditHistory(entry))
     .sort((a, b) => String(b.changedAt || "").localeCompare(String(a.changedAt || "")))
+}
+
+function renderCreditHistoryRows(state, accountType) {
+  const pageId = `credit-history-${accountType}`;
+
+  return creditHistoryEntries(state, accountType)
     .map((entry, index) => {
     const searchIndex = [
       entry.partyName,
@@ -354,7 +365,7 @@ function renderCreditHistoryRows(state) {
     ].join(" ").toLowerCase();
 
     return `
-      <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="credit-history" data-search-index="${escapeHtml(searchIndex)}">
+      <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="${pageId}" data-credit-history-row data-credit-history-account="${escapeHtml(entry.partyName)}" data-credit-history-date="${escapeHtml(String(entry.changedAt || "").slice(0, 10))}" data-search-index="${escapeHtml(searchIndex)}">
         <td>
           <strong>${escapeHtml(entry.partyName)}</strong>
           <div class="muted">${escapeHtml(entry.partyType)}</div>
@@ -747,6 +758,41 @@ function renderAccountantProductRevenue(state) {
   }).join("");
 }
 
+function renderCreditHistoryFilters(state) {
+  const names = [...new Set((state.creditLimitHistory || []).map((entry) => entry.partyName).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b));
+
+  return `
+    <section class="accountant-filter-panel" aria-label="Credit terms history filters">
+      <div class="accountant-filter-grid">
+        <label class="field">
+          <span>Sales representative or customer</span>
+          <select id="credit-history-account">
+            <option value="">Everyone</option>
+            ${names.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>From date</span>
+          <input id="credit-history-from" type="date">
+        </label>
+        <label class="field">
+          <span>To date</span>
+          <input id="credit-history-to" type="date">
+        </label>
+      </div>
+      <div class="accountant-filter-foot">
+        <span class="muted" id="credit-history-result-count"></span>
+        <div class="accountant-export-actions">
+          <button class="button" type="button" data-credit-history-reset>Clear filters</button>
+          <button class="button" type="button" data-credit-history-export="csv">Download CSV</button>
+          <button class="button primary" type="button" data-credit-history-export="pdf">Print / PDF</button>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
 function renderAccountantFinanceTab(activeTabId, state, summary) {
   if (activeTabId === "invoices") {
     return `
@@ -912,14 +958,24 @@ export function renderFinance({ state }) {
       ` : ""}
 
       ${activeTabId === "credit-history" ? `
+        ${renderCreditHistoryFilters(state)}
         <section class="panel">
-          ${panelHeader("Credit terms history", "Every credit change stays visible and cannot be edited")}
+          ${panelHeader("Sales representative credit terms history", "Every change stays visible and cannot be edited")}
           ${table(
             ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
-            renderCreditHistoryRows(state),
-            "No credit limit changes recorded"
+            renderCreditHistoryRows(state, "representative"),
+            "No sales representative credit changes recorded"
           )}
-          ${renderFinancePagination("credit-history")}
+          ${renderFinancePagination("credit-history-representative")}
+        </section>
+        <section class="panel">
+          ${panelHeader("Customer credit terms history", "Every change stays visible and cannot be edited")}
+          ${table(
+            ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
+            renderCreditHistoryRows(state, "customer"),
+            "No customer credit changes recorded"
+          )}
+          ${renderFinancePagination("credit-history-customer")}
         </section>
       ` : ""}
     </section>
@@ -1177,6 +1233,72 @@ function exportAccountantReport(root, format) {
   downloadBlob(`distroiq-accountant-report-${datestamp}.csv`, "text/csv;charset=utf-8", csv);
 }
 
+function visibleCreditHistoryRows(root) {
+  return qsa("[data-credit-history-row]", root)
+    .filter((row) => row.dataset.filterHidden !== "true");
+}
+
+function exportCreditHistory(root, format) {
+  const rows = visibleCreditHistoryRows(root);
+  if (!rows.length) return;
+
+  const headers = ["Account", "Previous", "New", "Terms", "Reason", "Changed by"];
+  const values = rows.map((row) => qsa("td", row).map((cell) => cell.textContent.replace(/\s+/g, " ").trim()));
+  const datestamp = new Date().toISOString().slice(0, 10);
+
+  if (format === "pdf") {
+    const html = buildExportHtml([{ title: "Credit Terms History", headers, rows: values }]);
+    const reportWindow = window.open("", "_blank");
+    if (!reportWindow) {
+      downloadBlob(`distroiq-credit-terms-history-${datestamp}.html`, "text/html;charset=utf-8", html);
+      return;
+    }
+    reportWindow.document.write(html);
+    reportWindow.document.close();
+    reportWindow.focus();
+    reportWindow.print();
+    return;
+  }
+
+  const csv = [headers, ...values].map((row) => row.map(escapeCsvValue).join(",")).join("\n");
+  downloadBlob(`distroiq-credit-terms-history-${datestamp}.csv`, "text/csv;charset=utf-8", csv);
+}
+
+function bindCreditHistoryFilters(root) {
+  const account = qs("#credit-history-account", root);
+  const from = qs("#credit-history-from", root);
+  const to = qs("#credit-history-to", root);
+  const count = qs("#credit-history-result-count", root);
+  if (!account || !from || !to) return;
+
+  function applyFilters() {
+    let matches = 0;
+    qsa("[data-credit-history-row]", root).forEach((row) => {
+      const accountMatches = !account.value || row.dataset.creditHistoryAccount === account.value;
+      const date = row.dataset.creditHistoryDate || "";
+      const fromMatches = !from.value || date >= from.value;
+      const toMatches = !to.value || date <= to.value;
+      const isMatch = accountMatches && fromMatches && toMatches;
+      row.dataset.filterHidden = isMatch ? "false" : "true";
+      if (isMatch) matches += 1;
+    });
+    if (count) count.textContent = `${formatNumber(matches)} change${matches === 1 ? "" : "s"} found`;
+    root.dispatchEvent(new Event("financepaginationchange"));
+  }
+
+  [account, from, to].forEach((control) => control.addEventListener("change", applyFilters));
+  qs("[data-credit-history-reset]", root)?.addEventListener("click", () => {
+    account.value = "";
+    from.value = "";
+    to.value = "";
+    applyFilters();
+  });
+  qsa("[data-credit-history-export]", root).forEach((button) => {
+    button.addEventListener("click", () => exportCreditHistory(root, button.dataset.creditHistoryExport));
+  });
+  applyFilters();
+}
+
 function bindFinancePagination(root) {
   qsa("[data-finance-pagination]", root).forEach((pagination) => {
     const id = pagination.dataset.financePagination;
@@ -1191,7 +1313,7 @@ function bindFinancePagination(root) {
 
     function matchingRows() {
       const query = String(globalSearch?.value || "").trim().toLowerCase();
-      return rows.filter((row) => !query || String(row.dataset.searchIndex || "").includes(query));
+      return rows.filter((row) => row.dataset.filterHidden !== "true" && (!query || String(row.dataset.searchIndex || "").includes(query)));
     }
 
     function applyPage() {
@@ -1224,6 +1346,10 @@ function bindFinancePagination(root) {
       currentPage = 1;
       applyPage();
     });
+    root.addEventListener("financepaginationchange", () => {
+      currentPage = 1;
+      applyPage();
+    });
 
     window.setTimeout(applyPage, 0);
   });
@@ -1231,6 +1357,7 @@ function bindFinancePagination(root) {
 
 export function bindFinance({ root, store }) {
   bindFinancePagination(root);
+  bindCreditHistoryFilters(root);
 
   if (root.querySelector(".accountant-finance")) {
     bindAccountantFinance({ root });

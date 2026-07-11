@@ -194,7 +194,7 @@ function renderLifecycle(state) {
       <section class="stock-journey-overall" aria-label="All stock summary">
         <div>
           <span class="eyebrow">All stock</span>
-          <h3>Everything together</h3>
+          <h3>Total Stock</h3>
           <p>Raw materials, finished products, and equipment.</p>
         </div>
         ${renderJourneyFigures(overall)}

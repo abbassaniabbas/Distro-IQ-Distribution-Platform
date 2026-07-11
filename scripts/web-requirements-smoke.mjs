@@ -246,7 +246,7 @@ assert.match(managerDashboard, /Test Factory/);
 
 globalThis.window.location.hash = "#/inventory?tab=overview";
 const stockJourney = renderInventory({ state: store.getState() });
-assert.match(stockJourney, /Everything together/);
+assert.match(stockJourney, /Total Stock/);
 assert.match(stockJourney, /Raw materials/);
 assert.match(stockJourney, /Finished products/);
 assert.match(stockJourney, /Equipment/);
@@ -281,14 +281,14 @@ store.getState().creditLimits = Array.from({ length: 12 }, (_, index) => ({
   changedAt: `2026-07-${String(10 - Math.floor(index / 2)).padStart(2, "0")}T08:00:00Z`,
   paymentPeriodDays: 14
 }));
-store.getState().creditLimitHistory = Array.from({ length: 12 }, (_, index) => ({
+store.getState().creditLimitHistory = Array.from({ length: 24 }, (_, index) => ({
   id: `CLH-${index + 1}`,
-  partyType: "Customer",
-  partyName: `Customer ${index + 1}`,
+  partyType: index < 12 ? "Sales Representative" : "Customer",
+  partyName: index < 12 ? `Representative ${index + 1}` : `Customer ${index - 11}`,
   previousLimit: 80000,
   nextLimit: 100000,
   changedBy: "Musa Manager",
-  changedAt: `2026-07-${String(10 - Math.floor(index / 2)).padStart(2, "0")}T08:00:00Z`
+  changedAt: `2026-07-${String(10 - Math.floor((index % 12) / 2)).padStart(2, "0")}T08:00:00Z`
 }));
 globalThis.window.location.hash = "#/inventory?tab=credit";
 const creditPage = renderInventory({ state: store.getState() });
@@ -335,8 +335,14 @@ assert.equal((financeLimits.match(/hidden data-finance-page-row="credit-exposure
 
 globalThis.window.location.hash = "#/finance?tab=credit-history";
 const financeHistory = renderFinance({ state: store.getState() });
-assert.equal((financeHistory.match(/data-finance-page-row="credit-history"/g) || []).length, 12);
-assert.equal((financeHistory.match(/hidden data-finance-page-row="credit-history"/g) || []).length, 2);
+assert.match(financeHistory, /Sales representative credit terms history/);
+assert.match(financeHistory, /Customer credit terms history/);
+assert.match(financeHistory, /credit-history-account/);
+assert.match(financeHistory, /Download CSV/);
+assert.equal((financeHistory.match(/data-finance-page-row="credit-history-representative"/g) || []).length, 12);
+assert.equal((financeHistory.match(/hidden data-finance-page-row="credit-history-representative"/g) || []).length, 2);
+assert.equal((financeHistory.match(/data-finance-page-row="credit-history-customer"/g) || []).length, 12);
+assert.equal((financeHistory.match(/hidden data-finance-page-row="credit-history-customer"/g) || []).length, 2);
 
 const movementTemplate = store.getState().stockTransactions[0];
 store.getState().stockTransactions = Array.from({ length: 12 }, (_, index) => ({
