@@ -15,9 +15,9 @@ import {
 } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { saveRepresentativeCreditLimit } from "../services/backend.js";
-import { downloadInvoice, getInvoiceRecords, printInvoice } from "../services/invoices.js";
+import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
+import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 
 const DEFAULT_FINANCE_TAB = "overview";
@@ -157,6 +157,12 @@ function renderInvoiceRows(state, permissions) {
         <td>${formatCurrency(invoice.amount)}</td>
         <td>
           <div class="row-actions invoice-row-actions">
+            ${iconButton({
+              iconName: "eye",
+              label: "Quick view invoice",
+              className: "js-view-invoice",
+              data: { "invoice-id": invoice.id }
+            })}
             ${textButton({
               iconName: "download",
               label: "Download",
@@ -1365,6 +1371,14 @@ export function bindFinance({ root, store }) {
 
   const creditForm = qs("#credit-limit-form", root);
   const repCreditForm = qs("#rep-credit-limit-form", root);
+
+  qsa(".js-view-invoice", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const state = store.getState();
+      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      if (invoice) openInvoiceQuickView(invoice, state);
+    });
+  });
 
   qsa(".js-download-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {

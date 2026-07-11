@@ -318,6 +318,7 @@ assert.match(financeOverview, /Credit aging[\s\S]*₦1,500/, "open credit orders
 globalThis.window.location.hash = "#/finance?tab=customer-balances";
 const customerBalances = renderFinance({ state: store.getState() });
 assert.match(customerBalances, /Invoices, due dates, and payment status/);
+assert.match(customerBalances, /js-view-invoice/);
 assert.match(customerBalances, /js-download-invoice/);
 assert.match(customerBalances, /js-print-invoice/);
 
@@ -325,6 +326,7 @@ authenticate("user-accountant");
 globalThis.window.location.hash = "#/finance?tab=invoices";
 const accountantInvoices = renderFinance({ state: store.getState() });
 assert.match(accountantInvoices, /Download, print, and confirm customer payments/);
+assert.match(accountantInvoices, /js-view-invoice/);
 assert.match(accountantInvoices, /js-download-invoice/);
 authenticate("user-manager");
 

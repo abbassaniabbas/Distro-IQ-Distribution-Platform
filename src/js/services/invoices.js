@@ -1,5 +1,6 @@
 import { currencySymbolFor, formatDate, statusText } from "./formatters.js";
 import { escapeHtml } from "../ui/dom.js";
+import { icon } from "../ui/icons.js";
 
 function dateOnly(value) {
   return String(value || "").slice(0, 10);
@@ -163,6 +164,49 @@ export function downloadInvoice(invoice, state) {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+export function openInvoiceQuickView(invoice, state) {
+  document.querySelector("#invoice-quick-view")?.remove();
+
+  const backdrop = document.createElement("div");
+  backdrop.id = "invoice-quick-view";
+  backdrop.className = "stock-modal-backdrop invoice-preview-backdrop";
+  backdrop.tabIndex = -1;
+  backdrop.innerHTML = `
+    <section class="stock-modal invoice-preview-modal" role="dialog" aria-modal="true" aria-labelledby="invoice-preview-title">
+      <header class="stock-modal-header">
+        <div>
+          <span class="eyebrow">Invoice quick view</span>
+          <h2 id="invoice-preview-title">${escapeHtml(invoice.id)}</h2>
+        </div>
+        <button class="icon-button js-close-invoice-preview" type="button" title="Close invoice" aria-label="Close invoice">
+          ${icon("x")}
+        </button>
+      </header>
+      <iframe class="invoice-preview-frame" title="Invoice ${escapeHtml(invoice.id)}"></iframe>
+    </section>
+  `;
+
+  document.body.appendChild(backdrop);
+  const frame = backdrop.querySelector(".invoice-preview-frame");
+  if (frame) frame.srcdoc = buildInvoiceDocument(invoice, state);
+
+  function closePreview() {
+    document.removeEventListener("keydown", handleKeydown);
+    backdrop.remove();
+  }
+
+  function handleKeydown(event) {
+    if (event.key === "Escape") closePreview();
+  }
+
+  backdrop.querySelector(".js-close-invoice-preview")?.addEventListener("click", closePreview);
+  backdrop.addEventListener("click", (event) => {
+    if (event.target === backdrop) closePreview();
+  });
+  document.addEventListener("keydown", handleKeydown);
+  backdrop.querySelector(".js-close-invoice-preview")?.focus();
 }
 
 export function printInvoice(invoice, state) {

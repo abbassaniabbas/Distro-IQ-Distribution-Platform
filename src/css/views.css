@@ -1505,6 +1505,26 @@
   height: 15px;
 }
 
+.invoice-row-actions .icon-button {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+}
+
+.invoice-preview-modal {
+  width: min(100%, 920px);
+  height: min(90vh, 900px);
+  overflow: hidden;
+}
+
+.invoice-preview-frame {
+  width: 100%;
+  min-height: 0;
+  height: 100%;
+  border: 1px solid var(--line);
+  background: #eef3f5;
+}
+
 .assignment-filter-grid {
   display: grid;
   grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(150px, 1fr)) auto;
