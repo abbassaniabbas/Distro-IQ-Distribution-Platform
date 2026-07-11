@@ -564,9 +564,18 @@ export function buildRegionalSummary(state) {
     .sort((a, b) => b.value - a.value);
 }
 
+export function effectiveOrderStatus(order, today = new Date().toISOString().slice(0, 10)) {
+  const status = String(order?.status || "in_transit").toLowerCase();
+  const dueDate = dateOnly(order?.dueAt);
+
+  if (status === "in_transit" && dueDate && dueDate < today) return "delayed";
+  return status;
+}
+
 export function buildOrderStatusSummary(orders) {
   return orders.reduce((summary, order) => {
-    summary[order.status] = (summary[order.status] || 0) + 1;
+    const status = effectiveOrderStatus(order);
+    summary[status] = (summary[status] || 0) + 1;
     return summary;
   }, {});
 }
@@ -617,6 +626,7 @@ export function getOrdersWithTotals(state) {
 
   return state.orders.map((order) => ({
     ...order,
+    status: effectiveOrderStatus(order),
     retailer: retailerMap.get(order.retailerId) || {
       name: order.customerName || "Walk-in customer"
     },

@@ -244,6 +244,23 @@ function duplicateProductSku(state, sku, productId = "") {
   ));
 }
 
+function nextAutomaticProductId(products = []) {
+  const usedIds = new Set(products.map((product) => String(product.id || "").trim().toUpperCase()));
+  const highestNumber = products.reduce((highest, product) => {
+    const match = String(product.id || "").trim().match(/^PRD-(\d+)$/i);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 1000);
+  let number = highestNumber + 1;
+  let candidate = `PRD-${number}`;
+
+  while (usedIds.has(candidate)) {
+    number += 1;
+    candidate = `PRD-${number}`;
+  }
+
+  return candidate;
+}
+
 function renderProductImage(product) {
   if (product.imageUrl) {
     return `<img src="${escapeHtml(product.imageUrl)}" alt="">`;
@@ -279,7 +296,7 @@ function renderStockProductModal(state, permissions) {
         </label>
         <label class="field">
           <span>Product ID</span>
-          <input name="sku" placeholder="PRD-1008" required>
+          <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products))}" placeholder="Created automatically" required>
         </label>
         <label class="field">
           <span>Category</span>
@@ -1526,6 +1543,7 @@ export function bindInventory({ root, store, signal }) {
 
     productForm.reset();
     productForm.elements.productId.value = "";
+    productForm.elements.sku.value = nextAutomaticProductId(store.getState().products);
     stockImageDataUrl = "";
     if (stockImageInput) stockImageInput.value = "";
     setStockImageUploadState();

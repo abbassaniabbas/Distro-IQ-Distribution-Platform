@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import { getReturnableCustomerChoices } from "../src/js/services/calculations.js";
+import { effectiveOrderStatus, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
 import { buildInvoiceDocument, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
@@ -192,6 +192,7 @@ assert.equal(store.getState().stockTransactions.filter((item) => item.type === "
 const repDashboard = renderDashboard({ state: scopeStateForCurrentRole(state) });
 assert.match(repDashboard, /Walk-in customer/, "walk-in sale must appear in the current daily report");
 assert.match(repDashboard, /Plantain Chips/);
+assert.match(repDashboard, /rep-factory-return-form/, "representatives must be able to return stock in hand to the factory");
 
 store.dispatch({
   type: "SUBMIT_REP_REPORT",
@@ -225,6 +226,10 @@ authenticate("user-store");
 globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
+assert.match(storeKeeperInventory, /name="sku" value="PRD-\d+"/, "new products must receive an editable automatic Product ID");
+
+assert.equal(effectiveOrderStatus({ status: "in_transit", dueAt: "2026-07-01" }, "2026-07-11"), "delayed");
+assert.equal(effectiveOrderStatus({ status: "delivered", dueAt: "2026-07-01" }, "2026-07-11"), "delivered");
 
 authenticate("user-manager");
 globalThis.window.location.hash = "#/inventory?tab=assignments";
@@ -379,5 +384,23 @@ const creditSaleInvoice = getInvoiceRecords(store.getState()).find((invoice) => 
 assert.ok(creditSaleInvoice, "every credit sale must create an invoice");
 assert.equal(creditSaleInvoice.status, "open");
 assert.equal(creditSaleInvoice.paymentType, "credit");
+
+const stockBeforeFactoryReturn = store.getState().products.find((product) => product.id === "SKU-CHIPS").stock;
+const outstandingBeforeFactoryReturn = store.getState().stockAssignments.find((item) => item.id === assignment.id).assigned
+  - store.getState().stockAssignments.find((item) => item.id === assignment.id).sold
+  - store.getState().stockAssignments.find((item) => item.id === assignment.id).returned;
+store.dispatch({
+  type: "RETURN_REP_STOCK_TO_FACTORY",
+  assignmentIds: [assignment.id],
+  productId: "SKU-CHIPS",
+  quantity: 1,
+  reason: "Unsold stock",
+  repName: "Amina Rep"
+});
+const returnedAssignment = store.getState().stockAssignments.find((item) => item.id === assignment.id);
+const outstandingAfterFactoryReturn = returnedAssignment.assigned - returnedAssignment.sold - returnedAssignment.returned;
+assert.equal(store.getState().products.find((product) => product.id === "SKU-CHIPS").stock, stockBeforeFactoryReturn + 1);
+assert.equal(outstandingAfterFactoryReturn, outstandingBeforeFactoryReturn - 1);
+assert.equal(store.getState().stockTransactions[0].type, "return to factory");
 
 console.log("Web acceptance smoke checks passed.");

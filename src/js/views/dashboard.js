@@ -4,6 +4,7 @@ import {
   buildRegionalSummary,
   calculateMetrics,
   calculateVisionMetrics,
+  effectiveOrderStatus,
   getFinancialSalesLines,
   getReturnableCustomerChoices,
   getCreditLimitForParty,
@@ -1184,7 +1185,7 @@ function renderRegionalSummary(state) {
 
 function renderAlerts(state, permissions) {
   const lowStockProducts = getLowStockProducts(state.products).slice(0, 4);
-  const delayedOrders = state.orders.filter((order) => order.status === "delayed");
+  const delayedOrders = state.orders.filter((order) => effectiveOrderStatus(order) === "delayed");
   const submittedReports = (state.salesReports || []).filter((report) => report.status === "submitted").slice(0, 2);
   const vision = calculateVisionMetrics(state);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
@@ -1489,6 +1490,7 @@ function renderManagerReportRows(state, { readOnly = false } = {}) {
 
 function renderManagerSalesOperationsRows(state) {
   const rows = new Map();
+  const reportedTransactionIds = new Set((state.salesReports || []).flatMap((report) => report.transactionIds || []));
 
   (state.salesReports || []).forEach((report) => {
     const key = report.repName || "Unassigned";
@@ -1515,6 +1517,39 @@ function renderManagerSalesOperationsRows(state) {
     rows.set(key, row);
   });
 
+  (state.stockTransactions || [])
+    .filter((transaction) => transaction.date === todayISO())
+    .filter((transaction) => ["sale", "return"].includes(normalized(transaction.type)))
+    .filter((transaction) => !reportedTransactionIds.has(transaction.id))
+    .forEach((transaction) => {
+      const key = transaction.recordedBy || transaction.repName || "Unassigned";
+      const row = rows.get(key) || {
+        repName: key,
+        reports: 0,
+        salesAmount: 0,
+        cashAmount: 0,
+        creditAmount: 0,
+        returnAmount: 0,
+        unitsSold: 0,
+        unitsReturned: 0,
+        latestDate: ""
+      };
+      const amount = Number(transaction.amount || 0);
+      const quantity = Number(transaction.quantity || 0);
+
+      if (normalized(transaction.type) === "sale") {
+        row.salesAmount += amount;
+        row.unitsSold += quantity;
+        if (normalized(transaction.paymentType).includes("credit")) row.creditAmount += amount;
+        else row.cashAmount += amount;
+      } else {
+        row.returnAmount += amount;
+        row.unitsReturned += quantity;
+      }
+      row.latestDate = todayISO();
+      rows.set(key, row);
+    });
+
   return [...rows.values()]
     .sort((a, b) => b.salesAmount - a.salesAmount)
     .map((row) => {
@@ -1524,7 +1559,9 @@ function renderManagerSalesOperationsRows(state) {
         <tr data-search-index="${escapeHtml(`${row.repName} ${row.latestDate}`.toLowerCase())}">
           <td>
             <strong>${escapeHtml(row.repName)}</strong>
-            <div class="muted">${formatNumber(row.reports)} report${row.reports === 1 ? "" : "s"} - latest ${formatDate(row.latestDate)}</div>
+            <div class="muted">${row.reports
+              ? `${formatNumber(row.reports)} report${row.reports === 1 ? "" : "s"} - latest ${formatDate(row.latestDate)}`
+              : `Live sales for ${formatDate(row.latestDate)} - not submitted yet`}</div>
           </td>
           <td>
             <strong>${formatCurrency(row.salesAmount)}</strong>
@@ -1833,7 +1870,6 @@ function renderRepReturnCustomerField() {
       <select name="returnCustomerId" data-rep-return-customer required disabled>
         <option value="">Select a product first</option>
       </select>
-      <small class="muted" data-return-customer-note>Only customers recorded for the selected product will appear.</small>
     </label>
   `;
 }
@@ -1921,6 +1957,41 @@ function renderRepQuickLog(state, assignments) {
           <span id="rep-return-message" class="rep-form-message" role="status" aria-live="polite"></span>
           <button class="button primary rep-save-button" type="submit">
             <span>Save return</span>
+          </button>
+        </form>
+
+        <form id="rep-factory-return-form" class="rep-log-form rep-log-card" novalidate>
+          <div class="rep-log-card-header">
+            <span class="eyebrow">Stock in your hand</span>
+            <strong>Return to factory</strong>
+          </div>
+
+          <label class="field">
+            <span>Product</span>
+            <select name="factoryReturnProductId" required>
+              <option value="">Pick product</option>
+              ${renderRepAssignmentOptions(assignments, "sale")}
+            </select>
+          </label>
+
+          <label class="field">
+            <span>How many?</span>
+            <input name="factoryReturnQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+          </label>
+
+          <label class="field">
+            <span>Reason</span>
+            <select name="factoryReturnReason" required>
+              <option value="Unsold stock">Unsold stock</option>
+              <option value="End of sales day">End of sales day</option>
+              <option value="Stock exchange">Exchange stock</option>
+              <option value="Other">Other</option>
+            </select>
+          </label>
+
+          <span id="rep-factory-return-message" class="rep-form-message" role="status" aria-live="polite"></span>
+          <button class="button primary rep-save-button" type="submit">
+            <span>Return to factory</span>
           </button>
         </form>
       </div>
@@ -2548,13 +2619,13 @@ function setRepMessage(messageEl, text, type = "") {
 function bindSalesRepDashboard({ root, store }) {
   const saleForm = qs("#rep-sale-form", root);
   const returnForm = qs("#rep-return-form", root);
+  const factoryReturnForm = qs("#rep-factory-return-form", root);
   const assignmentSelects = qsa("[data-rep-assignment-select]", root);
   const saleCustomerSelect = qs("[data-rep-sale-customer]", root);
   const salePaymentSelect = qs("[data-rep-sale-payment]", root);
   const walkInPaymentNote = qs("[data-walk-in-payment-note]", root);
   const returnProductSelect = qs('select[name="returnAssignmentId"]', root);
   const returnCustomerSelect = qs("[data-rep-return-customer]", root);
-  const returnCustomerNote = qs("[data-return-customer-note]", root);
 
   function applyWalkInPaymentRule() {
     if (!saleCustomerSelect || !salePaymentSelect) return;
@@ -2603,11 +2674,6 @@ function bindSalesRepDashboard({ root, store }) {
         ].join("")
       : `<option value="">${productId ? "No customer sales available for this product" : "Select a product first"}</option>`;
     returnCustomerSelect.disabled = !choices.length;
-    if (returnCustomerNote) {
-      returnCustomerNote.textContent = choices.length
-        ? "Choose the customer returning this product."
-        : "Only customers recorded for the selected product will appear.";
-    }
   }
 
   returnProductSelect?.addEventListener("change", updateReturnCustomerOptions);
@@ -2753,6 +2819,43 @@ function bindSalesRepDashboard({ root, store }) {
 
   returnForm?.addEventListener("submit", (event) => {
     handleRepTransaction(event, "return");
+  });
+
+  factoryReturnForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(factoryReturnForm);
+    const productId = String(formData.get("factoryReturnProductId") || "");
+    const quantity = Number(formData.get("factoryReturnQuantity") || 0);
+    const reason = String(formData.get("factoryReturnReason") || "Unsold stock");
+    const state = store.getState();
+    const repName = currentRepName(state);
+    const assignments = buildRepAssignments(state, repName).filter((assignment) => assignment.productId === productId && assignment.outstanding > 0);
+    const available = assignments.reduce((total, assignment) => total + assignment.outstanding, 0);
+    const message = qs("#rep-factory-return-message", root);
+
+    setRepMessage(message, "");
+    if (!productId || !assignments.length) {
+      setRepMessage(message, "Pick a product currently in your stock.", "error");
+      return;
+    }
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      setRepMessage(message, "Enter how many you are returning.", "error");
+      return;
+    }
+    if (quantity > available) {
+      setRepMessage(message, `You only have ${formatNumber(available)} of this product in hand.`, "error");
+      return;
+    }
+
+    store.dispatch({
+      type: "RETURN_REP_STOCK_TO_FACTORY",
+      assignmentIds: assignments.map((assignment) => assignment.id),
+      productId,
+      quantity,
+      reason,
+      repName,
+      message: "Stock returned to factory"
+    });
   });
 
   qsa(".js-submit-rep-report", root).forEach((button) => {

@@ -18,9 +18,9 @@ function isCreditOrder(order) {
   return paymentType.includes("credit") && paymentStatus !== "paid";
 }
 
-function renderSummaryTiles(state) {
-  const summary = buildOrderStatusSummary(state.orders);
-  const creditOrders = (state.orders || []).filter(isCreditOrder).length;
+function renderSummaryTiles(orders) {
+  const summary = buildOrderStatusSummary(orders);
+  const creditOrders = orders.filter(isCreditOrder).length;
   const customTiles = [
     {
       label: "Credit holds",
@@ -132,7 +132,7 @@ export function renderOrders({ state }) {
 
   return `
     <section class="view orders-view">
-      ${renderSummaryTiles(state)}
+      ${renderSummaryTiles(orders)}
 
       <section class="panel orders-layout">
         <div class="toolbar">

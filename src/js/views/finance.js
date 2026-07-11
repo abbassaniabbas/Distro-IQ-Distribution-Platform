@@ -451,7 +451,7 @@ function accountantMetricCard({ label, value, meta, iconName, summaryKey }) {
       </header>
       <div>
         <div class="metric-value js-accountant-summary" data-summary="${escapeHtml(summaryKey)}">${escapeHtml(value)}</div>
-        <div class="metric-meta">${escapeHtml(meta)}</div>
+        ${meta ? `<div class="metric-meta">${escapeHtml(meta)}</div>` : ""}
       </div>
     </article>
   `;
@@ -465,28 +465,28 @@ function renderAccountantSummaryCards(summary, state) {
       ${accountantMetricCard({
         label: "Cash in",
         value: formatCurrency(summary.cashIn),
-        meta: "Cash sales collected",
+        meta: "",
         iconName: "finance",
         summaryKey: "cashIn"
       })}
       ${accountantMetricCard({
         label: "Product revenue",
         value: formatCurrency(summary.revenue),
-        meta: "Orders and rep quick sales",
+        meta: "",
         iconName: "orders",
         summaryKey: "revenue"
       })}
       ${accountantMetricCard({
         label: "Gross profit",
         value: formatCurrency(summary.profit),
-        meta: "Revenue less product cost",
+        meta: "",
         iconName: "wallet",
         summaryKey: "profit"
       })}
       ${creditControlEnabled ? accountantMetricCard({
         label: "Credit owed",
         value: formatCurrency(summary.creditOwed),
-        meta: "Open balances that can hurt cash flow",
+        meta: "",
         iconName: "alert",
         summaryKey: "creditOwed"
       }) : ""}

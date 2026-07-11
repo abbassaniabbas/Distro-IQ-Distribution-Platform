@@ -1018,6 +1018,66 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "RETURN_REP_STOCK_TO_FACTORY": {
+      const quantity = Math.max(0, Number(action.quantity || 0));
+      const repName = action.repName || currentActorName(state);
+      const requestedIds = new Set((action.assignmentIds || []).map((id) => String(id || "")));
+      const product = state.products.find((item) => item.id === action.productId);
+      const assignments = (state.stockAssignments || [])
+        .filter((assignment) => requestedIds.has(String(assignment.id)))
+        .filter((assignment) => assignment.productId === action.productId)
+        .filter((assignment) => normalized(assignment.repName) === normalized(repName))
+        .filter((assignment) => assignmentOutstanding(assignment) > 0)
+        .sort((a, b) => String(a.assignedAt || "").localeCompare(String(b.assignedAt || "")));
+      const available = assignments.reduce((total, assignment) => total + assignmentOutstanding(assignment), 0);
+
+      if (!product || !quantity || quantity > available) return state;
+
+      let remaining = quantity;
+      const assignmentAllocations = [];
+      assignments.forEach((assignment) => {
+        if (remaining <= 0) return;
+        const allocated = Math.min(assignmentOutstanding(assignment), remaining);
+        assignment.returned = Number(assignment.returned || 0) + allocated;
+        assignment.updatedAt = todayISO();
+        refreshAssignmentCompletion(state, assignment);
+        assignmentAllocations.push({ assignmentId: assignment.id, quantity: allocated });
+        remaining -= allocated;
+      });
+
+      product.stock = Number(product.stock || 0) + quantity;
+      product.updatedAt = todayISO();
+      const transactionId = createId("TXN");
+      state.stockTransactions = [{
+        id: transactionId,
+        type: "return to factory",
+        productId: product.id,
+        productName: product.name,
+        quantity,
+        amount: 0,
+        partyType: "Sales Representative",
+        partyName: repName,
+        date: todayISO(),
+        createdAt: new Date().toISOString(),
+        recordedBy: repName,
+        reason: String(action.reason || "Unsold stock"),
+        movementDirection: "in",
+        returnDestination: product.warehouse || "Factory",
+        assignmentId: assignmentAllocations[0]?.assignmentId || "",
+        assignmentIds: assignmentAllocations.map((allocation) => allocation.assignmentId),
+        assignmentAllocations
+      }, ...(state.stockTransactions || [])];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "returned",
+        recordType: "stock_movement",
+        recordLabel: product.id,
+        summary: `${repName} returned ${quantity} ${product.name} to the factory - ${action.reason || "Unsold stock"}`
+      });
+      return state;
+    }
+
     case "LOG_REP_TRANSACTION": {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const quantity = Math.max(0, Number(action.quantity || 0));
