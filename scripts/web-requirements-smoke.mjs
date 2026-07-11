@@ -213,15 +213,31 @@ globalThis.window.location.hash = "#/inventory?tab=assignments";
 const ledger = renderInventory({ state: store.getState() });
 assert.match(ledger, /data-assignment-rep-filter/);
 assert.match(ledger, /js-export-assignment-pdf/);
-assert.doesNotMatch(ledger, /assignment-variance-cell is-discrepant/, "open stock in hand must not be shown as a discrepancy");
+assert.match(ledger, /js-open-assignment-details/);
+assert.match(ledger, /assignment-details-modal/);
+assert.doesNotMatch(ledger, /<th>Variance<\/th>/, "variance must not crowd the representative stock ledger table");
 assert.match(ledger, />18<\/strong>[\s\S]*Still with representative/, "the ledger must show unsold stock as stock in hand");
-assert.match(ledger, />0<\/strong>[\s\S]*No discrepancy/, "variance must stay at zero until the remainder is flagged");
+assert.match(ledger, /Product ID/);
+assert.doesNotMatch(ledger, />SKU</);
 
 const managerDashboard = renderDashboard({ state: store.getState() });
 assert.match(managerDashboard, /Submitted sales reports/);
 assert.match(managerDashboard, /js-view-report-details/);
 assert.match(managerDashboard, /Musa Manager/);
 assert.match(managerDashboard, /Test Factory/);
+
+globalThis.window.location.hash = "#/inventory?tab=overview";
+const stockJourney = renderInventory({ state: store.getState() });
+assert.match(stockJourney, /Everything together/);
+assert.match(stockJourney, /Raw materials/);
+assert.match(stockJourney, /Finished products/);
+assert.match(stockJourney, /Equipment/);
+assert.match(stockJourney, /At factory/);
+assert.match(stockJourney, /Running low/);
+assert.match(stockJourney, /With sales representatives/);
+assert.match(stockJourney, /Stock updates/);
+assert.match(stockJourney, /Paid/);
+assert.doesNotMatch(stockJourney, /Representative custody|Assignment \/ dispatch|Paid \/ reconciled/);
 
 authenticate("user-ceo");
 const ceoDashboard = renderDashboard({ state: store.getState() });

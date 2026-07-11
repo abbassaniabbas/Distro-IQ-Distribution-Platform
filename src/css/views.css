@@ -1338,7 +1338,7 @@
 }
 
 .assignment-ledger-panel .data-table {
-  min-width: 1020px;
+  min-width: 850px;
   font-size: 0.76rem;
 }
 
@@ -1373,6 +1373,120 @@
   min-height: 30px;
   padding: 0 7px;
   font-size: 0.7rem;
+}
+
+.assignment-ledger-row {
+  cursor: pointer;
+}
+
+.assignment-ledger-row:focus-visible {
+  outline: 2px solid var(--teal);
+  outline-offset: -2px;
+  background: #f4fbf8;
+}
+
+.ledger-row-view {
+  display: inline-grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--teal-dark);
+}
+
+.ledger-row-view svg {
+  width: 17px;
+  height: 17px;
+}
+
+.assignment-details-modal {
+  width: min(100%, 720px);
+}
+
+#assignment-details-content {
+  display: grid;
+  gap: 16px;
+}
+
+.assignment-detail-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.assignment-detail-heading h3 {
+  margin: 4px 0;
+  font-size: 1.2rem;
+}
+
+.assignment-detail-heading p,
+.assignment-variance-summary p {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.assignment-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.assignment-detail-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.assignment-detail-grid span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.assignment-detail-grid strong {
+  font-size: 1.1rem;
+}
+
+.assignment-variance-summary {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #f7fbfc;
+}
+
+.assignment-variance-summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.assignment-variance-summary.is-discrepant {
+  border-color: rgba(192, 57, 47, 0.3);
+  background: rgba(192, 57, 47, 0.06);
+}
+
+.assignment-variance-summary.is-discrepant > div strong {
+  color: var(--red);
+}
+
+.assignment-detail-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.assignment-detail-actions .table-note-input {
+  width: min(100%, 280px);
+  margin-right: auto;
 }
 
 .assignment-filter-grid {
@@ -1439,6 +1553,20 @@
   .assignment-filter-grid {
     grid-template-columns: 1fr 1fr;
   }
+
+  .stock-journey-overall,
+  .stock-journey-category {
+    grid-template-columns: 1fr;
+  }
+
+  .stock-journey-figures {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .stock-journey-figures > div {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
 }
 
 @media (max-width: 560px) {
@@ -1454,6 +1582,10 @@
 
   .dashboard-identity small {
     text-align: left;
+  }
+
+  .assignment-detail-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -2291,6 +2423,74 @@
 .stock-lifecycle-step p {
   margin-top: 6px;
   font-size: 0.82rem;
+}
+
+.stock-journey-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.stock-journey-overall,
+.stock-journey-category {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.8fr) minmax(0, 2fr);
+  align-items: center;
+  gap: 18px;
+  padding: 15px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.stock-journey-overall {
+  border-color: rgba(25, 185, 133, 0.28);
+  background: #f4fbf8;
+}
+
+.stock-journey-overall h3,
+.stock-journey-category h3 {
+  margin: 3px 0 4px;
+  font-size: 1rem;
+}
+
+.stock-journey-overall p,
+.stock-journey-category p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.stock-journey-categories {
+  display: grid;
+  gap: 10px;
+}
+
+.stock-journey-figures {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(90px, 1fr));
+  gap: 8px;
+}
+
+.stock-journey-figures > div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 9px 10px;
+  border-left: 1px solid var(--line);
+}
+
+.stock-journey-figures span {
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.stock-journey-figures strong {
+  overflow-wrap: anywhere;
+  color: var(--navy);
+  font-size: 0.95rem;
 }
 
 .stock-meta {

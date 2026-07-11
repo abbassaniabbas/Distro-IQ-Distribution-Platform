@@ -995,7 +995,7 @@ function storeKeeperCategorySummary(state) {
     },
     {
       id: "finished_products",
-      label: "Finished goods",
+      label: "Finished products",
       href: "#/inventory?type=finished_products"
     },
     {
@@ -1130,7 +1130,7 @@ function renderStoreKeeperDashboard(state, permissions) {
 
       <div class="metric-grid">
         ${metricCard({
-          label: "Finished goods",
+          label: "Finished products",
           value: formatNumber(vision.finishedStockUnits),
           meta: "Ready stock in factory",
           iconName: "package"
@@ -1168,7 +1168,7 @@ function renderStoreKeeperDashboard(state, permissions) {
       </div>
 
       <section class="panel">
-        ${panelHeader("Stock sections", "Raw materials, finished goods, and equipment are managed separately")}
+        ${panelHeader("Stock sections", "Raw materials, finished products, and equipment are managed separately")}
         ${renderStoreKeeperCategoryCards(state)}
       </section>
     </section>

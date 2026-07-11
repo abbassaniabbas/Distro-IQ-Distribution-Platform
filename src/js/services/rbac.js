@@ -14,7 +14,7 @@ export const ROLE_OPTIONS = [
   {
     value: "store_keeper",
     label: "Store Keeper",
-    description: "Raw materials, finished goods, equipment, stock movement, and dispatch"
+    description: "Raw materials, finished products, equipment, stock movement, and dispatch"
   },
   {
     value: "accountant",

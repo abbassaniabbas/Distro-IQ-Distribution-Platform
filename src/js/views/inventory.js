@@ -1,5 +1,4 @@
 import {
-  calculateVisionMetrics,
   creditUsageTone,
   getProductMap,
   getStockHealth,
@@ -19,7 +18,7 @@ import { isModuleEnabled } from "../services/features.js";
 import { printTabularReport } from "../services/report-export.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
+import { panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 
 const DEFAULT_STOCK_TAB = "stock-health";
@@ -56,7 +55,7 @@ function stockTabsForPermissions(permissions, state) {
       : []),
     {
       id: "overview",
-      label: "Lifecycle"
+      label: "Stock journey"
     },
     {
       id: "assignments",
@@ -100,93 +99,118 @@ function renderStockSubtabs(activeTabId, permissions, state) {
   `;
 }
 
-function lifecycleTotals(state) {
-  const factoryStock = state.products.reduce((total, product) => total + Number(product.stock || 0), 0);
-  const assignedStock = state.stockAssignments.reduce((total, assignment) => total + Number(assignment.assigned || 0), 0);
-  const outcomes = state.stockTransactions.filter((transaction) =>
-    ["sale", "return", "supply", "write off"].includes(String(transaction.type || "").toLowerCase())
-  ).length;
+function stockJourneyPayment(state, productIds) {
+  return (state.orders || []).reduce((summary, order) => {
+    if (order.source === "factory_dispatch") return summary;
+
+    const value = (order.items || []).reduce((total, item) => (
+      productIds.has(item.productId)
+        ? total + Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)
+        : total
+    ), 0);
+
+    summary.total += value;
+    if (String(order.paymentStatus || "").toLowerCase() === "paid" || !String(order.paymentType || "").toLowerCase().includes("credit")) {
+      summary.paid += value;
+    }
+    return summary;
+  }, { total: 0, paid: 0 });
+}
+
+function stockJourneyCategory(state, definition) {
+  const products = (state.products || []).filter((product) => (
+    product.status !== "inactive" && stockCategoryIdForProduct(product) === definition.id
+  ));
+  const productIds = new Set(products.map((product) => product.id));
+  const payment = stockJourneyPayment(state, productIds);
 
   return {
-    factoryStock,
-    assignedStock,
-    outcomes
+    ...definition,
+    atFactory: products.reduce((total, product) => total + Number(product.stock || 0), 0),
+    runningLow: products.filter((product) => getStockHealth(product).status !== "ready").length,
+    withRepresentatives: (state.stockAssignments || [])
+      .filter((assignment) => productIds.has(assignment.productId))
+      .reduce((total, assignment) => total + Math.max(0, assignmentInHand(assignment)), 0),
+    updates: (state.stockTransactions || []).filter((transaction) => productIds.has(transaction.productId)).length,
+    paidValue: payment.paid,
+    salesValue: payment.total,
+    paidPercent: payment.total ? (payment.paid / payment.total) * 100 : 0
   };
 }
 
-function renderLifecycle(state) {
-  const totals = lifecycleTotals(state);
-  const vision = calculateVisionMetrics(state);
-  const stages = [
-    {
-      label: "Factory stock",
-      value: `${formatNumber(totals.factoryStock)} units`,
-      body: "Produced or received at the factory and held by stock category."
-    },
-    {
-      label: "Assignment / dispatch",
-      value: `${formatNumber(vision.repOutstandingUnits)} outstanding`,
-      body: `${formatNumber(totals.assignedStock)} units have been loaded to representatives or sent directly to customers.`
-    },
-    {
-      label: "Outcome",
-      value: `${formatNumber(totals.outcomes)} records`,
-      body: "Sold, returned, supplied, moved internally, or written off with traceability."
-    },
-    {
-      label: "Paid / reconciled",
-      value: formatPercent(vision.paymentCoveragePercent),
-      body: `${formatCurrency(vision.receivables)} remains unpaid across open balances.`
-    }
+function renderJourneyFigures(row) {
+  const figures = [
+    ["At factory", formatNumber(row.atFactory)],
+    ["Running low", formatNumber(row.runningLow)],
+    ["With sales representatives", formatNumber(row.withRepresentatives)],
+    ["Stock updates", formatNumber(row.updates)],
+    ["Paid", row.salesValue ? formatPercent(row.paidPercent) : "No sales yet"]
   ];
 
   return `
-    <section class="panel">
-      ${panelHeader("Stock lifecycle", "Produced or received -> assigned or dispatched -> sold or returned -> paid")}
-      <div class="stock-lifecycle-grid">
-        ${stages.map((stage, index) => `
-          <article class="stock-lifecycle-step" data-search-index="${escapeHtml(`${stage.label} ${stage.body}`.toLowerCase())}">
-            <span class="stock-step-number">${index + 1}</span>
-            <div>
-              <span class="eyebrow">${escapeHtml(stage.label)}</span>
-              <strong>${escapeHtml(stage.value)}</strong>
-              <p>${escapeHtml(stage.body)}</p>
-            </div>
+    <div class="stock-journey-figures">
+      ${figures.map(([label, value]) => `
+        <div>
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderLifecycle(state) {
+  const categories = [
+    {
+      id: "raw_materials",
+      label: "Raw materials",
+      meaning: "Ingredients and packaging used to make products."
+    },
+    {
+      id: "finished_products",
+      label: "Finished products",
+      meaning: "Packed products that are ready to sell."
+    },
+    {
+      id: "equipment",
+      label: "Equipment",
+      meaning: "Machines and tools owned by the factory or available for sale."
+    }
+  ].map((definition) => stockJourneyCategory(state, definition));
+  const overall = categories.reduce((summary, row) => ({
+    atFactory: summary.atFactory + row.atFactory,
+    runningLow: summary.runningLow + row.runningLow,
+    withRepresentatives: summary.withRepresentatives + row.withRepresentatives,
+    updates: summary.updates + row.updates,
+    paidValue: summary.paidValue + row.paidValue,
+    salesValue: summary.salesValue + row.salesValue,
+    paidPercent: 0
+  }), { atFactory: 0, runningLow: 0, withRepresentatives: 0, updates: 0, paidValue: 0, salesValue: 0, paidPercent: 0 });
+  overall.paidPercent = overall.salesValue ? (overall.paidValue / overall.salesValue) * 100 : 0;
+
+  return `
+    <section class="panel stock-journey-panel">
+      ${panelHeader("Stock journey", "A simple view of what is at the factory, what is running low, and what has been paid for")}
+      <section class="stock-journey-overall" aria-label="All stock summary">
+        <div>
+          <span class="eyebrow">All stock</span>
+          <h3>Everything together</h3>
+          <p>Raw materials, finished products, and equipment.</p>
+        </div>
+        ${renderJourneyFigures(overall)}
+      </section>
+      <div class="stock-journey-categories">
+        ${categories.map((category) => `
+          <article class="stock-journey-category" data-search-index="${escapeHtml(`${category.label} ${category.meaning}`.toLowerCase())}">
+            <header>
+              <h3>${escapeHtml(category.label)}</h3>
+              <p>${escapeHtml(category.meaning)}</p>
+            </header>
+            ${renderJourneyFigures(category)}
           </article>
         `).join("")}
       </div>
     </section>
-  `;
-}
-
-function renderCustodyMetrics(vision) {
-  return `
-    <div class="metric-grid">
-      ${metricCard({
-        label: "Finished stock",
-        value: formatNumber(vision.finishedStockUnits),
-        meta: `${vision.finishedGoodsRiskCount} finished item${vision.finishedGoodsRiskCount === 1 ? "" : "s"} need action`,
-        iconName: "package"
-      })}
-      ${metricCard({
-        label: "Representative custody",
-        value: formatNumber(vision.repOutstandingUnits),
-        meta: `${formatPercent(vision.repSellThroughPercent)} sold through from open loads`,
-        iconName: "routes"
-      })}
-      ${metricCard({
-        label: "Raw material risks",
-        value: formatNumber(vision.rawMaterialRiskCount),
-        meta: "Reorder before production stalls",
-        iconName: "alert"
-      })}
-      ${metricCard({
-        label: "Equipment available",
-        value: formatNumber(vision.equipmentInStock),
-        meta: "Tracked as in stock, assigned, or sold",
-        iconName: "package"
-      })}
-    </div>
   `;
 }
 
@@ -254,8 +278,8 @@ function renderStockProductModal(state, permissions) {
           <input name="name" placeholder="Plantain Chips 50g" required>
         </label>
         <label class="field">
-          <span>SKU</span>
-          <input name="sku" placeholder="SKU-1008" required>
+          <span>Product ID</span>
+          <input name="sku" placeholder="PRD-1008" required>
         </label>
         <label class="field">
           <span>Category</span>
@@ -469,7 +493,11 @@ function renderProductCard(product, permissions) {
           <span class="eyebrow">${escapeHtml(product.id)}</span>
           <h3>${escapeHtml(product.name)}</h3>
         </div>
-        ${statusPill(product.status === "inactive" ? "inactive" : health.status)}
+        ${product.status === "inactive"
+          ? statusPill("inactive")
+          : health.status === "ready"
+            ? ""
+            : statusPill(health.status)}
       </header>
 
       <div class="stock-line">
@@ -569,7 +597,7 @@ function dispatchRecipientOptions(state, recipientType) {
     return [
       { value: "Production Line", label: "Production Line" },
       { value: "Packaging Store", label: "Packaging Store" },
-      { value: "Finished Goods Store", label: "Finished Goods Store" },
+      { value: "Finished Products Store", label: "Finished Products Store" },
       { value: "Raw Materials Store", label: "Raw Materials Store" },
       { value: "__other__", label: "Other internal location" }
     ];
@@ -815,7 +843,6 @@ function renderAssignmentRows(state, permissions) {
     const hasOutstandingStock = hasStockInHand(assignment);
     const hasVariance = Boolean(assignment.varianceFlagged) && hasOutstandingStock;
     const soldPercent = assignment.assigned ? (assignment.sold / assignment.assigned) * 100 : 0;
-    const reconcileBlocked = hasOutstandingStock && !assignment.varianceFlagged;
     const searchIndex = [
       assignment.id,
       assignment.repName,
@@ -826,11 +853,16 @@ function renderAssignmentRows(state, permissions) {
 
     return `
       <tr
+        class="assignment-ledger-row js-open-assignment-details"
         data-assignment-row
+        data-assignment-id="${escapeHtml(assignment.id)}"
         data-assignment-rep="${escapeHtml(assignment.repName)}"
         data-assignment-date="${escapeHtml(String(assignment.assignedAt || "").slice(0, 10))}"
         data-assignment-variance="${hasVariance ? "true" : "false"}"
         data-search-index="${escapeHtml(searchIndex)}"
+        tabindex="0"
+        role="button"
+        aria-label="View ${escapeHtml(assignment.repName)} stock assignment details"
       >
         <td>
           <strong>${escapeHtml(assignment.id)}</strong>
@@ -853,53 +885,89 @@ function renderAssignmentRows(state, permissions) {
           <strong>${formatNumber(inHand)}</strong>
           <div class="muted">Still with representative</div>
         </td>
-        <td class="assignment-variance-cell ${hasVariance ? "is-discrepant" : ""}">
-          <strong>${formatNumber(hasVariance ? inHand : 0)}</strong>
-          ${hasVariance ? '<div class="muted">Flagged for review</div>' : '<div class="muted">No discrepancy</div>'}
-        </td>
         <td>
           ${statusPill(assignmentDisplayStatus(assignment))}
-          ${assignment.varianceNote ? `<div class="muted">${escapeHtml(assignment.varianceNote)}</div>` : ""}
         </td>
         <td>
-          ${
-            permissions.canReconcileStock && assignment.status !== "reconciled"
-              ? `
-                <div class="assignment-actions">
-                  ${
-                    hasOutstandingStock
-                      ? `<input class="table-note-input" data-variance-note="${escapeHtml(assignment.id)}" placeholder="Variance note">`
-                      : ""
-                  }
-                  ${textButton({
-                    iconName: "alert",
-                    label: "Flag",
-                    className: "js-flag-assignment",
-                    disabled: !hasOutstandingStock,
-                    data: { "assignment-id": assignment.id }
-                  })}
-                  <span class="reconcile-action-wrap">
-                    ${textButton({
-                      iconName: "check",
-                      label: assignment.varianceFlagged ? "Close" : "Reconcile",
-                      className: "primary js-reconcile-assignment",
-                      disabled: reconcileBlocked,
-                      data: { "assignment-id": assignment.id }
-                    })}
-                    ${
-                      reconcileBlocked
-                        ? '<span class="assignment-action-hint" role="tooltip">Flag the outstanding stock before closing.</span>'
-                        : ""
-                    }
-                  </span>
-                </div>
-              `
-              : ""
-          }
+          <span class="ledger-row-view" aria-hidden="true">${icon("eye")}</span>
         </td>
       </tr>
     `;
   });
+}
+
+function renderAssignmentDetails(assignment, state, permissions) {
+  const product = getProductMap(state.products).get(assignment.productId);
+  const inHand = assignmentInHand(assignment);
+  const hasOutstandingStock = hasStockInHand(assignment);
+  const variance = assignment.varianceFlagged && hasOutstandingStock ? inHand : 0;
+  const reconcileBlocked = hasOutstandingStock && !assignment.varianceFlagged;
+
+  return `
+    <div class="assignment-detail-heading">
+      <div>
+        <span class="eyebrow">${escapeHtml(assignment.id)}</span>
+        <h3>${escapeHtml(product?.name || assignment.productId)}</h3>
+        <p>${escapeHtml(assignment.repName)} - assigned ${formatDate(assignment.assignedAt)}</p>
+      </div>
+      ${statusPill(assignmentDisplayStatus(assignment))}
+    </div>
+    <div class="assignment-detail-grid">
+      <div><span>Assigned</span><strong>${formatNumber(assignment.assigned)}</strong></div>
+      <div><span>Sold</span><strong>${formatNumber(assignment.sold)}</strong></div>
+      <div><span>Returned</span><strong>${formatNumber(assignment.returned)}</strong></div>
+      <div><span>Still with representative</span><strong>${formatNumber(inHand)}</strong></div>
+    </div>
+    <section class="assignment-variance-summary ${variance ? "is-discrepant" : ""}">
+      <div>
+        <span class="eyebrow">Variance</span>
+        <strong>${formatNumber(variance)}</strong>
+      </div>
+      <p>${variance
+        ? `These ${formatNumber(variance)} items were flagged because they still need an explanation before this assignment can be closed.`
+        : "No variance has been flagged. Products still with the representative are normal while the assignment is open."}</p>
+      ${assignment.varianceNote ? `<p><strong>Note:</strong> ${escapeHtml(assignment.varianceNote)}</p>` : ""}
+    </section>
+    ${permissions.canReconcileStock && assignment.status !== "reconciled" ? `
+      <div class="assignment-detail-actions">
+        ${hasOutstandingStock ? `<input class="table-note-input" data-modal-variance-note placeholder="Optional explanation">` : ""}
+        ${textButton({
+          iconName: "alert",
+          label: "Flag variance",
+          className: "js-modal-flag-assignment",
+          disabled: !hasOutstandingStock,
+          data: { "assignment-id": assignment.id }
+        })}
+        <span class="reconcile-action-wrap">
+          ${textButton({
+            iconName: "check",
+            label: assignment.varianceFlagged ? "Close assignment" : "Reconcile",
+            className: "primary js-modal-reconcile-assignment",
+            disabled: reconcileBlocked,
+            data: { "assignment-id": assignment.id }
+          })}
+          ${reconcileBlocked ? '<span class="assignment-action-hint" role="tooltip">Flag the unexplained stock before closing.</span>' : ""}
+        </span>
+      </div>
+    ` : ""}
+  `;
+}
+
+function renderAssignmentDetailsModal() {
+  return `
+    <div id="assignment-details-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal assignment-details-modal" role="dialog" aria-modal="true" aria-labelledby="assignment-details-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Representative stock</span>
+            <h2 id="assignment-details-title">Assignment details</h2>
+          </div>
+          ${textButton({ iconName: "x", label: "Close", className: "js-close-assignment-details" })}
+        </header>
+        <div id="assignment-details-content"></div>
+      </section>
+    </div>
+  `;
 }
 
 function renderTransactionRows(state) {
@@ -992,7 +1060,7 @@ function renderStockHealthPage(state, permissions) {
   return `
     <section class="panel inventory-layout">
       <div class="toolbar">
-        ${panelHeader("Stock health", "Raw materials, finished goods, equipment, cover days, and replenishment risk")}
+        ${panelHeader("Stock health", "Raw materials, finished products, equipment, days remaining, and low-stock warnings")}
         <div class="toolbar-group">
           ${canAddStock
             ? textButton({
@@ -1022,9 +1090,8 @@ function renderStockHealthPage(state, permissions) {
   `;
 }
 
-function renderOverviewPage(state, vision) {
+function renderOverviewPage(state) {
   return `
-    ${renderCustodyMetrics(vision)}
     ${renderLifecycle(state)}
   `;
 }
@@ -1065,7 +1132,7 @@ function renderAssignmentsPage(state, permissions) {
         </button>
       </div>
       ${table(
-        ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "In hand", "Variance", "Status", ""],
+        ["Assignment", "Representative", "Product", "Assigned", "Sold", "Returned", "In hand", "Status", ""],
         renderAssignmentRows(state, permissions),
         "No representative stock ledger entries yet"
       )}
@@ -1116,9 +1183,9 @@ function renderCreditPage(state) {
   `;
 }
 
-function renderStockTabPage({ activeTabId, state, permissions, vision }) {
+function renderStockTabPage({ activeTabId, state, permissions }) {
   if (activeTabId === "dispatch") return renderDispatchPage(state, permissions);
-  if (activeTabId === "overview") return renderOverviewPage(state, vision);
+  if (activeTabId === "overview") return renderOverviewPage(state);
   if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
   if (activeTabId === "movement-history") return renderTransactionsPage(state);
   if (activeTabId === "credit") return renderCreditPage(state);
@@ -1128,16 +1195,16 @@ function renderStockTabPage({ activeTabId, state, permissions, vision }) {
 
 export function renderInventory({ state }) {
   const permissions = currentUserPermissions(state);
-  const vision = calculateVisionMetrics(state);
   const activeTabId = activeStockTabId(permissions, state);
 
   return `
     <section class="view inventory-view">
       ${renderStockSubtabs(activeTabId, permissions, state)}
-      ${renderStockTabPage({ activeTabId, state, permissions, vision })}
+      ${renderStockTabPage({ activeTabId, state, permissions })}
       ${renderStockProductModal(state, permissions)}
       ${renderRestockModal(permissions)}
       ${renderStockReductionModal(permissions)}
+      ${renderAssignmentDetailsModal()}
     </section>
   `;
 }
@@ -1175,6 +1242,66 @@ export function bindInventory({ root, store, signal }) {
   const assignmentDateFrom = qs("[data-assignment-date-from]", root);
   const assignmentDateTo = qs("[data-assignment-date-to]", root);
   const assignmentFilterStatus = qs("[data-assignment-filter-status]", root);
+  const assignmentDetailsModal = qs("#assignment-details-modal", root);
+  const assignmentDetailsContent = qs("#assignment-details-content", root);
+
+  function closeAssignmentDetails() {
+    if (assignmentDetailsModal) assignmentDetailsModal.hidden = true;
+  }
+
+  function openAssignmentDetails(assignmentId) {
+    const state = store.getState();
+    const assignment = (state.stockAssignments || []).find((item) => item.id === assignmentId);
+    if (!assignment || !assignmentDetailsModal || !assignmentDetailsContent) return;
+
+    assignmentDetailsContent.innerHTML = renderAssignmentDetails(assignment, state, currentUserPermissions(state));
+    assignmentDetailsModal.hidden = false;
+    assignmentDetailsModal.focus();
+  }
+
+  qsa(".js-open-assignment-details", root).forEach((row) => {
+    row.addEventListener("click", () => openAssignmentDetails(row.dataset.assignmentId));
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openAssignmentDetails(row.dataset.assignmentId);
+      }
+    });
+  });
+
+  assignmentDetailsModal?.addEventListener("click", (event) => {
+    if (event.target === assignmentDetailsModal || event.target.closest(".js-close-assignment-details")) {
+      closeAssignmentDetails();
+      return;
+    }
+
+    const flagButton = event.target.closest(".js-modal-flag-assignment");
+    if (flagButton) {
+      const note = qs("[data-modal-variance-note]", assignmentDetailsModal)?.value || "Variance needs explanation";
+      store.dispatch({
+        type: "FLAG_ASSIGNMENT_VARIANCE",
+        assignmentId: flagButton.dataset.assignmentId,
+        note,
+        message: "Variance flagged"
+      });
+      closeAssignmentDetails();
+      return;
+    }
+
+    const reconcileButton = event.target.closest(".js-modal-reconcile-assignment");
+    if (reconcileButton) {
+      store.dispatch({
+        type: "RECONCILE_ASSIGNMENT",
+        assignmentId: reconcileButton.dataset.assignmentId,
+        message: "Assignment reconciled"
+      });
+      closeAssignmentDetails();
+    }
+  });
+
+  assignmentDetailsModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAssignmentDetails();
+  });
 
   function visibleAssignmentRows() {
     return qsa("[data-assignment-row]", root).filter((row) => !row.hidden);
@@ -1213,10 +1340,24 @@ export function bindInventory({ root, store, signal }) {
 
   qs(".js-export-assignment-pdf", root)?.addEventListener("click", () => {
     const rows = visibleAssignmentRows().map((row) => {
-      const cells = [...row.querySelectorAll("td")].slice(0, 9);
+      const state = store.getState();
+      const assignment = (state.stockAssignments || []).find((item) => item.id === row.dataset.assignmentId);
+      const product = (state.products || []).find((item) => item.id === assignment?.productId);
+      const inHand = assignment ? assignmentInHand(assignment) : 0;
+      const variance = assignment?.varianceFlagged ? inHand : 0;
 
       return {
-        cells: cells.map((cell) => String(cell.innerText || cell.textContent || "").replace(/\s+/g, " ").trim()),
+        cells: assignment ? [
+          `${assignment.id} - ${formatDate(assignment.assignedAt)}`,
+          assignment.repName,
+          product?.name || assignment.productId,
+          formatNumber(assignment.assigned),
+          formatNumber(assignment.sold),
+          formatNumber(assignment.returned),
+          formatNumber(inHand),
+          formatNumber(variance),
+          statusText(assignmentDisplayStatus(assignment))
+        ] : [],
         isVariance: row.dataset.assignmentVariance === "true"
       };
     });
@@ -1483,7 +1624,7 @@ export function bindInventory({ root, store, signal }) {
     const productId = String(existingProductId || sku).trim();
     const requiredFields = [
       ["name", "product name"],
-      ["sku", "SKU"],
+      ["sku", "Product ID"],
       ["stockCategory", "category"],
       ["unit", "unit"],
       ["stock", "factory stock"],
@@ -1520,7 +1661,7 @@ export function bindInventory({ root, store, signal }) {
     }
 
     if (duplicateProductSku(store.getState(), sku, existingProductId)) {
-      if (productMessage) productMessage.textContent = "A product with this SKU already exists. Use a different SKU.";
+      if (productMessage) productMessage.textContent = "A product with this Product ID already exists. Use a different Product ID.";
       return;
     }
 
@@ -1784,25 +1925,4 @@ export function bindInventory({ root, store, signal }) {
     });
   });
 
-  qsa(".js-flag-assignment", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      const noteInput = qs(`[data-variance-note="${button.dataset.assignmentId}"]`, root);
-      store.dispatch({
-        type: "FLAG_ASSIGNMENT_VARIANCE",
-        assignmentId: button.dataset.assignmentId,
-        note: noteInput?.value || "Variance needs explanation",
-        message: "Variance flagged"
-      });
-    });
-  });
-
-  qsa(".js-reconcile-assignment", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      store.dispatch({
-        type: "RECONCILE_ASSIGNMENT",
-        assignmentId: button.dataset.assignmentId,
-        message: "Assignment reconciled"
-      });
-    });
-  });
 }

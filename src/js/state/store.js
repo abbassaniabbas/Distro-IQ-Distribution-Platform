@@ -328,7 +328,7 @@ function productChangeDetails(previousProduct, nextProduct) {
   if (!previousProduct) return [];
 
   const trackedFields = [
-    ["id", "SKU"],
+    ["id", "Product ID"],
     ["name", "product name"],
     ["stockCategory", "stock type"],
     ["stock", "stock"],
@@ -1232,7 +1232,7 @@ function reducer(currentState, action) {
       const existingProduct = state.products.find((item) => item.id === productId);
       const previousProduct = existingProduct ? { ...existingProduct } : null;
       const requestedStockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
-      const nextProductId = String(action.sku || productId || "").trim() || createId(requestedStockCategory === "equipment" ? "EQP" : "SKU");
+      const nextProductId = String(action.sku || productId || "").trim() || createId(requestedStockCategory === "equipment" ? "EQP" : "PRD");
       const normalizedNextProductId = nextProductId.toLowerCase();
       const duplicateProductId = state.products.some((item) => (
         item.id !== productId && String(item.id || "").trim().toLowerCase() === normalizedNextProductId
@@ -1251,7 +1251,7 @@ function reducer(currentState, action) {
         category: categoryNameForStockCategory(stockCategory),
         stockCategory,
         unit: String(action.unit || existingProduct?.unit || "unit").trim(),
-        warehouse: String(action.warehouse || existingProduct?.warehouse || "Finished Goods Store").trim(),
+        warehouse: String(action.warehouse || existingProduct?.warehouse || "Finished Products Store").trim(),
         region: "Factory",
         stock: Math.max(0, Number(action.stock ?? existingProduct?.stock ?? 0)),
         reorderPoint: Math.max(0, Number(action.reorderPoint ?? existingProduct?.reorderPoint ?? 0)),
