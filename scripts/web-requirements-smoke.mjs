@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 
 import { getReturnableCustomerChoices } from "../src/js/services/calculations.js";
+import { buildInvoiceDocument, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
 import { renderAuth } from "../src/js/views/auth.js";
 import { renderDashboard } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
+import { renderInvoices } from "../src/js/views/invoices.js";
 
 globalThis.window = { location: { hash: "#/dashboard" } };
 
@@ -130,6 +132,22 @@ const sale = state.stockTransactions.find((item) => item.type === "sale");
 assert.ok(sale, "cash walk-in sale must be saved");
 assert.equal(sale.partyName, "Walk-in customer");
 assert.equal(state.stockAssignments[0].sold, 2);
+const cashInvoice = getInvoiceRecords(state).find((invoice) => invoice.transactionId === sale.id);
+assert.ok(cashInvoice, "every cash sale must create an invoice");
+assert.equal(cashInvoice.status, "paid");
+assert.equal(cashInvoice.paymentType, "cash");
+assert.equal(cashInvoice.repName, "Amina Rep");
+assert.equal(cashInvoice.items[0].productName, "Plantain Chips");
+const invoiceDocument = buildInvoiceDocument(cashInvoice, state);
+assert.match(invoiceDocument, /DistroIQ Sales, Stock &amp; Distribution/);
+assert.match(invoiceDocument, /Test Factory/);
+assert.match(invoiceDocument, /Walk-in customer/);
+assert.match(invoiceDocument, /Plantain Chips/);
+assert.match(invoiceDocument, /Sold by Amina Rep/);
+const representativeInvoices = renderInvoices({ state: scopeStateForCurrentRole(state) });
+assert.match(representativeInvoices, /My invoices/);
+assert.match(representativeInvoices, /js-download-invoice/);
+assert.match(representativeInvoices, /js-print-invoice/);
 
 const returnableCustomers = getReturnableCustomerChoices(state, {
   productId: "SKU-CHIPS",
@@ -281,6 +299,7 @@ assert.match(creditPage, /Sahad Stores/);
 
 store.getState().orders = [{
   id: "ORD-CREDIT-AGING",
+  source: "quick_sale",
   customerName: "Sahad Stores",
   retailerId: "",
   paymentType: "credit",
@@ -289,12 +308,35 @@ store.getState().orders = [{
   dueAt: "2026-06-15",
   items: [{ productId: "SKU-CHIPS", quantity: 3, unitPrice: 500 }]
 }];
-const financePage = renderFinance({ state: store.getState() });
-assert.equal((financePage.match(/data-finance-page-row="credit-exposure"/g) || []).length, 12);
-assert.equal((financePage.match(/hidden data-finance-page-row="credit-exposure"/g) || []).length, 2);
-assert.equal((financePage.match(/data-finance-page-row="credit-history"/g) || []).length, 12);
-assert.equal((financePage.match(/hidden data-finance-page-row="credit-history"/g) || []).length, 2);
-assert.match(financePage, /31\+ days[\s\S]*₦1,500/, "open credit orders must feed the credit-aging view");
+globalThis.window.location.hash = "#/finance?tab=overview";
+const financeOverview = renderFinance({ state: store.getState() });
+assert.match(financeOverview, /Customer balances/);
+assert.match(financeOverview, /Credit limits/);
+assert.match(financeOverview, /Credit history/);
+assert.match(financeOverview, /Credit aging[\s\S]*₦1,500/, "open credit orders must feed the credit-aging view");
+
+globalThis.window.location.hash = "#/finance?tab=customer-balances";
+const customerBalances = renderFinance({ state: store.getState() });
+assert.match(customerBalances, /Invoices, due dates, and payment status/);
+assert.match(customerBalances, /js-download-invoice/);
+assert.match(customerBalances, /js-print-invoice/);
+
+authenticate("user-accountant");
+globalThis.window.location.hash = "#/finance?tab=invoices";
+const accountantInvoices = renderFinance({ state: store.getState() });
+assert.match(accountantInvoices, /Download, print, and confirm customer payments/);
+assert.match(accountantInvoices, /js-download-invoice/);
+authenticate("user-manager");
+
+globalThis.window.location.hash = "#/finance?tab=credit-limits";
+const financeLimits = renderFinance({ state: store.getState() });
+assert.equal((financeLimits.match(/data-finance-page-row="credit-exposure"/g) || []).length, 12);
+assert.equal((financeLimits.match(/hidden data-finance-page-row="credit-exposure"/g) || []).length, 2);
+
+globalThis.window.location.hash = "#/finance?tab=credit-history";
+const financeHistory = renderFinance({ state: store.getState() });
+assert.equal((financeHistory.match(/data-finance-page-row="credit-history"/g) || []).length, 12);
+assert.equal((financeHistory.match(/hidden data-finance-page-row="credit-history"/g) || []).length, 2);
 
 const movementTemplate = store.getState().stockTransactions[0];
 store.getState().stockTransactions = Array.from({ length: 12 }, (_, index) => ({
@@ -311,5 +353,23 @@ assert.match(movementPage, /data-movement-pagination/);
 store.dispatch({ type: "TOGGLE_PRODUCT_STATUS", productId: "SKU-CHIPS" });
 authenticate("user-rep");
 assert.equal(scopeStateForCurrentRole(store.getState()).stockAssignments.length, 1, "reactivated products must return to representative stock flows");
+
+store.getState().retailers = [{ id: "RTL-CREDIT", name: "Credit Corner", channel: "Retailer" }];
+store.dispatch({
+  type: "LOG_REP_TRANSACTION",
+  assignmentIds: [assignment.id],
+  productId: "SKU-CHIPS",
+  customerId: "RTL-CREDIT",
+  customerName: "Credit Corner",
+  customerType: "Retailer",
+  quantity: 1,
+  transactionType: "sale",
+  paymentType: "credit",
+  repName: "Amina Rep"
+});
+const creditSaleInvoice = getInvoiceRecords(store.getState()).find((invoice) => invoice.customerName === "Credit Corner");
+assert.ok(creditSaleInvoice, "every credit sale must create an invoice");
+assert.equal(creditSaleInvoice.status, "open");
+assert.equal(creditSaleInvoice.paymentType, "credit");
 
 console.log("Web acceptance smoke checks passed.");

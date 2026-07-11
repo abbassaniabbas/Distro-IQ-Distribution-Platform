@@ -308,6 +308,34 @@
 }
 
 .topbar-notification-popover header strong {
+  display: block;
+  color: var(--navy);
+}
+
+.topbar-notification-popover header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.topbar-clear-notifications {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  flex: 0 0 30px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 900;
+}
+
+.topbar-clear-notifications:hover,
+.topbar-clear-notifications:focus-visible {
+  border-color: var(--line-strong);
+  background: var(--surface-alt);
   color: var(--navy);
 }
 

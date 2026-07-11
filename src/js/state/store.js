@@ -461,6 +461,7 @@ function createQuickSaleOrder(state, {
   const paymentLabel = String(paymentType || "cash").toLowerCase();
   const today = todayISO();
   const orderId = createId("ORD");
+  const invoiceId = createId("INV");
   const isCreditSale = paymentLabel.includes("credit");
   const customerLimit = (state.creditLimits || []).find((limit) => (
     normalized(limit.partyName) === normalized(customer?.name || customerName)
@@ -476,6 +477,7 @@ function createQuickSaleOrder(state, {
       clientId: state.client?.id || "",
       source: "quick_sale",
       transactionId,
+      invoiceId,
       retailerId: customer?.id || "",
       customerName: customer?.name || customerName || "Walk-in customer",
       customerType: customer?.channel || customerType || "Customer",
@@ -502,24 +504,33 @@ function createQuickSaleOrder(state, {
     ...(state.orders || [])
   ];
 
-  if (isCreditSale) {
-    state.invoices = [
-      {
-        id: createId("INV"),
-        clientId: state.client?.id || "",
-        orderId,
-        transactionId,
-        retailerId: customer?.id || "",
-        customerName: customer?.name || customerName || "Customer",
-        issuedAt: today,
-        dueAt,
-        amount,
-        status: "open",
-        repName
-      },
-      ...(state.invoices || [])
-    ];
-  }
+  state.invoices = [
+    {
+      id: invoiceId,
+      clientId: state.client?.id || "",
+      orderId,
+      transactionId,
+      retailerId: customer?.id || "",
+      customerName: customer?.name || customerName || "Customer",
+      customerAddress: customer?.address || "",
+      customerPhone: customer?.contactPhone || "",
+      issuedAt: today,
+      dueAt: isCreditSale ? dueAt : today,
+      amount,
+      status: isCreditSale ? "open" : "paid",
+      paymentType,
+      repName,
+      repUserId: state.user?.id || "",
+      items: [{
+        productId: product.id,
+        productName: product.name,
+        quantity,
+        unitPrice: Number(product.unitPrice || 0),
+        unitCost: Number(product.unitCost || 0)
+      }]
+    },
+    ...(state.invoices || [])
+  ];
 
   return orderId;
 }
@@ -1153,6 +1164,19 @@ function reducer(currentState, action) {
           ? `${repName} sold ${quantity} ${product.name} to ${customerName} for ${amount} (${paymentType})`
           : `${repName} recorded ${quantity} ${product.name} returned by ${customerName} - ${returnDisposition === "to_store" ? "to store stock" : "held for resale"}`
       });
+
+      if (transactionType === "sale") {
+        const invoice = state.invoices.find((item) => item.transactionId === transactionId);
+        if (invoice) {
+          appendActivityLog(state, {
+            clientId: state.client?.id,
+            actionType: "created",
+            recordType: "invoice",
+            recordLabel: invoice.id,
+            summary: `${invoice.id} created for ${customerName} by ${repName}`
+          });
+        }
+      }
 
       if (orderId) {
         appendActivityLog(state, {
@@ -1914,8 +1938,17 @@ function reducer(currentState, action) {
     case "MARK_INVOICE_PAID": {
       const invoice = state.invoices.find((item) => item.id === action.invoiceId);
       if (invoice) {
+        const order = state.orders.find((item) => item.id === invoice.orderId);
+        const creditLimit = state.creditLimits.find((item) => normalized(item.partyName) === normalized(invoice.customerName));
         invoice.status = "paid";
         invoice.paidAt = todayISO();
+        if (order) {
+          order.paymentStatus = "paid";
+          order.updatedAt = todayISO();
+        }
+        if (creditLimit && String(invoice.paymentType || order?.paymentType || "").toLowerCase().includes("credit")) {
+          creditLimit.balance = Math.max(0, Number(creditLimit.balance || 0) - Number(invoice.amount || 0));
+        }
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "paid",

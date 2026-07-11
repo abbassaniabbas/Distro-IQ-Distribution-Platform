@@ -32,6 +32,11 @@ export const NAV_ITEMS = [
     icon: "finance"
   },
   {
+    id: "invoices",
+    label: "Invoices",
+    icon: "orders"
+  },
+  {
     id: "activity-log",
     label: "Activity Log",
     icon: "activity"

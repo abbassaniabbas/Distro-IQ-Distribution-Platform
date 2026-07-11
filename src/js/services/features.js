@@ -61,7 +61,7 @@ export function scopeStateForEnabledModules(state) {
       items: (order.items || []).filter((item) => productIds.has(item.productId))
     })).filter((order) => order.items.length > 0),
     creditLimits: creditEnabled ? state.creditLimits : [],
-    invoices: creditEnabled ? state.invoices : [],
+    invoices: state.invoices || [],
     salesReports: reportsEnabled ? state.salesReports : []
   };
 }

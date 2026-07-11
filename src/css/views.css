@@ -1489,6 +1489,22 @@
   margin-right: auto;
 }
 
+.invoice-row-actions {
+  flex-wrap: wrap;
+}
+
+.invoice-row-actions .button {
+  min-height: 32px;
+  gap: 5px;
+  padding: 0 8px;
+  font-size: 0.74rem;
+}
+
+.invoice-row-actions .button svg {
+  width: 15px;
+  height: 15px;
+}
+
 .assignment-filter-grid {
   display: grid;
   grid-template-columns: minmax(180px, 1.4fr) repeat(2, minmax(150px, 1fr)) auto;

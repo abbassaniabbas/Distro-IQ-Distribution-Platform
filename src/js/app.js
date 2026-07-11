@@ -21,6 +21,7 @@ import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
 import { renderDashboard, bindDashboard } from "./views/dashboard.js";
 import { renderFinance, bindFinance } from "./views/finance.js";
 import { renderInventory, bindInventory } from "./views/inventory.js";
+import { renderInvoices, bindInvoices } from "./views/invoices.js";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js";
 import {
@@ -107,6 +108,11 @@ const routes = {
     title: "Finance",
     render: renderFinance,
     bind: bindFinance
+  },
+  invoices: {
+    title: "Invoices",
+    render: renderInvoices,
+    bind: bindInvoices
   },
   "activity-log": {
     title: "Activity Log",

@@ -86,8 +86,11 @@ function openNotificationPopover({ store, trigger }) {
   popover.innerHTML = `
     <div class="topbar-popover-arrow"></div>
     <header>
-      <strong>Notifications</strong>
-      <span>${items.length ? `${items.length} latest` : "All clear"}</span>
+      <div>
+        <strong>Notifications</strong>
+        <span data-notification-count>${items.length ? `${items.length} latest` : "All clear"}</span>
+      </div>
+      ${items.length ? '<button class="topbar-clear-notifications" type="button" title="Clear notifications" aria-label="Clear notifications">X</button>' : ""}
     </header>
     <div class="topbar-notification-list">
       ${items.length
@@ -100,6 +103,15 @@ function openNotificationPopover({ store, trigger }) {
   activeNotificationPopover = popover;
   positionPopover(popover, trigger);
   store.dispatch({ type: "MARK_NOTIFICATIONS_READ" });
+
+  popover.querySelector(".topbar-clear-notifications")?.addEventListener("click", () => {
+    store.dispatch({ type: "MARK_NOTIFICATIONS_READ" });
+    const list = popover.querySelector(".topbar-notification-list");
+    const count = popover.querySelector("[data-notification-count]");
+    if (list) list.innerHTML = '<div class="topbar-empty-state">No notifications yet</div>';
+    if (count) count.textContent = "All clear";
+    popover.querySelector(".topbar-clear-notifications")?.remove();
+  });
 }
 
 export function bindTopbarCommunications({ store, notificationsButton, messagesButton }) {

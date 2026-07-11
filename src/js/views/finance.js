@@ -15,6 +15,7 @@ import {
 } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { saveRepresentativeCreditLimit } from "../services/backend.js";
+import { downloadInvoice, getInvoiceRecords, printInvoice } from "../services/invoices.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -34,6 +35,29 @@ function financeTabHref(tabId) {
 }
 
 function financeTabs(state) {
+  if (currentUserRole(state) !== "accountant") {
+    return [
+      {
+        id: "overview",
+        label: "Overview"
+      },
+      {
+        id: "customer-balances",
+        label: "Customer balances"
+      },
+      ...(isModuleEnabled(state, "credit_control") ? [
+        {
+          id: "credit-limits",
+          label: "Credit limits"
+        },
+        {
+          id: "credit-history",
+          label: "Credit history"
+        }
+      ] : [])
+    ];
+  }
+
   return [
     {
       id: "overview",
@@ -43,6 +67,10 @@ function financeTabs(state) {
       id: "sales-reports",
       label: "Sales reports"
     }] : []),
+    {
+      id: "invoices",
+      label: "Invoices"
+    },
     {
       id: "product-revenue",
       label: "Product revenue"
@@ -76,51 +104,8 @@ function renderFinanceSubtabs(activeTabId, state) {
   `;
 }
 
-function addDays(dateValue, days) {
-  const date = parseLocalDate(dateValue);
-  if (!date) return dateValue || "";
-  date.setDate(date.getDate() + Number(days || 0));
-  return date.toISOString().slice(0, 10);
-}
-
-function financeInvoices(state) {
-  const invoices = [...(state.invoices || [])];
-  const linkedOrderIds = new Set(invoices.map((invoice) => invoice.orderId).filter(Boolean));
-  const limitsByName = new Map((state.creditLimits || []).map((limit) => [String(limit.partyName || "").trim().toLowerCase(), limit]));
-
-  (state.orders || [])
-    .filter((order) => String(order.paymentType || "").toLowerCase().includes("credit"))
-    .filter((order) => String(order.paymentStatus || "open").toLowerCase() !== "paid")
-    .filter((order) => !linkedOrderIds.has(order.id))
-    .forEach((order) => {
-      const customerName = order.customerName || "Customer";
-      const limit = limitsByName.get(String(customerName).trim().toLowerCase());
-      const issuedAt = dateOnly(order.createdAt || order.updatedAt);
-      const dueAt = order.dueAt && order.dueAt !== issuedAt
-        ? dateOnly(order.dueAt)
-        : addDays(issuedAt, limit?.paymentPeriodDays ?? 14);
-      const amount = (order.items || []).reduce((total, item) => (
-        total + Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)
-      ), 0);
-
-      invoices.push({
-        id: `INV-${order.id}`,
-        orderId: order.id,
-        retailerId: order.retailerId || "",
-        customerName,
-        issuedAt,
-        dueAt,
-        amount,
-        status: "open",
-        derived: true
-      });
-    });
-
-  return invoices;
-}
-
 function renderAgingRows(state) {
-  return getInvoiceAging(financeInvoices(state))
+  return getInvoiceAging(getInvoiceRecords(state))
     .map(
       (bucket) => `
         <div class="aging-row" data-search-index="${escapeHtml(bucket.label.toLowerCase())}">
@@ -149,7 +134,7 @@ function renderInvoiceRows(state, permissions) {
   const retailerMap = getRetailerMap(state.retailers);
   const canUpdateCredit = permissions.canSetCreditLimits;
 
-  return financeInvoices(state).map((invoice) => {
+  return getInvoiceRecords(state).map((invoice, index) => {
     const retailer = retailerMap.get(invoice.retailerId);
     const searchIndex = [
       invoice.id,
@@ -161,17 +146,29 @@ function renderInvoiceRows(state, permissions) {
       .toLowerCase();
 
     return `
-      <tr data-search-index="${escapeHtml(searchIndex)}">
+      <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="invoices" data-search-index="${escapeHtml(searchIndex)}">
         <td>
           <strong>${escapeHtml(invoice.id)}</strong>
           <div class="muted">Issued ${formatDate(invoice.issuedAt)}</div>
         </td>
-        <td>${escapeHtml(retailer?.name || "Unknown customer")}</td>
+        <td>${escapeHtml(retailer?.name || invoice.customerName || "Customer")}</td>
         <td>${statusPill(invoice.status)}</td>
         <td>${formatDate(invoice.dueAt)}</td>
         <td>${formatCurrency(invoice.amount)}</td>
         <td>
-          <div class="row-actions">
+          <div class="row-actions invoice-row-actions">
+            ${textButton({
+              iconName: "download",
+              label: "Download",
+              className: "subtle js-download-invoice",
+              data: { "invoice-id": invoice.id }
+            })}
+            ${textButton({
+              iconName: "print",
+              label: "Print",
+              className: "subtle js-print-invoice",
+              data: { "invoice-id": invoice.id }
+            })}
             ${textButton({
               iconName: "check",
               label: invoice.status === "paid" ? "Paid" : "Mark paid",
@@ -751,6 +748,20 @@ function renderAccountantProductRevenue(state) {
 }
 
 function renderAccountantFinanceTab(activeTabId, state, summary) {
+  if (activeTabId === "invoices") {
+    return `
+      <section class="panel accountant-invoices-panel">
+        ${panelHeader("Invoices", "Download, print, and confirm customer payments")}
+        ${table(
+          ["Invoice", "Customer", "Status", "Due", "Amount", "Actions"],
+          renderInvoiceRows(state, currentUserPermissions(state)),
+          "No invoices available"
+        )}
+        ${renderFinancePagination("invoices")}
+      </section>
+    `;
+  }
+
   if (activeTabId === "sales-reports") {
     return `
       ${renderAccountantFilters(state)}
@@ -829,79 +840,88 @@ export function renderFinance({ state }) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
   const permissions = currentUserPermissions(state);
-  const paidTotal = state.invoices
+  const activeTabId = activeFinanceTabId(state);
+  const invoiceRecords = getInvoiceRecords(state);
+  const paidTotal = invoiceRecords
     .filter((invoice) => invoice.status === "paid")
     .reduce((total, invoice) => total + invoice.amount, 0);
-  const overdueTotal = state.invoices
+  const overdueTotal = invoiceRecords
     .filter((invoice) => invoice.status === "overdue")
     .reduce((total, invoice) => total + invoice.amount, 0);
 
   return `
     <section class="view finance-view">
-      <div class="finance-kpis">
-        ${metricCard({
-          label: "Balances owed",
-          value: formatCurrency(metrics.receivables),
-          meta: "Open customer credit",
-          iconName: "wallet"
-        })}
-        ${metricCard({
-          label: "Collected",
-          value: formatCurrency(paidTotal),
-          meta: "Confirmed customer payments",
-          iconName: "check"
-        })}
-        ${metricCard({
-          label: "Overdue",
-          value: formatCurrency(overdueTotal),
-          meta: "Needs collection follow-up",
-          iconName: "alert"
-        })}
-        ${metricCard({
-          label: "Credit limit usage",
-          value: formatPercent(vision.creditExposurePercent),
-          meta: `${formatNumber(vision.creditWatchCount + vision.creditHoldCount)} account${vision.creditWatchCount + vision.creditHoldCount === 1 ? "" : "s"} need attention`,
-          iconName: "wallet"
-        })}
-      </div>
-      ${renderRepresentativeCreditManager(state, permissions)}
-      ${renderCreditLimitManager(state, permissions)}
-
-      <div class="finance-layout">
+      ${renderFinanceSubtabs(activeTabId, state)}
+      ${activeTabId === "overview" ? `
+        <div class="finance-kpis">
+          ${metricCard({
+            label: "Balances owed",
+            value: formatCurrency(metrics.receivables),
+            meta: "Open customer credit",
+            iconName: "wallet"
+          })}
+          ${metricCard({
+            label: "Collected",
+            value: formatCurrency(paidTotal),
+            meta: "Confirmed customer payments",
+            iconName: "check"
+          })}
+          ${metricCard({
+            label: "Overdue",
+            value: formatCurrency(overdueTotal),
+            meta: "Needs collection follow-up",
+            iconName: "alert"
+          })}
+          ${metricCard({
+            label: "Credit limit usage",
+            value: formatPercent(vision.creditExposurePercent),
+            meta: `${formatNumber(vision.creditWatchCount + vision.creditHoldCount)} account${vision.creditWatchCount + vision.creditHoldCount === 1 ? "" : "s"} need attention`,
+            iconName: "wallet"
+          })}
+        </div>
         <section class="panel">
-          ${panelHeader("Credit aging", "Open balances owed by due-date bucket")}
+          ${panelHeader("Credit aging", "Open balances grouped by how long payment has been overdue")}
           <div class="aging-list">${renderAgingRows(state)}</div>
         </section>
+      ` : ""}
 
+      ${activeTabId === "customer-balances" ? `
         <section class="panel">
-          ${panelHeader("Customer balances", "Payment status by outlet and supermarket")}
+          ${panelHeader("Customer balances", "Invoices, due dates, and payment status for every customer")}
           ${table(
             ["Invoice", "Customer", "Status", "Due", "Amount", ""],
             renderInvoiceRows(state, permissions),
-            "No balances available"
+            "No customer balances available"
           )}
+          ${renderFinancePagination("invoices")}
         </section>
-      </div>
+      ` : ""}
 
-      <section class="panel">
-        ${panelHeader("Credit exposure", "Approved limits, current balances, and remaining headroom by representative or customer")}
-        ${table(
-          ["Account", "Status", "Usage", "Limit", "Headroom", "Terms"],
-          renderCreditExposureRows(state),
-          "No credit limits available"
-        )}
-        ${renderFinancePagination("credit-exposure")}
-      </section>
+      ${activeTabId === "credit-limits" ? `
+        ${renderRepresentativeCreditManager(state, permissions)}
+        ${renderCreditLimitManager(state, permissions)}
+        <section class="panel">
+          ${panelHeader("Credit exposure", "Approved limits, current balances, and remaining amount by representative or customer")}
+          ${table(
+            ["Account", "Status", "Usage", "Limit", "Amount left", "Terms"],
+            renderCreditExposureRows(state),
+            "No credit limits available"
+          )}
+          ${renderFinancePagination("credit-exposure")}
+        </section>
+      ` : ""}
 
-      <section class="panel">
-        ${panelHeader("Credit terms history", "Every manager adjustment stays visible")}
-        ${table(
-          ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
-          renderCreditHistoryRows(state),
-          "No credit limit changes recorded"
-        )}
-        ${renderFinancePagination("credit-history")}
-      </section>
+      ${activeTabId === "credit-history" ? `
+        <section class="panel">
+          ${panelHeader("Credit terms history", "Every credit change stays visible and cannot be edited")}
+          ${table(
+            ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
+            renderCreditHistoryRows(state),
+            "No credit limit changes recorded"
+          )}
+          ${renderFinancePagination("credit-history")}
+        </section>
+      ` : ""}
     </section>
   `;
 }
@@ -1218,6 +1238,22 @@ export function bindFinance({ root, store }) {
 
   const creditForm = qs("#credit-limit-form", root);
   const repCreditForm = qs("#rep-credit-limit-form", root);
+
+  qsa(".js-download-invoice", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const state = store.getState();
+      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      if (invoice) downloadInvoice(invoice, state);
+    });
+  });
+
+  qsa(".js-print-invoice", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const state = store.getState();
+      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      if (invoice) printInvoice(invoice, state);
+    });
+  });
 
   repCreditForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
