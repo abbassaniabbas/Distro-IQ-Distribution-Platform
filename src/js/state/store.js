@@ -1274,6 +1274,7 @@ function reducer(currentState, action) {
         returnAmount: Number(action.returnAmount || 0),
         unitsSold: Number(action.unitsSold || 0),
         unitsReturned: Number(action.unitsReturned || 0),
+        unitsReturnedToFactory: Number(action.unitsReturnedToFactory || 0),
         transactionIds: Array.isArray(action.transactionIds) ? action.transactionIds : [],
         reportLines: Array.isArray(action.reportLines) ? action.reportLines.map((line) => ({
           transactionId: String(line.transactionId || ""),

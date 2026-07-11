@@ -121,7 +121,7 @@ function todaysRepTransactions(state, repName) {
       return (
         (!repKey || normalized(transaction.recordedBy) === repKey) &&
         transaction.date === date &&
-        (type === "sale" || type === "return")
+        (type === "sale" || type === "return" || type === "return to factory")
       );
     })
     .sort((a, b) => String(b.id).localeCompare(String(a.id)));
@@ -149,6 +149,10 @@ function repDaySummary(transactions) {
       summary.unitsReturned += quantity;
     }
 
+    if (type === "return to factory") {
+      summary.unitsReturnedToFactory += quantity;
+    }
+
     summary.transactionIds.push(transaction.id);
     return summary;
   }, {
@@ -158,6 +162,7 @@ function repDaySummary(transactions) {
     returnAmount: 0,
     unitsSold: 0,
     unitsReturned: 0,
+    unitsReturnedToFactory: 0,
     transactionIds: []
   });
 }
@@ -170,7 +175,10 @@ function returnDispositionLabel(value) {
 
 function repTransactionLine(transaction, state) {
   const product = (state.products || []).find((item) => item.id === transaction.productId);
-  const type = normalized(transaction.type) === "return" ? "Customer return" : "Sale";
+  const transactionType = normalized(transaction.type);
+  const type = transactionType === "return to factory"
+    ? "Returned to factory"
+    : transactionType === "return" ? "Customer return" : "Sale";
   const returnDisposition = type === "Customer return" ? returnDispositionLabel(transaction.returnDisposition) : "";
 
   return {
@@ -178,11 +186,11 @@ function repTransactionLine(transaction, state) {
     type,
     productId: transaction.productId,
     productName: product?.name || "Unknown snack",
-    customerName: transaction.partyName || "Customer",
+    customerName: type === "Returned to factory" ? (transaction.returnDestination || "Factory") : transaction.partyName || "Customer",
     quantity: Number(transaction.quantity || 0),
     amount: Number(transaction.amount || 0),
     paymentType: transaction.paymentType || "cash",
-    returnDisposition,
+    returnDisposition: type === "Returned to factory" ? (transaction.reason || "Unsold stock") : returnDisposition,
     createdAt: transaction.createdAt || transaction.date
   };
 }
@@ -1602,7 +1610,8 @@ function renderReportDetails(report, state) {
       <div><span>Sales representative</span><strong>${escapeHtml(report.repName || "Unassigned")}</strong></div>
       <div><span>Report date</span><strong>${formatDate(report.reportDate)}</strong></div>
       <div><span>Total sales</span><strong>${formatCurrency(report.salesAmount)}</strong></div>
-      <div><span>Units</span><strong>${formatNumber(report.unitsSold)} sold / ${formatNumber(report.unitsReturned)} returned</strong></div>
+      <div><span>Units</span><strong>${formatNumber(report.unitsSold)} sold / ${formatNumber(report.unitsReturned)} customer returned</strong></div>
+      <div><span>Back to factory</span><strong>${formatNumber(report.unitsReturnedToFactory || 0)} units</strong></div>
       <div><span>Cash</span><strong>${formatCurrency(report.cashAmount)}</strong></div>
       <div><span>Credit</span><strong>${formatCurrency(report.creditAmount)}</strong></div>
     </div>
@@ -2034,7 +2043,7 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
 
   return `
     <section class="panel rep-report-panel">
-      ${panelHeader("Day report", existingReport ? (hasReportChanges ? "New activity added" : "Submitted") : "Ready when your sales are saved")}
+      ${panelHeader("Day report", existingReport ? (hasReportChanges ? "New activity added" : "Submitted") : "Ready when today's activity is saved")}
       <div class="rep-report-grid">
         <div>
           <span class="eyebrow">Sales</span>
@@ -2052,6 +2061,10 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
           <span class="eyebrow">Returns</span>
           <strong>${formatCurrency(summary.returnAmount)}</strong>
         </div>
+        <div>
+          <span class="eyebrow">Back to factory</span>
+          <strong>${formatNumber(summary.unitsReturnedToFactory)}</strong>
+        </div>
       </div>
       ${renderRepReportLines(transactions, state)}
       <button
@@ -2066,6 +2079,7 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
         data-return-amount="${escapeHtml(summary.returnAmount)}"
         data-units-sold="${escapeHtml(summary.unitsSold)}"
         data-units-returned="${escapeHtml(summary.unitsReturned)}"
+        data-units-returned-to-factory="${escapeHtml(summary.unitsReturnedToFactory)}"
         data-transaction-ids="${escapeHtml(summary.transactionIds.join(","))}"
       >
         <span>${escapeHtml(buttonLabel)}</span>
@@ -2878,6 +2892,7 @@ function bindSalesRepDashboard({ root, store }) {
         returnAmount: Number(button.dataset.returnAmount || 0),
         unitsSold: Number(button.dataset.unitsSold || 0),
         unitsReturned: Number(button.dataset.unitsReturned || 0),
+        unitsReturnedToFactory: Number(button.dataset.unitsReturnedToFactory || 0),
         transactionIds,
         reportLines,
         message: "Sales report submitted"

@@ -402,5 +402,8 @@ const outstandingAfterFactoryReturn = returnedAssignment.assigned - returnedAssi
 assert.equal(store.getState().products.find((product) => product.id === "SKU-CHIPS").stock, stockBeforeFactoryReturn + 1);
 assert.equal(outstandingAfterFactoryReturn, outstandingBeforeFactoryReturn - 1);
 assert.equal(store.getState().stockTransactions[0].type, "return to factory");
+const reportAfterFactoryReturn = renderDashboard({ state: scopeStateForCurrentRole(store.getState()) });
+assert.match(reportAfterFactoryReturn, /Back to factory/);
+assert.match(reportAfterFactoryReturn, /Returned to factory/);
 
 console.log("Web acceptance smoke checks passed.");
