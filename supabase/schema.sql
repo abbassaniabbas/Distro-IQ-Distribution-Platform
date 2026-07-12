@@ -21,6 +21,12 @@ add column if not exists date_format text not null default 'DD/MM/YYYY';
 alter table public.clients
 add column if not exists document_business_name text not null default '';
 
+alter table public.clients
+add column if not exists credit_limit_email_enabled boolean not null default false;
+
+alter table public.clients
+add column if not exists credit_limit_sms_enabled boolean not null default false;
+
 do $$ begin
   alter table public.clients
   add constraint clients_brand_color_hex

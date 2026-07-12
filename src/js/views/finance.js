@@ -1432,6 +1432,8 @@ export function bindFinance({ root, store }) {
     let emailFailure = "";
     let smsSent = false;
     let smsFailure = "";
+    let emailEnabled = state.client?.creditLimitEmailEnabled === true;
+    let smsEnabled = state.client?.creditLimitSmsEnabled === true;
 
     if (submitButton) submitButton.disabled = true;
 
@@ -1448,6 +1450,8 @@ export function bindFinance({ root, store }) {
       emailFailure = saveResult?.emailError || "";
       smsSent = saveResult?.smsSent === true;
       smsFailure = saveResult?.smsError || "";
+      emailEnabled = saveResult?.emailEnabled === true;
+      smsEnabled = saveResult?.smsEnabled === true;
     } catch (error) {
       emailFailure = error.message;
     }
@@ -1459,9 +1463,14 @@ export function bindFinance({ root, store }) {
       limit,
       paymentPeriodDays,
       reason: formData.get("reason"),
-      message: emailSent && smsSent
-        ? "Representative credit limit saved and sent by email and SMS"
-        : `Representative credit limit saved. ${[emailSent ? "" : emailFailure || "Email could not be sent.", smsSent ? "" : smsFailure || "SMS could not be sent."].filter(Boolean).join(" ")}`
+      message: !emailEnabled && !smsEnabled
+        ? "Representative credit limit saved. Notifications are turned off in Settings."
+        : emailSent === emailEnabled && smsSent === smsEnabled
+          ? `Representative credit limit saved and sent by ${[emailSent && "email", smsSent && "SMS"].filter(Boolean).join(" and ")}`
+          : `Representative credit limit saved. ${[
+              emailEnabled && !emailSent ? emailFailure || "Email could not be sent." : "",
+              smsEnabled && !smsSent ? smsFailure || "SMS could not be sent." : ""
+            ].filter(Boolean).join(" ")}`
     });
   });
 

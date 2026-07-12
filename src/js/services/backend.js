@@ -1,7 +1,7 @@
 import { CURRENCY_OPTIONS } from "./tenant.js";
 import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
 
-const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, created_at)";
+const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, created_at)";
 const CLIENT_SELECT_LEGACY = "id, client_id, role, status, clients(id, company_name, logo_data_url, timezone, currency, currency_symbol, created_at)";
 
 function mapClient(row) {
@@ -15,6 +15,8 @@ function mapClient(row) {
     timezone: row.timezone,
     currency: row.currency,
     currencySymbol: row.currency_symbol || "₦",
+    creditLimitEmailEnabled: row.credit_limit_email_enabled === true,
+    creditLimitSmsEnabled: row.credit_limit_sms_enabled === true,
     createdAt: row.created_at
   };
 }
@@ -594,7 +596,9 @@ export async function updateWorkspaceSettings({ client, payload }) {
       brand_color: payload.brandColor || "#0B1F3A",
       timezone: payload.timezone,
       currency: currency.value,
-      currency_symbol: currency.symbol
+      currency_symbol: currency.symbol,
+      credit_limit_email_enabled: payload.creditLimitEmailEnabled === true,
+      credit_limit_sms_enabled: payload.creditLimitSmsEnabled === true
     })
     .eq("id", client.id);
 

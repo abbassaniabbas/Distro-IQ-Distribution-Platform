@@ -10,6 +10,7 @@ import { renderDashboard } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
+import { renderSettings } from "../src/js/views/settings.js";
 
 globalThis.window = { location: { hash: "#/dashboard" } };
 
@@ -43,6 +44,11 @@ function authenticate(userId) {
 }
 
 authenticate("user-manager");
+const managerSettings = renderSettings({ state: store.getState() });
+assert.match(managerSettings, /name="creditLimitEmailEnabled" type="checkbox"/);
+assert.match(managerSettings, /name="creditLimitSmsEnabled" type="checkbox"/);
+assert.doesNotMatch(managerSettings, /name="creditLimitEmailEnabled" type="checkbox" checked/);
+assert.doesNotMatch(managerSettings, /name="creditLimitSmsEnabled" type="checkbox" checked/);
 store.dispatch({
   type: "UPSERT_PRODUCT",
   productId: "SKU-CHIPS",

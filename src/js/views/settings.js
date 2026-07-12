@@ -90,6 +90,8 @@ function collectCompanySettings(form, logoDataUrl) {
     timezone: formData.get("timezone") || "",
     currency: formData.get("currency") || "",
     brandColor: normalizeBrandColor(formData.get("brandColor") || DEFAULT_BRAND_COLOR),
+    creditLimitEmailEnabled: formData.get("creditLimitEmailEnabled") === "on",
+    creditLimitSmsEnabled: formData.get("creditLimitSmsEnabled") === "on",
     logoDataUrl
   };
 }
@@ -169,6 +171,18 @@ function renderCompanySettings(state, account) {
           </div>
           ${renderFieldError("logo")}
         </div>
+
+        <fieldset class="field span-full settings-notification-controls">
+          <legend>Credit-limit notifications</legend>
+          <label class="settings-switch">
+            <span><strong>Email</strong><small>Send the representative an email when their limit changes</small></span>
+            <input name="creditLimitEmailEnabled" type="checkbox" ${client.creditLimitEmailEnabled ? "checked" : ""} ${canEdit ? "" : "disabled"}>
+          </label>
+          <label class="settings-switch">
+            <span><strong>SMS</strong><small>Send the representative a text message when their limit changes</small></span>
+            <input name="creditLimitSmsEnabled" type="checkbox" ${client.creditLimitSmsEnabled ? "checked" : ""} ${canEdit ? "" : "disabled"}>
+          </label>
+        </fieldset>
 
         <span id="company-settings-message" class="field-error span-full"></span>
         <div class="span-full split">
@@ -446,7 +460,9 @@ export function bindSettings({ root, store }) {
             timezone: values.timezone,
             currency: currency.value,
             currencySymbol: currency.symbol,
-            brandColor: values.brandColor
+            brandColor: values.brandColor,
+            creditLimitEmailEnabled: values.creditLimitEmailEnabled,
+            creditLimitSmsEnabled: values.creditLimitSmsEnabled
           },
           message: "Company settings updated"
         });

@@ -1283,6 +1283,43 @@
   height: 36px;
 }
 
+.settings-notification-controls {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+}
+
+.settings-notification-controls legend {
+  padding: 0 6px;
+  font-weight: 800;
+}
+
+.settings-switch {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 52px;
+}
+
+.settings-switch span {
+  display: grid;
+  gap: 3px;
+}
+
+.settings-switch small {
+  color: var(--muted);
+}
+
+.settings-switch input {
+  width: 42px;
+  height: 22px;
+  flex: 0 0 auto;
+  accent-color: var(--green);
+}
+
 @media (max-width: 680px) {
   .batch-material-row {
     grid-template-columns: 1fr 44px;
