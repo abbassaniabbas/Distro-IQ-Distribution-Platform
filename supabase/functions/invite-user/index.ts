@@ -10,6 +10,7 @@ type InvitePayload = {
   clientId: string;
   name: string;
   email: string;
+  phoneNumber: string;
   role: "sales_rep" | "manager" | "store_keeper" | "accountant" | "ceo";
   redirectTo?: string;
 };
@@ -94,6 +95,7 @@ Deno.serve(async (req) => {
     !payload.clientId && "client ID",
     !displayName && "full name",
     !normalizedEmail && "email",
+    !payload.phoneNumber?.trim() && "phone number",
     !payload.role && "role"
   ].filter(Boolean);
 
@@ -158,6 +160,7 @@ Deno.serve(async (req) => {
       client_id: payload.clientId,
       user_id: invitedUserId,
       email: normalizedEmail,
+      phone_number: payload.phoneNumber.trim(),
       name: displayName,
       role: payload.role,
       status: "invited",

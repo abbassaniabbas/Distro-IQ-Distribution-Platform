@@ -8,6 +8,7 @@ const seedData = {
   activityLogs: [],
   salesReports: [],
   creditLimitHistory: [],
+  productionBatches: [],
   backend: {
     configured: false,
     status: "idle",

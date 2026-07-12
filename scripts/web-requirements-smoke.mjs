@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 
 import { effectiveOrderStatus, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
 import { buildInvoiceDocument, getInvoiceRecords } from "../src/js/services/invoices.js";
+import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
 import { renderAuth } from "../src/js/views/auth.js";
@@ -81,6 +82,35 @@ store.dispatch({
 });
 assert.equal(store.getState().stockAssignments.length, 0, "raw materials must not be assigned to a representative");
 assert.equal(store.getState().products.find((item) => item.id === "RAW-OIL").stock, 50);
+
+store.dispatch({
+  type: "RECORD_PRODUCTION_USAGE",
+  batchDate: "2026-07-10",
+  batchReference: "BATCH-REJECTED",
+  materials: [{ productId: "RAW-OIL", quantity: 51 }]
+});
+assert.equal(store.getState().products.find((item) => item.id === "RAW-OIL").stock, 50, "batch usage above stock on hand must be rejected");
+assert.equal(store.getState().productionBatches.length, 0);
+
+store.dispatch({
+  type: "RECORD_PRODUCTION_USAGE",
+  batchDate: "2026-07-10",
+  batchReference: "BATCH-1001",
+  materials: [{ productId: "RAW-OIL", quantity: 5 }]
+});
+assert.equal(store.getState().products.find((item) => item.id === "RAW-OIL").stock, 45);
+assert.equal(store.getState().productionBatches[0].materials[0].productId, "RAW-OIL");
+globalThis.window.location.hash = "#/inventory?tab=production-usage";
+const productionUsage = renderInventory({ state: store.getState() });
+assert.match(productionUsage, /Production usage/);
+assert.match(productionUsage, /BATCH-1001/);
+
+store.getState().featureModules = [{ clientId: client.id, moduleKey: "raw_materials", enabled: false }];
+globalThis.window.location.hash = "#/inventory?tab=stock-health";
+const rawMaterialsDisabled = renderInventory({ state: scopeStateForEnabledModules(scopeStateForCurrentRole(store.getState())) });
+assert.doesNotMatch(rawMaterialsDisabled, /Production usage/);
+assert.doesNotMatch(rawMaterialsDisabled, /Cooking Oil/);
+store.getState().featureModules = [];
 
 store.dispatch({
   type: "RECORD_STOCK_DISPATCH",

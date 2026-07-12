@@ -53,6 +53,9 @@ function stockTabsForPermissions(permissions, state) {
           label: "Factory dispatch"
         }]
       : []),
+    ...((permissions.canManageStockMovements || permissions.canManageProducts) && isModuleEnabled(state, "raw_materials")
+      ? [{ id: "production-usage", label: "Production usage" }]
+      : []),
     {
       id: "overview",
       label: "Stock journey"
@@ -1200,12 +1203,69 @@ function renderCreditPage(state) {
   `;
 }
 
+function renderBatchMaterialRow(rawMaterials) {
+  return `
+    <div class="batch-material-row" data-batch-material-row>
+      <label class="field">
+        <span>Raw material</span>
+        <select name="batchMaterialId" required>
+          <option value="">Choose material</option>
+          ${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
+        </select>
+      </label>
+      <label class="field">
+        <span>Quantity used</span>
+        <input name="batchMaterialQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
+      </label>
+      <button class="icon-button js-remove-batch-material" type="button" title="Remove material" aria-label="Remove material">${icon("x")}</button>
+    </div>
+  `;
+}
+
+function renderProductionUsagePage(state) {
+  const rawMaterials = (state.products || []).filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === "raw_materials");
+  const batches = [...(state.productionBatches || [])].sort((a, b) => String(b.batchDate || "").localeCompare(String(a.batchDate || "")));
+
+  return `
+    <section class="panel inventory-layout">
+      ${panelHeader("Production usage", "Record raw materials consumed by each production batch")}
+      <form id="production-usage-form" class="manager-form-grid" novalidate>
+        <label class="field">
+          <span>Batch date</span>
+          <input name="batchDate" type="date" value="${escapeHtml(new Date().toISOString().slice(0, 10))}" required>
+        </label>
+        <label class="field">
+          <span>Batch name or number</span>
+          <input name="batchReference" placeholder="BATCH-1001" required>
+        </label>
+        <div class="span-full batch-material-list" data-batch-material-list>
+          ${renderBatchMaterialRow(rawMaterials)}
+        </div>
+        <div class="span-full manager-form-actions">
+          <button class="button" type="button" data-add-batch-material>${icon("plus")}<span>Add another material</span></button>
+          <button class="button primary" type="submit" ${rawMaterials.length ? "" : "disabled"}>${icon("check")}<span>Save usage</span></button>
+        </div>
+        <span id="production-usage-message" class="field-error span-full" role="status">${rawMaterials.length ? "" : "Add raw materials to stock before recording production usage."}</span>
+      </form>
+    </section>
+    <section class="panel inventory-layout">
+      ${panelHeader("Production batch history", "Materials used and the staff member who recorded them")}
+      ${table(
+        ["Batch", "Date", "Raw materials used", "Recorded by"],
+        batches.map((batch) => `<tr><td><strong>${escapeHtml(batch.reference)}</strong></td><td>${formatDate(batch.batchDate)}</td><td>${escapeHtml((batch.materials || []).map((material) => `${material.productName}: ${formatNumber(material.quantity)}`).join(", "))}</td><td>${escapeHtml(batch.recordedBy || "Factory staff")}</td></tr>`),
+        "No production usage recorded yet"
+      )}
+    </section>
+  `;
+}
+
 function renderStockTabPage({ activeTabId, state, permissions }) {
   if (activeTabId === "dispatch") return renderDispatchPage(state, permissions);
   if (activeTabId === "overview") return renderOverviewPage(state);
   if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
   if (activeTabId === "movement-history") return renderTransactionsPage(state);
   if (activeTabId === "credit") return renderCreditPage(state);
+  if (activeTabId === "production-usage") return renderProductionUsagePage(state);
 
   return renderStockHealthPage(state, permissions);
 }
@@ -1254,6 +1314,63 @@ export function bindInventory({ root, store, signal }) {
   const requestedStockType = routeParams.get("type");
   const requestedAction = routeParams.get("action");
   let stockImageDataUrl = "";
+  const productionUsageForm = qs("#production-usage-form", root);
+  const batchMaterialList = qs("[data-batch-material-list]", root);
+
+  function bindBatchMaterialRemoveButtons() {
+    if (!batchMaterialList) return;
+    qsa(".js-remove-batch-material", batchMaterialList).forEach((button) => {
+      button.onclick = () => {
+        if (qsa("[data-batch-material-row]", batchMaterialList).length > 1) button.closest("[data-batch-material-row]")?.remove();
+      };
+    });
+  }
+
+  qs("[data-add-batch-material]", root)?.addEventListener("click", () => {
+    const firstRow = qs("[data-batch-material-row]", batchMaterialList);
+    if (!firstRow || !batchMaterialList) return;
+    const row = firstRow.cloneNode(true);
+    row.querySelectorAll("input, select").forEach((control) => { control.value = ""; });
+    batchMaterialList.appendChild(row);
+    bindBatchMaterialRemoveButtons();
+  });
+  bindBatchMaterialRemoveButtons();
+
+  productionUsageForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(productionUsageForm);
+    const productIds = formData.getAll("batchMaterialId").map(String);
+    const quantities = formData.getAll("batchMaterialQuantity").map(Number);
+    const materials = productIds.map((productId, index) => ({ productId, quantity: quantities[index] }));
+    const state = store.getState();
+    const message = qs("#production-usage-message", root);
+    const duplicate = productIds.find((productId, index) => productId && productIds.indexOf(productId) !== index);
+    const invalid = materials.find((material) => !material.productId || !Number.isFinite(material.quantity) || material.quantity <= 0);
+    const insufficient = materials.find((material) => Number(state.products.find((product) => product.id === material.productId)?.stock || 0) < material.quantity);
+
+    if (message) message.textContent = "";
+    if (!formData.get("batchDate") || !String(formData.get("batchReference") || "").trim() || invalid) {
+      if (message) message.textContent = "Enter the batch date, batch number, material, and quantity used.";
+      return;
+    }
+    if (duplicate) {
+      if (message) message.textContent = "Choose each raw material only once per batch.";
+      return;
+    }
+    if (insufficient) {
+      const product = state.products.find((item) => item.id === insufficient.productId);
+      if (message) message.textContent = `Only ${formatNumber(product?.stock || 0)} ${productUnit(product || {})} of ${product?.name || "this material"} is available.`;
+      return;
+    }
+
+    store.dispatch({
+      type: "RECORD_PRODUCTION_USAGE",
+      batchDate: formData.get("batchDate"),
+      batchReference: formData.get("batchReference"),
+      materials,
+      message: "Production usage saved"
+    });
+  });
 
   const assignmentRepFilter = qs("[data-assignment-rep-filter]", root);
   const assignmentDateFrom = qs("[data-assignment-date-from]", root);

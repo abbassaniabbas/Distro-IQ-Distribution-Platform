@@ -1430,6 +1430,8 @@ export function bindFinance({ root, store }) {
     ));
     let emailSent = false;
     let emailFailure = "";
+    let smsSent = false;
+    let smsFailure = "";
 
     if (submitButton) submitButton.disabled = true;
 
@@ -1444,6 +1446,8 @@ export function bindFinance({ root, store }) {
       });
       emailSent = saveResult?.emailSent === true;
       emailFailure = saveResult?.emailError || "";
+      smsSent = saveResult?.smsSent === true;
+      smsFailure = saveResult?.smsError || "";
     } catch (error) {
       emailFailure = error.message;
     }
@@ -1455,9 +1459,9 @@ export function bindFinance({ root, store }) {
       limit,
       paymentPeriodDays,
       reason: formData.get("reason"),
-      message: emailSent
-        ? "Representative credit limit saved and emailed"
-        : `Representative credit limit saved. ${emailFailure || "Email could not be sent."}`
+      message: emailSent && smsSent
+        ? "Representative credit limit saved and sent by email and SMS"
+        : `Representative credit limit saved. ${[emailSent ? "" : emailFailure || "Email could not be sent.", smsSent ? "" : smsFailure || "SMS could not be sent."].filter(Boolean).join(" ")}`
     });
   });
 

@@ -32,6 +32,7 @@ function collectAccountForm(form) {
   return {
     name: formData.get("name") || "",
     email: formData.get("email") || "",
+    phoneNumber: formData.get("phoneNumber") || "",
     role: formData.get("role") || ""
   };
 }
@@ -189,6 +190,10 @@ function renderAccountCard(account) {
           <span class="muted">Role</span>
           <strong>${escapeHtml(roleLabel(account.role))}</strong>
         </div>
+        <div class="split">
+          <span class="muted">Phone</span>
+          <strong>${escapeHtml(account.phoneNumber || "Not set")}</strong>
+        </div>
       </div>
 
       <footer>
@@ -246,6 +251,11 @@ export function renderTeam({ state }) {
               <span>Email</span>
               <input name="email" type="email" autocomplete="email" placeholder="ada@example.com">
               ${renderFieldError("email")}
+            </label>
+            <label class="field">
+              <span>Phone number</span>
+              <input name="phoneNumber" type="tel" inputmode="tel" autocomplete="tel" placeholder="0800 000 0000" required>
+              ${renderFieldError("phoneNumber")}
             </label>
             <label class="field span-full">
               <span>Role assignment</span>

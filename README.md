@@ -45,6 +45,8 @@ supabase functions deploy invite-user
 ```bash
 supabase secrets set RESEND_API_KEY=your_resend_api_key
 supabase secrets set DISTROIQ_FROM_EMAIL="DistroIQ <credit@yourdomain.com>"
+supabase secrets set TERMII_API_KEY=your_termii_api_key
+supabase secrets set DISTROIQ_SMS_SENDER=DistroIQ
 supabase functions deploy credit-limit-notification
 ```
 

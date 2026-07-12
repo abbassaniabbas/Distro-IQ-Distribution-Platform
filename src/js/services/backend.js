@@ -26,6 +26,7 @@ function mapAccount(row) {
     userId: row.user_id,
     name: row.name,
     email: row.email,
+    phoneNumber: row.phone_number || "",
     role: row.role,
     status: row.status,
     temporaryPassword: "",
@@ -360,7 +361,7 @@ export async function loadWorkspace() {
   ] = await Promise.all([
     supabase
       .from("memberships")
-      .select("id, client_id, user_id, email, name, role, status, password_reset_required, created_at")
+      .select("id, client_id, user_id, email, phone_number, name, role, status, password_reset_required, created_at")
       .eq("client_id", client.id)
       .order("created_at", { ascending: false }),
     supabase
@@ -668,7 +669,7 @@ export async function updateMyMembershipProfile({ clientId, userId, name }) {
   return loadWorkspace();
 }
 
-export async function inviteAccount({ client, name, email, role }) {
+export async function inviteAccount({ client, name, email, phoneNumber, role }) {
   throwIfBackendMissing();
 
   const supabase = await getSupabaseClient();
@@ -678,6 +679,7 @@ export async function inviteAccount({ client, name, email, role }) {
       clientId: client.id,
       name: name.trim(),
       email: normalizedEmail,
+      phoneNumber: String(phoneNumber || "").trim(),
       role
     }
   });

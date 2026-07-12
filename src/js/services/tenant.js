@@ -68,7 +68,7 @@ export function generateTemporaryPassword() {
   return `${word}-${number}-${suffix}`;
 }
 
-export function createAccountInvite({ client, name, email, role }) {
+export function createAccountInvite({ client, name, email, phoneNumber, role }) {
   const accountId = createId("USR");
   const temporaryPassword = generateTemporaryPassword();
   const normalizedEmail = email.trim().toLowerCase();
@@ -79,6 +79,7 @@ export function createAccountInvite({ client, name, email, role }) {
     clientId: client.id,
     name: displayName,
     email: normalizedEmail,
+    phoneNumber: String(phoneNumber || "").trim(),
     role,
     status: "invited",
     temporaryPassword,
@@ -146,6 +147,10 @@ export function validateAccountForm(values, existingAccounts) {
 
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     errors.email = "A valid email is required.";
+  }
+
+  if (!values.phoneNumber?.trim()) {
+    errors.phoneNumber = "Phone number is required.";
   }
 
   if (existingAccounts.some((account) => account.email === email)) {

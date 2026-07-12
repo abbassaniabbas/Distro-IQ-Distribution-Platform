@@ -210,6 +210,7 @@ function ensureStateShape(value) {
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
+    productionBatches: Array.isArray(state.productionBatches) ? state.productionBatches : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
     orders: normalizeOrders(mergeSeedRecords(state.orders, seedData.orders)),
     routes: mergeSeedRecords(state.routes, seedData.routes),
@@ -789,6 +790,7 @@ function reducer(currentState, action) {
         activityLogs: [],
         salesReports: [],
         creditLimitHistory: [],
+        productionBatches: [],
         retailers: [],
         orders: [],
         routes: [],
@@ -1015,6 +1017,63 @@ function reducer(currentState, action) {
           summary: `${order.id} sales order marked delayed`
         });
       }
+      return state;
+    }
+
+    case "RECORD_PRODUCTION_USAGE": {
+      const materials = Array.isArray(action.materials) ? action.materials : [];
+      const productRows = materials.map((material) => ({
+        product: state.products.find((item) => item.id === material.productId),
+        quantity: Number(material.quantity || 0)
+      }));
+      const valid = action.batchDate && String(action.batchReference || "").trim() && productRows.length && productRows.every(({ product, quantity }) => (
+        product && stockCategoryIdForProduct(product) === "raw_materials" && quantity > 0 && quantity <= Number(product.stock || 0)
+      ));
+
+      if (!valid) return state;
+
+      const batchId = createId("BATCH");
+      const recordedBy = currentActorName(state);
+      const recordedMaterials = productRows.map(({ product, quantity }) => {
+        product.stock = Number(product.stock || 0) - quantity;
+        product.updatedAt = todayISO();
+        return { productId: product.id, productName: product.name, quantity };
+      });
+      state.productionBatches = [{
+        id: batchId,
+        clientId: state.client?.id || "",
+        reference: String(action.batchReference).trim(),
+        batchDate: String(action.batchDate),
+        materials: recordedMaterials,
+        recordedBy,
+        createdAt: new Date().toISOString()
+      }, ...(state.productionBatches || [])];
+      state.stockTransactions = [
+        ...recordedMaterials.map((material) => ({
+          id: createId("TXN"),
+          type: "production usage",
+          productId: material.productId,
+          productName: material.productName,
+          quantity: material.quantity,
+          amount: 0,
+          partyType: "Production batch",
+          partyName: String(action.batchReference).trim(),
+          date: String(action.batchDate),
+          createdAt: new Date().toISOString(),
+          recordedBy,
+          movementDirection: "out",
+          batchId,
+          batchReference: String(action.batchReference).trim()
+        })),
+        ...(state.stockTransactions || [])
+      ];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "used",
+        recordType: "production_batch",
+        recordLabel: String(action.batchReference).trim(),
+        summary: `${recordedBy} recorded ${recordedMaterials.length} raw material${recordedMaterials.length === 1 ? "" : "s"} used for ${String(action.batchReference).trim()}`
+      });
       return state;
     }
 

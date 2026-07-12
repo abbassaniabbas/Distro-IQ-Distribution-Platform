@@ -102,7 +102,7 @@ Deno.serve(async (req) => {
 
   const { data: representative, error: representativeError } = await adminClient
     .from("memberships")
-    .select("id, name, email, role, status")
+    .select("id, name, email, phone_number, role, status")
     .eq("id", payload.representativeMembershipId)
     .eq("client_id", payload.clientId)
     .maybeSingle();
@@ -167,6 +167,36 @@ Deno.serve(async (req) => {
   const newAmount = formatAmount(currencySymbol, newLimit);
   const changedAt = new Date().toLocaleString("en-NG", { timeZone: client?.timezone || "Africa/Lagos" });
   const subject = `${companyName}: your DistroIQ credit limit has changed`;
+  const smsApiKey = Deno.env.get("TERMII_API_KEY");
+  const smsSender = Deno.env.get("DISTROIQ_SMS_SENDER") || "DistroIQ";
+  const smsText = `${companyName}: your DistroIQ credit limit changed from ${oldAmount} to ${newAmount}. Settle within ${paymentPeriodDays} day${paymentPeriodDays === 1 ? "" : "s"}. Changed by ${callerMembership.name}.`;
+  let smsSent = false;
+  let smsError = "";
+
+  if (!representative.phone_number) {
+    smsError = "The representative does not have a phone number.";
+  } else if (!smsApiKey) {
+    smsError = "The credit-limit SMS service is not ready yet.";
+  } else {
+    try {
+      const smsResponse = await fetch("https://v3.api.termii.com/api/sms/send", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          api_key: smsApiKey,
+          to: representative.phone_number,
+          from: smsSender,
+          sms: smsText,
+          type: "plain",
+          channel: "generic"
+        })
+      });
+      smsSent = smsResponse.ok;
+      if (!smsResponse.ok) smsError = "The SMS provider could not deliver the notification.";
+    } catch {
+      smsError = "The SMS service could not be reached.";
+    }
+  }
 
   if (!resendApiKey || !fromEmail) {
     await callerClient.rpc("record_activity", {
@@ -181,7 +211,9 @@ Deno.serve(async (req) => {
       ok: true,
       saved: true,
       emailSent: false,
-      emailError: "The credit-limit email service is not ready yet."
+      emailError: "The credit-limit email service is not ready yet.",
+      smsSent,
+      smsError
     });
   }
 
@@ -241,7 +273,9 @@ Deno.serve(async (req) => {
       ok: true,
       saved: true,
       emailSent: false,
-      emailError: "The email service could not be reached."
+      emailError: "The email service could not be reached.",
+      smsSent,
+      smsError
     });
   }
 
@@ -259,7 +293,9 @@ Deno.serve(async (req) => {
       ok: true,
       saved: true,
       emailSent: false,
-      emailError: emailResult?.message || "The email provider could not deliver the notification."
+      emailError: emailResult?.message || "The email provider could not deliver the notification.",
+      smsSent,
+      smsError
     });
   }
 
@@ -271,5 +307,5 @@ Deno.serve(async (req) => {
     p_summary: `Credit limit updated and emailed to ${representative.name}`
   });
 
-  return jsonResponse({ ok: true, saved: true, emailSent: true, emailId: emailResult?.id || "" });
+  return jsonResponse({ ok: true, saved: true, emailSent: true, emailId: emailResult?.id || "", smsSent, smsError });
 });

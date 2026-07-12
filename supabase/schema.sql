@@ -43,6 +43,9 @@ create table if not exists public.memberships (
   unique (client_id, user_id)
 );
 
+alter table public.memberships
+add column if not exists phone_number text not null default '';
+
 create table if not exists public.invites (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -147,6 +150,26 @@ create table if not exists public.stock_assignments (
   quantity_returned numeric(14, 2) not null default 0 check (quantity_returned >= 0),
   status text not null default 'open' check (status in ('open', 'reconciled')),
   created_at timestamptz not null default now()
+);
+
+create table if not exists public.production_batches (
+  id uuid primary key default gen_random_uuid(),
+  client_id uuid not null references public.clients(id) on delete cascade,
+  batch_reference text not null,
+  batch_date date not null,
+  recorded_by_user_id uuid references auth.users(id) on delete set null,
+  recorded_by_name text not null default '',
+  created_at timestamptz not null default now(),
+  unique (client_id, batch_reference)
+);
+
+create table if not exists public.production_batch_materials (
+  id uuid primary key default gen_random_uuid(),
+  batch_id uuid not null references public.production_batches(id) on delete cascade,
+  product_id uuid not null references public.stock_products(id) on delete restrict,
+  quantity_used numeric(14, 2) not null check (quantity_used > 0),
+  created_at timestamptz not null default now(),
+  unique (batch_id, product_id)
 );
 
 create table if not exists public.stock_transactions (
@@ -367,6 +390,8 @@ alter table public.workspace_messages enable row level security;
 alter table public.stock_categories enable row level security;
 alter table public.stock_products enable row level security;
 alter table public.stock_assignments enable row level security;
+alter table public.production_batches enable row level security;
+alter table public.production_batch_materials enable row level security;
 alter table public.stock_transactions enable row level security;
 alter table public.credit_limits enable row level security;
 alter table public.credit_limit_history enable row level security;
@@ -965,6 +990,7 @@ begin
           'userId', memberships.user_id,
           'name', memberships.name,
           'email', memberships.email,
+          'phoneNumber', memberships.phone_number,
           'role', memberships.role,
           'status', memberships.status,
           'passwordResetRequired', memberships.password_reset_required,
@@ -1214,6 +1240,8 @@ grant select, update, delete on public.clients to authenticated;
 grant select, insert, update on public.stock_categories to authenticated;
 grant select, insert, update on public.stock_products to authenticated;
 grant select, insert, update on public.stock_assignments to authenticated;
+grant select, insert on public.production_batches to authenticated;
+grant select, insert on public.production_batch_materials to authenticated;
 grant select, insert, update on public.stock_transactions to authenticated;
 grant select, insert, update on public.credit_limits to authenticated;
 revoke insert, update, delete on public.credit_limit_history from authenticated;
@@ -1426,6 +1454,30 @@ for all
 to authenticated
 using (public.has_client_role(client_id, array['manager', 'store_keeper']))
 with check (public.has_client_role(client_id, array['manager', 'store_keeper']));
+
+drop policy if exists "production_batches_by_stock_roles" on public.production_batches;
+create policy "production_batches_by_stock_roles"
+on public.production_batches
+for all
+to authenticated
+using (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']))
+with check (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']));
+
+drop policy if exists "production_batch_materials_by_stock_roles" on public.production_batch_materials;
+create policy "production_batch_materials_by_stock_roles"
+on public.production_batch_materials
+for all
+to authenticated
+using (exists (
+  select 1 from public.production_batches batch
+  where batch.id = batch_id
+    and public.has_client_role(batch.client_id, array['ceo', 'manager', 'store_keeper'])
+))
+with check (exists (
+  select 1 from public.production_batches batch
+  where batch.id = batch_id
+    and public.has_client_role(batch.client_id, array['ceo', 'manager', 'store_keeper'])
+));
 
 drop policy if exists "stock_transactions_select_by_client" on public.stock_transactions;
 create policy "stock_transactions_select_by_client"
