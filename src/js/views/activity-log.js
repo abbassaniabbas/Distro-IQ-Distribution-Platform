@@ -24,7 +24,16 @@ function activityRouteParams() {
   return new URLSearchParams(query);
 }
 
-function managerActivityTabs(state) {
+function activityTabsForRole(state, role) {
+  if (role === "ceo") {
+    return [
+      { id: "activity", label: "Activity log" },
+      ...(isModuleEnabled(state, "field_reports")
+        ? [{ id: "submitted-reports", label: "Submitted sales reports" }]
+        : [])
+    ];
+  }
+
   return [
     { id: "activity", label: "Activity log" },
     { id: "recent-orders", label: "Recent sales orders" },
@@ -35,16 +44,16 @@ function managerActivityTabs(state) {
   ];
 }
 
-function activeManagerActivityTab(state) {
-  const tabs = managerActivityTabs(state);
+function activeActivityTab(state, role) {
+  const tabs = activityTabsForRole(state, role);
   const requested = activityRouteParams().get("tab") || DEFAULT_ACTIVITY_TAB;
   return tabs.some((tab) => tab.id === requested) ? requested : DEFAULT_ACTIVITY_TAB;
 }
 
-function renderManagerActivitySubnav(state, activeTab) {
+function renderActivitySubnav(state, role, activeTab) {
   return `
     <nav class="subtab-nav stock-subtabs activity-log-subtabs" aria-label="Activity log pages">
-      ${managerActivityTabs(state).map((tab) => `
+      ${activityTabsForRole(state, role).map((tab) => `
         <a
           class="subtab-link ${tab.id === activeTab ? "is-active" : ""}"
           href="#/activity-log?tab=${escapeHtml(tab.id)}"
@@ -55,10 +64,10 @@ function renderManagerActivitySubnav(state, activeTab) {
   `;
 }
 
-function renderManagerActivitySection(state, activeTab) {
+function renderActivitySection(state, role, activeTab) {
   if (activeTab === "recent-orders") return renderManagerRecentSalesOrders(state);
   if (activeTab === "sales-activity") return renderManagerSalesOperations(state);
-  if (activeTab === "submitted-reports") return renderManagerReportReview(state);
+  if (activeTab === "submitted-reports") return renderManagerReportReview(state, { readOnly: role === "ceo" });
   return "";
 }
 
@@ -349,15 +358,16 @@ export function renderActivityLog({ state }) {
     return renderSalesRepRecentActivity(state);
   }
 
-  const managerActiveTab = role === "manager" ? activeManagerActivityTab(state) : DEFAULT_ACTIVITY_TAB;
-  const managerSubnav = role === "manager" ? renderManagerActivitySubnav(state, managerActiveTab) : "";
+  const hasActivitySubnav = role === "manager" || role === "ceo";
+  const activeTab = hasActivitySubnav ? activeActivityTab(state, role) : DEFAULT_ACTIVITY_TAB;
+  const activitySubnav = hasActivitySubnav ? renderActivitySubnav(state, role, activeTab) : "";
 
-  if (role === "manager" && managerActiveTab !== DEFAULT_ACTIVITY_TAB) {
+  if (hasActivitySubnav && activeTab !== DEFAULT_ACTIVITY_TAB) {
     return `
       <section class="view activity-log-view">
-        ${managerSubnav}
+        ${activitySubnav}
         <div data-global-search-enabled>
-          ${renderManagerActivitySection(state, managerActiveTab)}
+          ${renderActivitySection(state, role, activeTab)}
         </div>
       </section>
     `;
@@ -375,7 +385,7 @@ export function renderActivityLog({ state }) {
 
   return `
     <section class="view activity-log-view">
-      ${managerSubnav}
+      ${activitySubnav}
       <section class="panel">
         <div class="toolbar">
           ${panelHeader(title, subtitle)}

@@ -599,7 +599,7 @@ function renderCeoStockRows(productRows) {
           <td>${formatNumber(row.product.stock)}</td>
           <td>${formatNumber(row.repUnits)}</td>
           <td>${formatNumber(row.supermarketUnits)}</td>
-          <td>${statusPill(health.status)}</td>
+          <td>${health.status === "ready" ? "" : statusPill(health.status)}</td>
         </tr>
       `;
     })
@@ -986,7 +986,6 @@ function renderCeoDashboard(state) {
           ${renderCeoCustomerRatings(supermarketRows)}
         </section>
       </div>
-      ${isModuleEnabled(state, "field_reports") ? renderManagerReportReview(state, { readOnly: true }) : ""}
     </section>
   `;
 }

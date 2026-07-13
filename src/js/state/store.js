@@ -234,6 +234,8 @@ function ensureStateShape(value) {
     featureModules: Array.isArray(state.featureModules) ? state.featureModules : [],
     messages: Array.isArray(state.messages) ? state.messages : [],
     notificationReadAt: String(state.notificationReadAt || ""),
+    notificationClearedAt: String(state.notificationClearedAt || ""),
+    dismissedNotificationIds: Array.isArray(state.dismissedNotificationIds) ? state.dismissedNotificationIds.map(String) : [],
     activityLogs: Array.isArray(state.activityLogs) ? state.activityLogs : [],
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
@@ -884,6 +886,8 @@ function reducer(currentState, action) {
         invites: [],
         messages: [],
         notificationReadAt: "",
+        notificationClearedAt: "",
+        dismissedNotificationIds: [],
         activityLogs: [],
         salesReports: [],
         creditLimitHistory: [],
@@ -952,6 +956,22 @@ function reducer(currentState, action) {
         accounts: [...state.accounts, account],
         invites: [...state.invites, invite]
       };
+    }
+
+    case "SET_ACCOUNT_STATUS": {
+      if (!state.client?.id || !["ceo", "manager"].includes(currentUserRole(state))) return state;
+      const account = state.accounts.find((item) => item.id === action.accountId && item.clientId === state.client.id);
+      if (!account || account.userId === state.user?.id) return state;
+
+      account.status = action.active ? "active" : "disabled";
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: action.active ? "reactivated" : "deactivated",
+        recordType: "account",
+        recordLabel: account.email,
+        summary: `${action.active ? "Activated" : "Deactivated"} ${account.name}`
+      });
+      return state;
     }
 
     case "COMPLETE_PASSWORD_RESET": {
@@ -1064,6 +1084,23 @@ function reducer(currentState, action) {
       if (!state.client?.id) return state;
 
       state.notificationReadAt = new Date().toISOString();
+      return state;
+    }
+
+    case "DISMISS_NOTIFICATIONS": {
+      if (!state.client?.id) return state;
+
+      state.dismissedNotificationIds = [...new Set([
+        ...(state.dismissedNotificationIds || []).map(String),
+        ...(action.notificationIds || []).map(String)
+      ])].slice(-500);
+      return state;
+    }
+
+    case "DISMISS_ALL_NOTIFICATIONS": {
+      if (!state.client?.id) return state;
+      state.notificationClearedAt = new Date().toISOString();
+      state.dismissedNotificationIds = [];
       return state;
     }
 

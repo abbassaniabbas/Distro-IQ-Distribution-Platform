@@ -1950,10 +1950,54 @@ begin
 end;
 $$;
 
+create or replace function public.set_membership_active_status(
+  p_client_id uuid,
+  p_membership_id uuid,
+  p_active boolean
+)
+returns public.memberships
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_membership public.memberships;
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.has_client_role(p_client_id, array['ceo', 'manager']) then
+    raise exception 'CEO or Manager access required';
+  end if;
+
+  select * into v_membership
+  from public.memberships
+  where id = p_membership_id
+    and client_id = p_client_id;
+
+  if v_membership.id is null then
+    raise exception 'Team member not found';
+  end if;
+
+  if v_membership.user_id = auth.uid() then
+    raise exception 'You cannot deactivate your own account';
+  end if;
+
+  update public.memberships
+  set status = case when p_active then 'active' else 'disabled' end
+  where id = p_membership_id
+  returning * into v_membership;
+
+  return v_membership;
+end;
+$$;
+
 grant execute on function public.create_client_workspace(text, text, text, text, text, text) to authenticated;
 grant execute on function public.record_activity(uuid, text, text, text, text) to authenticated;
 grant execute on function public.activate_my_membership(uuid, text) to authenticated;
 grant execute on function public.update_my_membership_profile(uuid, text) to authenticated;
+grant execute on function public.set_membership_active_status(uuid, uuid, boolean) to authenticated;
 grant execute on function public.is_client_member(uuid) to authenticated;
 grant execute on function public.get_my_pending_workspace_identity(uuid) to authenticated;
 grant execute on function public.is_client_admin(uuid) to authenticated;
@@ -1969,6 +2013,7 @@ grant execute on function public.get_platform_console() to authenticated;
 
 revoke all on function public.activate_my_membership(uuid, text) from public, anon;
 revoke all on function public.update_my_membership_profile(uuid, text) from public, anon;
+revoke all on function public.set_membership_active_status(uuid, uuid, boolean) from public, anon;
 revoke all on function public.has_pending_membership_setup(uuid) from public, anon, authenticated;
 revoke all on function public.get_my_pending_workspace_identity(uuid) from public, anon;
 revoke all on function public.stamp_membership_password_reset_requested_at() from public, anon, authenticated;

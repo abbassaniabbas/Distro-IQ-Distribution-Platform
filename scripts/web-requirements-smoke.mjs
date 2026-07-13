@@ -5,6 +5,7 @@ import { buildInvoiceDocument, buildInvoicePreviewContent, getInvoiceRecords } f
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
+import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { renderAuth } from "../src/js/views/auth.js";
 import { renderActivityLog } from "../src/js/views/activity-log.js";
 import { renderDashboard } from "../src/js/views/dashboard.js";
@@ -26,11 +27,11 @@ globalThis.localStorage = {
 
 const client = { id: "client-test", companyName: "Test Factory", currencySymbol: "₦" };
 const accounts = [
-  { id: "membership-rep", userId: "user-rep", name: "Amina Rep", email: "amina@example.com", role: "sales_rep", status: "active" },
-  { id: "membership-manager", userId: "user-manager", name: "Musa Manager", email: "musa@example.com", role: "manager", status: "active" },
-  { id: "membership-ceo", userId: "user-ceo", name: "Chioma CEO", email: "chioma@example.com", role: "ceo", status: "active" },
-  { id: "membership-accountant", userId: "user-accountant", name: "Bola Accountant", email: "bola@example.com", role: "accountant", status: "active" },
-  { id: "membership-store", userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" }
+  { id: "membership-rep", clientId: client.id, userId: "user-rep", name: "Amina Rep", email: "amina@example.com", role: "sales_rep", status: "active" },
+  { id: "membership-manager", clientId: client.id, userId: "user-manager", name: "Musa Manager", email: "musa@example.com", role: "manager", status: "active" },
+  { id: "membership-ceo", clientId: client.id, userId: "user-ceo", name: "Chioma CEO", email: "chioma@example.com", role: "ceo", status: "active" },
+  { id: "membership-accountant", clientId: client.id, userId: "user-accountant", name: "Bola Accountant", email: "bola@example.com", role: "accountant", status: "active" },
+  { id: "membership-store", clientId: client.id, userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" }
 ];
 const store = createStore();
 
@@ -43,6 +44,18 @@ assert.equal(
 const loginHtml = renderAuth({ routeId: "login" });
 assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 5, "login must show five role cards");
 assert.doesNotMatch(loginHtml, /<select name="role"/, "login role selection must not use a dropdown");
+const notificationFixture = {
+  client,
+  user: { id: "user-manager", email: "musa@example.com" },
+  accounts,
+  notificationReadAt: "",
+  notificationClearedAt: "",
+  dismissedNotificationIds: [],
+  activityLogs: [{ id: "notice-1", clientId: client.id, actorUserId: "user-rep", actorName: "Amina Rep", actorEmail: "amina@example.com", actionType: "created", summary: "New sale", createdAt: "2026-07-13T09:00:00.000Z" }]
+};
+assert.equal(getTopbarNotificationItems(notificationFixture).length, 1);
+assert.equal(getTopbarNotificationItems({ ...notificationFixture, dismissedNotificationIds: ["activity-notice-1"] }).length, 0);
+assert.equal(getTopbarNotificationItems({ ...notificationFixture, notificationClearedAt: "2026-07-13T10:00:00.000Z" }).length, 0);
 
 function authenticate(userId) {
   const account = accounts.find((item) => item.userId === userId);
@@ -68,6 +81,13 @@ assert.doesNotMatch(managerSettings, /name="creditLimitSmsEnabled" type="checkbo
 const managerTeam = renderTeam({ state: store.getState() });
 assert.doesNotMatch(managerTeam, /<option value="ceo">/);
 assert.doesNotMatch(managerTeam, /<option value="manager">/);
+assert.match(managerTeam, /team-member-list/);
+assert.match(managerTeam, /data-team-account-id="membership-rep"/);
+assert.match(managerTeam, /team-account-modal/);
+store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId: "membership-rep", active: false });
+assert.equal(store.getState().accounts.find((account) => account.id === "membership-rep").status, "disabled");
+store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId: "membership-rep", active: true });
+assert.equal(store.getState().accounts.find((account) => account.id === "membership-rep").status, "active");
 store.dispatch({
   type: "UPSERT_PRODUCT",
   productId: "SKU-CHIPS",
@@ -137,13 +157,15 @@ assert.equal(store.getState().productionBatches[0].materials[0].productId, "RAW-
 assert.equal(store.getState().productionBatches[0].finishedProductId, "SKU-CHIPS");
 assert.equal(store.getState().stockTransactions[0].type, "production usage");
 assert.equal(store.getState().stockTransactions[1].type, "production output");
-globalThis.window.location.hash = "#/inventory?tab=production-usage";
+globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const productionUsage = renderInventory({ state: store.getState() });
-assert.match(productionUsage, /Production usage/);
-assert.match(productionUsage, /BATCH-1001/);
-assert.match(productionUsage, /Customer orders/);
-assert.match(productionUsage, /Plantain Chips/);
+assert.doesNotMatch(productionUsage, />Production usage</);
+assert.doesNotMatch(productionUsage, /Production purpose/);
+assert.match(productionUsage, /stock-health-table/);
+assert.match(productionUsage, /stock-health-row/);
+assert.match(productionUsage, /production-stock-update/);
 assert.match(productionUsage, /Sell raw material/);
+assert.match(productionUsage, /js-sell-raw-material/);
 
 store.dispatch({
   type: "RECORD_RAW_MATERIAL_SALE",
@@ -418,10 +440,14 @@ assert.doesNotMatch(stockJourney, /Representative custody|Assignment \/ dispatch
 
 authenticate("user-ceo");
 const ceoDashboard = renderDashboard({ state: store.getState() });
-assert.match(ceoDashboard, /Submitted sales reports/, "CEO must see submitted representative reports");
-assert.match(ceoDashboard, /js-view-report-details/, "CEO must be able to open the detailed report view");
-assert.doesNotMatch(ceoDashboard, /js-review-report/, "CEO report access must remain read-only");
+assert.doesNotMatch(ceoDashboard, /Submitted sales reports/, "submitted reports must be moved out of the CEO dashboard");
 assert.match(ceoDashboard, /Chioma CEO/);
+globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
+const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
+assert.match(ceoSubmittedReports, /Activity log pages/);
+assert.match(ceoSubmittedReports, /Submitted sales reports/);
+assert.match(ceoSubmittedReports, /js-view-report-details/, "CEO must be able to open the detailed report view");
+assert.doesNotMatch(ceoSubmittedReports, /js-review-report/, "CEO report access must remain read-only");
 
 authenticate("user-store");
 assert.match(renderDashboard({ state: store.getState() }), /Tola Store/);

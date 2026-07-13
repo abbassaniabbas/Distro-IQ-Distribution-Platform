@@ -736,6 +736,31 @@ export async function inviteAccount({ client, name, email, phoneNumber, role }) 
   };
 }
 
+export async function setMembershipActiveStatus({ clientId, membershipId, active }) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("set_membership_active_status", {
+    p_client_id: clientId,
+    p_membership_id: membershipId,
+    p_active: Boolean(active)
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  await recordWorkspaceActivity({
+    clientId,
+    actionType: active ? "reactivated" : "deactivated",
+    recordType: "account",
+    recordLabel: membershipId,
+    summary: active ? "Activated team account" : "Deactivated team account"
+  });
+
+  return loadWorkspace();
+}
+
 export async function saveRepresentativeCreditLimit(payload) {
   throwIfBackendMissing();
 

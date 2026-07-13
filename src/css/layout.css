@@ -355,10 +355,31 @@
 
 .topbar-notification-row {
   display: grid;
-  grid-template-columns: 44px minmax(0, 1fr);
+  grid-template-columns: 44px minmax(0, 1fr) 26px;
+  align-items: start;
   gap: 12px;
   padding: 12px 10px;
   border-radius: var(--radius-sm);
+}
+
+.topbar-dismiss-notification {
+  display: inline-grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--soft);
+  font-size: 0.68rem;
+  font-weight: 900;
+}
+
+.topbar-dismiss-notification:hover,
+.topbar-dismiss-notification:focus-visible {
+  background: rgba(11, 31, 58, 0.08);
+  color: var(--navy);
 }
 
 .topbar-notification-row:hover,

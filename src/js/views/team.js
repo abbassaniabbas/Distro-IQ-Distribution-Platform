@@ -3,7 +3,7 @@ import {
   getScopedAccounts,
   validateAccountForm
 } from "../services/tenant.js";
-import { inviteAccount } from "../services/backend.js";
+import { inviteAccount, setMembershipActiveStatus } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { formatDate } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js";
@@ -202,7 +202,11 @@ function showLoginDetailsModal({ client, invite }) {
   qs(".js-modal-copy-password", modal).focus();
 }
 
-function renderAccountCard(account) {
+function accountIsActive(account) {
+  return String(account.status || "").toLowerCase() === "active";
+}
+
+function renderAccountListItem(account) {
   const searchIndex = [
     account.name,
     account.email,
@@ -213,39 +217,55 @@ function renderAccountCard(account) {
     .toLowerCase();
 
   return `
-    <article class="account-card" data-search-index="${escapeHtml(searchIndex)}">
-      <header>
-        <div>
-          <span class="eyebrow">${escapeHtml(roleLabel(account.role))}</span>
-          <h3>${escapeHtml(account.name)}</h3>
-        </div>
-        ${statusPill(account.status)}
-      </header>
+    <button class="team-member-row" type="button" data-team-account-id="${escapeHtml(account.id)}" data-search-index="${escapeHtml(searchIndex)}">
+      <span class="team-member-avatar">${escapeHtml(String(account.name || "TM").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())}</span>
+      <span class="team-member-primary"><strong>${escapeHtml(account.name)}</strong><small>${escapeHtml(account.email)}</small></span>
+      <span class="team-member-role">${escapeHtml(roleLabel(account.role))}</span>
+      ${statusPill(accountIsActive(account) ? "active" : "inactive")}
+      <span class="team-member-open" aria-hidden="true">${icon("arrowRight")}</span>
+    </button>
+  `;
+}
 
-      <div class="account-meta">
-        <div class="split">
-          <span class="muted">Email</span>
-          <strong>${escapeHtml(account.email)}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Role</span>
-          <strong>${escapeHtml(roleLabel(account.role))}</strong>
-        </div>
-        <div class="split">
-          <span class="muted">Phone</span>
-          <strong>${escapeHtml(account.phoneNumber || "Not set")}</strong>
-        </div>
+function renderTeamAccountModal() {
+  return `
+    <div id="team-account-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal team-account-modal" role="dialog" aria-modal="true" aria-labelledby="team-account-modal-title">
+        <header class="stock-modal-header">
+          <div><span class="eyebrow">Team account</span><h2 id="team-account-modal-title">Staff details</h2></div>
+          <button class="icon-button js-close-team-account" type="button" title="Close staff details" aria-label="Close staff details">${icon("x")}</button>
+        </header>
+        <div id="team-account-modal-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function renderTeamAccountDetails(account, state) {
+  const isActive = accountIsActive(account);
+  const isCurrentAccount = account.userId === state.user?.id;
+
+  return `
+    <div class="team-account-summary">
+      <div class="team-account-identity">
+        <span class="team-member-avatar">${escapeHtml(String(account.name || "TM").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())}</span>
+        <div><h3>${escapeHtml(account.name)}</h3><p>${escapeHtml(roleLabel(account.role))}</p></div>
+        ${statusPill(isActive ? "active" : "inactive")}
       </div>
-
-      <footer>
-        <span class="muted">Created ${formatDate(account.createdAt?.slice(0, 10))}</span>
-        ${
-          account.passwordResetRequired
-            ? '<span class="status-pill pending">Password change required</span>'
-            : '<span class="status-pill active">Password set</span>'
-        }
-      </footer>
-    </article>
+      <div class="team-account-detail-grid">
+        <div><span>Email</span><strong>${escapeHtml(account.email || "Not set")}</strong></div>
+        <div><span>Phone number</span><strong>${escapeHtml(account.phoneNumber || "Not set")}</strong></div>
+        <div><span>Created</span><strong>${formatDate(account.createdAt?.slice(0, 10))}</strong></div>
+        <div><span>Password</span><strong>${account.passwordResetRequired ? "Change required" : "Password set"}</strong></div>
+      </div>
+      <div class="team-account-actions">
+        <button class="button ${isActive ? "" : "primary"} js-set-team-account-status" type="button" data-account-id="${escapeHtml(account.id)}" data-account-active="${isActive ? "false" : "true"}" ${isCurrentAccount ? "disabled" : ""}>
+          ${icon(isActive ? "x" : "check")}<span>${isActive ? "Make inactive" : "Make active"}</span>
+        </button>
+        ${isCurrentAccount ? '<span class="muted">You cannot deactivate the account you are currently using.</span>' : ""}
+        <span class="field-error" data-team-account-message aria-live="polite"></span>
+      </div>
+    </div>
   `;
 }
 
@@ -332,16 +352,72 @@ export function renderTeam({ state }) {
         ${panelHeader("Accounts", "Users created for this factory")}
         ${
           accounts.length
-            ? `<div class="account-grid">${accounts.map(renderAccountCard).join("")}</div>`
+            ? `<div class="team-member-list">${accounts.map(renderAccountListItem).join("")}</div>`
             : '<div class="empty-state">No accounts have been created for this factory yet</div>'
         }
       </section>
+      ${renderTeamAccountModal()}
     </section>
   `;
 }
 
-export function bindTeam({ root, store }) {
+export function bindTeam({ root, store, signal }) {
   const form = qs("#account-form", root);
+  const accountModal = qs("#team-account-modal", root);
+  const accountModalContent = qs("#team-account-modal-content", root);
+
+  function closeAccountModal() {
+    if (accountModal) accountModal.hidden = true;
+  }
+
+  function openAccountModal(accountId) {
+    const state = store.getState();
+    const account = getScopedAccounts(state).find((item) => item.id === accountId);
+    if (!account || !accountModal || !accountModalContent) return;
+    accountModalContent.innerHTML = renderTeamAccountDetails(account, state);
+    accountModal.hidden = false;
+    accountModal.focus();
+  }
+
+  root.addEventListener("click", async (event) => {
+    const accountRow = event.target.closest?.("[data-team-account-id]");
+    if (accountRow) {
+      openAccountModal(accountRow.dataset.teamAccountId);
+      return;
+    }
+    if (event.target === accountModal || event.target.closest?.(".js-close-team-account")) {
+      closeAccountModal();
+      return;
+    }
+    const statusButton = event.target.closest?.(".js-set-team-account-status");
+    if (!statusButton) return;
+    if (statusButton.disabled) return;
+
+    const state = store.getState();
+    const accountId = statusButton.dataset.accountId;
+    const active = statusButton.dataset.accountActive === "true";
+    const message = qs("[data-team-account-message]", accountModal);
+    statusButton.disabled = true;
+    if (message) message.textContent = "";
+
+    try {
+      if (isBackendConfigured()) {
+        const workspace = await setMembershipActiveStatus({ clientId: state.client.id, membershipId: accountId, active });
+        store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: active ? "Account activated" : "Account deactivated" });
+      } else {
+        store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId, active, message: active ? "Account activated" : "Account deactivated" });
+      }
+      closeAccountModal();
+    } catch (error) {
+      if (message) message.textContent = error.message;
+      statusButton.disabled = false;
+    }
+  }, { signal });
+
+  accountModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeAccountModal();
+  }, { signal });
+
   if (!form) return;
 
   form.addEventListener("submit", async (event) => {
@@ -391,5 +467,5 @@ export function bindTeam({ root, store }) {
     } finally {
       submitButton.disabled = false;
     }
-  });
+  }, { signal });
 }

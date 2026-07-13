@@ -5,6 +5,8 @@ const seedData = {
   featureModules: [],
   messages: [],
   notificationReadAt: "",
+  notificationClearedAt: "",
+  dismissedNotificationIds: [],
   activityLogs: [],
   salesReports: [],
   creditLimitHistory: [],

@@ -10,8 +10,6 @@ import {
   DEFAULT_BRAND_COLOR,
   LOGO_ACCEPT,
   LOGO_HELP_TEXT,
-  getBrandColor,
-  normalizeBrandColor,
   readLogoFile,
   validateLogoFile
 } from "../services/branding.js";
@@ -26,7 +24,6 @@ import { currentUserPermissions, currentUserRole, roleDescription, roleLabel } f
 import { isModuleEnabled } from "../services/features.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
-import { bindBrandColorInputs } from "../ui/brand-controls.js";
 import { renderDeliveryNotePreview } from "../ui/brand-preview.js";
 import { icon } from "../ui/icons.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
@@ -89,7 +86,7 @@ function collectCompanySettings(form, logoDataUrl) {
     companyName: formData.get("companyName") || "",
     timezone: formData.get("timezone") || "",
     currency: formData.get("currency") || "",
-    brandColor: normalizeBrandColor(formData.get("brandColor") || DEFAULT_BRAND_COLOR),
+    brandColor: DEFAULT_BRAND_COLOR,
     creditLimitEmailEnabled: formData.get("creditLimitEmailEnabled") === "on",
     creditLimitSmsEnabled: formData.get("creditLimitSmsEnabled") === "on",
     logoDataUrl
@@ -107,8 +104,6 @@ function readProfileForm(form) {
 function renderCompanySettings(state, account) {
   const client = state.client;
   const canEdit = canEditCompanySettings(state);
-  const brandColor = getBrandColor(client);
-
   return `
     <section class="panel">
       ${panelHeader("Factory settings", "Shared settings your team sees across the app")}
@@ -118,7 +113,7 @@ function renderCompanySettings(state, account) {
           <div class="client-id-box">
             <span class="eyebrow">Active factory</span>
             <strong>${escapeHtml(client.companyName)}</strong>
-            <span class="muted">Logo, brand colour, timezone, and currency apply for the whole team.</span>
+            <span class="muted">Logo, timezone, and currency apply for the whole team.</span>
           </div>
         </div>
 
@@ -142,15 +137,6 @@ function renderCompanySettings(state, account) {
             ${renderSelectOptions(CURRENCY_OPTIONS, client.currency)}
           </select>
           ${renderFieldError("currency")}
-        </label>
-
-        <label class="field span-full">
-          <span>Brand colour</span>
-          <div class="color-field">
-            <input class="color-swatch-input" name="brandColorPicker" type="color" value="${escapeHtml(brandColor)}" data-brand-color-picker ${canEdit ? "" : "disabled"}>
-            <input name="brandColor" value="${escapeHtml(brandColor)}" maxlength="7" placeholder="#0B1F3A" data-brand-color-input ${canEdit ? "" : "disabled"}>
-          </div>
-          ${renderFieldError("brandColor")}
         </label>
 
         <div class="field span-full file-field" id="settings-logo-upload-field">
@@ -199,7 +185,7 @@ function renderCompanySettings(state, account) {
       ${isModuleEnabled(state, "delivery_notes") ? `
         <div class="saved-preview-block">
           ${panelHeader("Saved delivery note preview", "Branding applied to a sample document")}
-          ${renderDeliveryNotePreview(client)}
+          ${renderDeliveryNotePreview({ ...client, brandColor: DEFAULT_BRAND_COLOR })}
         </div>
       ` : ""}
     </section>
@@ -344,8 +330,6 @@ function bindCompanyLogoUpload({ root, form, state }) {
   const logoFileName = qs("#settings-logo-file-name", form);
   const clearLogoButton = qs("#settings-clear-logo-file", form);
   let logoDataUrl = state.client?.logoDataUrl || "";
-
-  bindBrandColorInputs(form);
 
   function setLogoUploadState({ fileName = "", error = "" } = {}) {
     logoUploadField.classList.toggle("has-file", Boolean(fileName || logoDataUrl));

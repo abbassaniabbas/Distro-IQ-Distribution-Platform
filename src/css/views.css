@@ -1283,9 +1283,178 @@
   height: 36px;
 }
 
-.raw-material-sale-panel {
-  border-color: rgba(25, 185, 133, 0.28);
-  background: linear-gradient(180deg, rgba(25, 185, 133, 0.04), #ffffff 38%);
+.production-stock-update {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(25, 185, 133, 0.28);
+  border-radius: var(--radius);
+  background: linear-gradient(145deg, rgba(25, 185, 133, 0.08), #ffffff 52%);
+}
+
+.production-stock-update[hidden] {
+  display: none;
+}
+
+.production-stock-update-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.production-stock-update-heading > div {
+  display: grid;
+  gap: 4px;
+}
+
+.production-stock-update-heading p,
+.stock-modal-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.production-stock-update-heading > svg {
+  width: 24px;
+  height: 24px;
+  color: var(--green);
+}
+
+.production-stock-update-fields {
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
+}
+
+.raw-material-sale-modal {
+  width: min(100%, 780px);
+}
+
+.stock-health-list {
+  overflow: visible;
+}
+
+.stock-health-table {
+  min-width: 940px;
+}
+
+.stock-health-table th:last-child,
+.stock-health-table td:last-child {
+  text-align: right;
+}
+
+.stock-health-row.is-inactive {
+  opacity: 0.62;
+}
+
+.stock-health-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-width: 190px;
+}
+
+.stock-health-item .product-media {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+}
+
+.stock-health-item > div:last-child,
+.stock-health-quantity,
+.stock-health-prices {
+  display: grid;
+  gap: 3px;
+}
+
+.stock-health-item span,
+.stock-health-quantity span,
+.stock-health-prices span,
+.stock-health-progress span {
+  color: var(--muted);
+  font-size: 0.74rem;
+}
+
+.stock-health-progress {
+  display: grid;
+  min-width: 150px;
+  gap: 7px;
+}
+
+.stock-health-progress > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.stock-health-progress .progress-track {
+  min-width: 140px;
+}
+
+.stock-list-actions {
+  display: inline-flex;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 6px;
+}
+
+.stock-list-actions .icon-button {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  overflow: visible;
+}
+
+.stock-list-actions .icon-button::after {
+  content: attr(aria-label);
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  z-index: 30;
+  width: max-content;
+  max-width: 250px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #ffffff;
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.stock-list-actions .icon-button:hover::after,
+.stock-list-actions .icon-button:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.stock-list-actions .stock-action-primary {
+  border-color: rgba(25, 185, 133, 0.3);
+  background: var(--mint-soft);
+  color: var(--green);
+}
+
+.stock-list-actions .has-lineage {
+  color: var(--green);
+}
+
+@media (max-width: 1100px) {
+  .stock-health-list {
+    overflow-x: auto;
+  }
+}
+
+@media (max-width: 700px) {
+  .production-stock-update-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 .field-help {
@@ -1511,8 +1680,8 @@
 }
 
 .settings-switch input {
-  width: 42px;
-  height: 22px;
+  width: 17px;
+  height: 17px;
   flex: 0 0 auto;
   accent-color: var(--green);
 }
@@ -2204,6 +2373,158 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(230px, 1fr));
   gap: 14px;
+}
+
+.team-member-list {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: #ffffff;
+}
+
+.team-member-row {
+  display: grid;
+  grid-template-columns: 44px minmax(180px, 1fr) minmax(120px, 0.45fr) auto 28px;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 13px 15px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: #ffffff;
+  color: var(--ink);
+  text-align: left;
+}
+
+.team-member-row:last-child {
+  border-bottom: 0;
+}
+
+.team-member-row:hover,
+.team-member-row:focus-visible {
+  position: relative;
+  z-index: 1;
+  background: var(--surface-alt);
+  outline: 2px solid transparent;
+}
+
+.team-member-avatar {
+  display: inline-grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  flex: 0 0 44px;
+  border-radius: 999px;
+  background: var(--mint-soft);
+  color: var(--navy);
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+
+.team-member-primary {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.team-member-primary small {
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.team-member-role {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 750;
+}
+
+.team-member-open {
+  display: inline-grid;
+  place-items: center;
+  color: var(--soft);
+}
+
+.team-member-open svg {
+  width: 17px;
+  height: 17px;
+}
+
+.team-account-modal {
+  width: min(100%, 680px);
+}
+
+.team-account-summary,
+.team-account-actions {
+  display: grid;
+  gap: 16px;
+}
+
+.team-account-identity {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+
+.team-account-identity > div {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.team-account-identity h3,
+.team-account-identity p {
+  margin: 0;
+}
+
+.team-account-identity p {
+  color: var(--muted);
+}
+
+.team-account-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.team-account-detail-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.team-account-detail-grid span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 750;
+}
+
+.team-account-detail-grid strong {
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 680px) {
+  .team-member-row {
+    grid-template-columns: 40px minmax(0, 1fr) auto 24px;
+  }
+
+  .team-member-avatar {
+    width: 40px;
+    height: 40px;
+  }
+
+  .team-member-role {
+    display: none;
+  }
+
+  .team-account-detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .product-card,

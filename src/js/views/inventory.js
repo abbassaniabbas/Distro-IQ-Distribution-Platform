@@ -19,7 +19,7 @@ import { isModuleEnabled } from "../services/features.js";
 import { printTabularReport } from "../services/report-export.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
+import { iconButton, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 
 const DEFAULT_STOCK_TAB = "stock-health";
@@ -27,14 +27,6 @@ const DISPATCH_PAGE_SIZE = 10;
 const MOVEMENT_PAGE_SIZE = 10;
 const FINISHED_PRODUCTS_CATEGORY = "finished_products";
 const RAW_MATERIALS_CATEGORY = "raw_materials";
-const PRODUCTION_PURPOSE_OPTIONS = [
-  "Build factory stock",
-  "Fulfil customer orders",
-  "Sales representative distribution",
-  "Samples and promotions",
-  "Product testing",
-  "Other"
-];
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -69,9 +61,6 @@ function stockTabsForPermissions(permissions, state) {
           label: "Factory dispatch"
         }]
       : []),
-    ...((permissions.canManageStockMovements || permissions.canManageProducts) && isModuleEnabled(state, "raw_materials")
-      ? [{ id: "production-usage", label: "Production usage" }]
-      : []),
     {
       id: "overview",
       label: "Stock journey"
@@ -94,7 +83,7 @@ function stockTabsForPermissions(permissions, state) {
 function activeStockTabId(permissions, state) {
   const tabs = stockTabsForPermissions(permissions, state);
   const requestedTab = inventoryRouteParams().get("tab") || DEFAULT_STOCK_TAB;
-  const normalizedTab = ["factory-health", "add-stock", "raw-materials", "finished-goods", "equipment", "categories"]
+  const normalizedTab = ["factory-health", "add-stock", "raw-materials", "finished-goods", "equipment", "categories", "production-usage"]
     .includes(requestedTab)
     ? DEFAULT_STOCK_TAB
     : requestedTab;
@@ -320,6 +309,9 @@ function renderStockProductModal(state, permissions) {
   if (!permissions.canManageProducts && !permissions.canAddStock) return "";
 
   const moneySymbol = currencySymbolFor(state.client);
+  const rawMaterials = (state.products || []).filter((product) => (
+    product.status !== "inactive" && stockCategoryIdForProduct(product) === RAW_MATERIALS_CATEGORY
+  ));
 
   return `
     <div id="stock-product-modal" class="stock-modal-backdrop" hidden>
@@ -397,6 +389,43 @@ function renderStockProductModal(state, permissions) {
             </button>
           </div>
         </div>
+        <section class="production-stock-update span-full" data-production-stock-update hidden>
+          <div class="production-stock-update-heading">
+            <div>
+              <span class="eyebrow">Production stock update</span>
+              <strong>Record raw materials used</strong>
+              <p>Use this only when the finished stock quantity was produced from raw materials.</p>
+            </div>
+            ${icon("package")}
+          </div>
+          <div class="manager-form-grid production-stock-update-fields">
+            <label class="field">
+              <span>Production date</span>
+              <input name="productionBatchDate" type="date" value="${escapeHtml(todayISO())}">
+            </label>
+            <label class="field">
+              <span>Batch name or number</span>
+              <input name="productionBatchReference" placeholder="BATCH-1001">
+            </label>
+            <label class="field">
+              <span>Quantity produced</span>
+              <input name="productionQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0">
+            </label>
+            <label class="field">
+              <span>Production note (optional)</span>
+              <input name="productionNotes" maxlength="500" placeholder="Shift, quality note, or reference">
+            </label>
+            <div class="span-full batch-material-list" data-batch-material-list>
+              ${renderBatchMaterialRow(rawMaterials)}
+            </div>
+            <div class="span-full manager-form-actions">
+              <button class="button" type="button" data-add-batch-material ${rawMaterials.length ? "" : "disabled"}>${icon("plus")}<span>Add another material</span></button>
+            </div>
+            <span class="field-help span-full" data-production-stock-help>${rawMaterials.length
+              ? "Leave these production fields empty for a normal stock-record update."
+              : "Add raw materials before recording production usage."}</span>
+          </div>
+        </section>
         <div class="manager-form-actions span-full">
           ${textButton({
             iconName: "check",
@@ -493,7 +522,6 @@ function renderStockReductionModal(permissions) {
               <option value="">Choose reason</option>
               <option value="Damaged stock">Damaged stock</option>
               <option value="Expired stock">Expired stock</option>
-              <option value="Production use">Used for production</option>
               <option value="Stock count correction">Stock count correction</option>
               <option value="Other">Other</option>
             </select>
@@ -647,6 +675,69 @@ function renderProductCard(product, state, permissions) {
         </div>
       </footer>
     </article>
+  `;
+}
+
+function renderProductListRow(product, state, permissions) {
+  const health = getStockHealth(product);
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canReduceStock = permissions.canManageStockMovements;
+  const canManageProducts = permissions.canManageProducts;
+  const stockCategory = stockCategoryIdForProduct(product);
+  const isRawMaterial = stockCategory === RAW_MATERIALS_CATEGORY;
+  const isFinishedProduct = stockCategory === FINISHED_PRODUCTS_CATEGORY;
+  const productionBatches = isFinishedProduct ? productionBatchesForProduct(state, product.id) : [];
+  const batchesUsingStockMaterials = productionBatches.filter((batch) => (batch.materials || []).length > 0);
+  const hasStockMaterialUsage = batchesUsingStockMaterials.length > 0;
+  const latestBatch = productionBatches[0];
+  const lineageTitle = hasStockMaterialUsage ? "Made using stock raw materials" : "No stock-material usage recorded";
+  const lineageDescription = hasStockMaterialUsage
+    ? `${formatNumber(batchesUsingStockMaterials.length)} linked batch${batchesUsingStockMaterials.length === 1 ? "" : "es"}${latestBatch ? ` - latest ${productionBatchReference(latestBatch)}` : ""}`
+    : "Production batches with raw materials will appear here.";
+  const searchIndex = [product.id, product.name, product.category, product.region, product.warehouse]
+    .join(" ")
+    .toLowerCase();
+
+  return `
+    <tr
+      class="stock-health-row ${product.status === "inactive" ? "is-inactive" : ""}"
+      data-category="${escapeHtml(product.category)}"
+      data-stock-category="${escapeHtml(stockCategory)}"
+      data-search-index="${escapeHtml(searchIndex)}"
+    >
+      <td>
+        <div class="stock-health-item">
+          <div class="product-media">${renderProductImage(product)}</div>
+          <div><strong>${escapeHtml(product.name)}</strong><span>${escapeHtml(product.id)}</span></div>
+        </div>
+      </td>
+      <td><strong>${escapeHtml(product.category)}</strong><div class="muted">${escapeHtml(productUnit(product))}</div></td>
+      <td><div class="stock-health-quantity"><strong>${formatNumber(product.stock)} ${escapeHtml(productUnit(product))}</strong><span>${formatNumber(product.reorderPoint)} reorder point</span></div></td>
+      <td>
+        <div class="stock-health-progress">
+          <div>
+            ${product.status === "inactive" ? statusPill("inactive") : health.status === "ready" ? "" : statusPill(health.status)}
+            <span>${health.daysCover} days cover</span>
+          </div>
+          ${progressBar(health.percent, health.tone)}
+        </div>
+      </td>
+      <td><div class="stock-health-prices"><span>Cost ${formatCurrency(product.unitCost)}</span><strong>${product.unitPrice ? formatCurrency(product.unitPrice) : "Factory use"}</strong></div></td>
+      <td>
+        <div class="row-actions stock-list-actions">
+          ${canManageProducts ? iconButton({ iconName: "settings", label: "Update stock record", className: "js-edit-product", data: { "product-id": product.id } }) : ""}
+          ${canManageProducts ? iconButton({ iconName: product.status === "inactive" ? "check" : "x", label: product.status === "inactive" ? "Show" : "Hide", className: "js-toggle-product-status", data: { "product-id": product.id } }) : ""}
+          ${canRestock ? iconButton({ iconName: "plus", label: "Add stock quantity", className: "stock-action-primary js-restock-product", data: { "product-id": product.id } }) : ""}
+          ${canReduceStock ? iconButton({ iconName: "alert", label: "Reduce stock", className: "js-reduce-stock", disabled: Number(product.stock || 0) <= 0, data: { "product-id": product.id } }) : ""}
+          ${isRawMaterial && Number(product.stock || 0) > 0 && (canManageProducts || canReduceStock)
+            ? iconButton({ iconName: "wallet", label: "Sell raw material", className: "js-sell-raw-material", data: { "product-id": product.id } })
+            : ""}
+          ${isFinishedProduct
+            ? iconButton({ iconName: hasStockMaterialUsage ? "eye" : "history", label: `${lineageTitle}. ${lineageDescription}`, className: `js-open-production-traceability${hasStockMaterialUsage ? " has-lineage" : ""}`, data: { "product-id": product.id } })
+            : ""}
+        </div>
+      </td>
+    </tr>
   `;
 }
 
@@ -1183,10 +1274,24 @@ function renderStockHealthPage(state, permissions) {
         </div>
       </div>
 
-      <div class="product-grid">
-        ${visibleProducts.length
-          ? visibleProducts.map((product) => renderProductCard(product, state, permissions)).join("")
-          : '<div class="empty-state">No active stock items available</div>'}
+      <div class="table-wrap stock-health-list">
+        <table class="data-table stock-health-table">
+          <thead>
+            <tr>
+              <th>Stock item</th>
+              <th>Type</th>
+              <th>Available</th>
+              <th>Health</th>
+              <th>Pricing</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${visibleProducts.length
+              ? visibleProducts.map((product) => renderProductListRow(product, state, permissions)).join("")
+              : '<tr><td colspan="6"><div class="empty-state">No active stock items available</div></td></tr>'}
+          </tbody>
+        </table>
       </div>
     </section>
   `;
@@ -1332,7 +1437,7 @@ function renderProductionTraceabilityDetails(product, state) {
       <div>
         <span class="eyebrow">${escapeHtml(product.id)}</span>
         <h3>${escapeHtml(product.name)}</h3>
-        <p>Every recorded batch, its purpose, and the stock materials consumed.</p>
+        <p>Every recorded batch and the stock materials consumed.</p>
       </div>
       <span class="production-traceability-badge">${icon("package")}<span>Traceable output</span></span>
     </div>
@@ -1354,11 +1459,7 @@ function renderProductionTraceabilityDetails(product, state) {
                 </div>
                 <time datetime="${escapeHtml(String(batch.batchDate || ""))}">${formatDate(batch.batchDate)}</time>
               </header>
-              <div class="production-traceability-purpose">
-                <span>Purpose</span>
-                <strong>${escapeHtml(batch.purpose || "Not recorded")}</strong>
-                ${batch.notes ? `<p>${escapeHtml(batch.notes)}</p>` : ""}
-              </div>
+              ${batch.notes ? `<div class="production-traceability-purpose"><span>Production note</span><p>${escapeHtml(batch.notes)}</p></div>` : ""}
               <div>
                 <span class="production-traceability-label">Raw materials used</span>
                 ${materials.length ? `
@@ -1388,65 +1489,21 @@ function renderRawMaterialCustomerOptions(state) {
   ].join("");
 }
 
-function renderProductionUsagePage(state) {
+function renderRawMaterialSaleModal(state) {
   const rawMaterials = (state.products || []).filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === RAW_MATERIALS_CATEGORY);
-  const finishedProducts = (state.products || []).filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === FINISHED_PRODUCTS_CATEGORY);
   const saleableRawMaterials = rawMaterials.filter((product) => Number(product.stock || 0) > 0);
-  const batches = [...(state.productionBatches || [])].sort((a, b) => String(b.batchDate || "").localeCompare(String(a.batchDate || "")));
-  const productMap = getProductMap(state.products || []);
-  const canRecordProduction = rawMaterials.length > 0 && finishedProducts.length > 0;
-  const productionUnavailableMessage = !rawMaterials.length
-    ? "Add raw materials to stock before recording production."
-    : !finishedProducts.length
-      ? "Add a finished product before recording production."
-      : "";
 
   return `
-    <section class="panel inventory-layout">
-      ${panelHeader("Production usage", "Record the finished output, its purpose, and every raw material consumed from stock")}
-      <form id="production-usage-form" class="manager-form-grid" novalidate>
-        <label class="field">
-          <span>Batch date</span>
-          <input name="batchDate" type="date" value="${escapeHtml(new Date().toISOString().slice(0, 10))}" required>
-        </label>
-        <label class="field">
-          <span>Batch name or number</span>
-          <input name="batchReference" placeholder="BATCH-1001" required>
-        </label>
-        <label class="field">
-          <span>Finished product</span>
-          <select name="finishedProductId" required>
-            <option value="">Choose finished product</option>
-            ${finishedProducts.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} in stock</option>`).join("")}
-          </select>
-        </label>
-        <label class="field">
-          <span>Quantity produced</span>
-          <input name="quantityProduced" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
-        </label>
-        <label class="field span-full">
-          <span>Production purpose</span>
-          <select name="purpose" required>
-            <option value="">Choose why this product was made</option>
-            ${PRODUCTION_PURPOSE_OPTIONS.map((purpose) => `<option value="${escapeHtml(purpose)}">${escapeHtml(purpose)}</option>`).join("")}
-          </select>
-        </label>
-        <label class="field span-full">
-          <span>Production notes (optional)</span>
-          <textarea name="notes" rows="3" maxlength="500" placeholder="Quality notes, destination, shift, or other useful batch details"></textarea>
-        </label>
-        <div class="span-full batch-material-list" data-batch-material-list>
-          ${renderBatchMaterialRow(rawMaterials)}
-        </div>
-        <div class="span-full manager-form-actions">
-          <button class="button" type="button" data-add-batch-material>${icon("plus")}<span>Add another material</span></button>
-          <button class="button primary" type="submit" ${canRecordProduction ? "" : "disabled"}>${icon("check")}<span>Save production batch</span></button>
-        </div>
-        <span id="production-usage-message" class="field-error span-full" role="status">${escapeHtml(productionUnavailableMessage)}</span>
-      </form>
-    </section>
-    <section class="panel inventory-layout raw-material-sale-panel">
-      ${panelHeader("Sell raw material from factory stock", "Sell an ingredient or packaging item directly without using it in production")}
+    <div id="raw-material-sale-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal raw-material-sale-modal" role="dialog" aria-modal="true" aria-labelledby="raw-material-sale-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Stock sale</span>
+            <h2 id="raw-material-sale-title">Sell raw material</h2>
+            <p>Record a normal sale directly from available raw-material stock.</p>
+          </div>
+          ${textButton({ iconName: "x", label: "Close", className: "js-close-raw-sale-modal" })}
+        </header>
       <form id="raw-material-sale-form" class="manager-form-grid" novalidate>
         <label class="field">
           <span>Raw material</span>
@@ -1491,25 +1548,8 @@ function renderProductionUsagePage(state) {
         </div>
         <span id="raw-material-sale-message" class="field-error span-full" role="status">${saleableRawMaterials.length ? "" : "No raw material stock is currently available to sell."}</span>
       </form>
-    </section>
-    <section class="panel inventory-layout">
-      ${panelHeader("Production batch history", "Finished output, purpose, raw materials used, and the staff member who recorded them")}
-      ${table(
-        ["Batch", "Finished output", "Purpose / notes", "Raw materials used", "Recorded by"],
-        batches.map((batch) => {
-          const finishedProduct = productMap.get(batch.finishedProductId);
-          const materials = (batch.materials || []).map((material) => batchMaterialDescription(material, productMap)).join(", ");
-          return `<tr>
-            <td><strong>${escapeHtml(productionBatchReference(batch))}</strong><div class="muted">${formatDate(batch.batchDate)}</div></td>
-            <td>${escapeHtml(batchOutputDescription(batch, finishedProduct))}</td>
-            <td><strong>${escapeHtml(batch.purpose || "Not recorded")}</strong>${batch.notes ? `<div class="muted">${escapeHtml(batch.notes)}</div>` : ""}</td>
-            <td>${materials ? escapeHtml(materials) : '<span class="muted">No materials recorded</span>'}</td>
-            <td>${escapeHtml(batch.recordedBy || "Factory staff")}</td>
-          </tr>`;
-        }),
-        "No production usage recorded yet"
-      )}
-    </section>
+      </section>
+    </div>
   `;
 }
 
@@ -1519,8 +1559,6 @@ function renderStockTabPage({ activeTabId, state, permissions }) {
   if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
   if (activeTabId === "movement-history") return renderTransactionsPage(state);
   if (activeTabId === "credit") return renderCreditPage(state);
-  if (activeTabId === "production-usage") return renderProductionUsagePage(state);
-
   return renderStockHealthPage(state, permissions);
 }
 
@@ -1537,6 +1575,7 @@ export function renderInventory({ state }) {
       ${renderStockReductionModal(permissions)}
       ${renderAssignmentDetailsModal()}
       ${renderProductionTraceabilityModal()}
+      ${renderRawMaterialSaleModal(state)}
     </section>
   `;
 }
@@ -1571,8 +1610,9 @@ export function bindInventory({ root, store, signal }) {
   const requestedStockType = routeParams.get("type");
   const requestedAction = routeParams.get("action");
   let stockImageDataUrl = "";
-  const productionUsageForm = qs("#production-usage-form", root);
   const batchMaterialList = qs("[data-batch-material-list]", root);
+  const productionStockUpdate = qs("[data-production-stock-update]", productForm);
+  const rawMaterialSaleModal = qs("#raw-material-sale-modal", root);
   const rawMaterialSaleForm = qs("#raw-material-sale-form", root);
   const rawSaleProductSelect = rawMaterialSaleForm ? qs("[data-raw-sale-product]", rawMaterialSaleForm) : null;
   const rawSaleCustomerSelect = rawMaterialSaleForm ? qs("[data-raw-sale-customer]", rawMaterialSaleForm) : null;
@@ -1601,78 +1641,6 @@ export function bindInventory({ root, store, signal }) {
   });
   bindBatchMaterialRemoveButtons();
 
-  productionUsageForm?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const formData = new FormData(productionUsageForm);
-    const productIds = formData.getAll("batchMaterialId").map(String);
-    const quantities = formData.getAll("batchMaterialQuantity").map(Number);
-    const materials = productIds.map((productId, index) => ({ productId, quantity: quantities[index] }));
-    const finishedProductId = String(formData.get("finishedProductId") || "");
-    const quantityProduced = Number(formData.get("quantityProduced") || 0);
-    const purpose = String(formData.get("purpose") || "").trim();
-    const notes = String(formData.get("notes") || "").trim();
-    const state = store.getState();
-    const finishedProduct = state.products.find((product) => product.id === finishedProductId);
-    const message = qs("#production-usage-message", root);
-    const duplicate = productIds.find((productId, index) => productId && productIds.indexOf(productId) !== index);
-    const invalid = materials.find((material) => {
-      const product = state.products.find((item) => item.id === material.productId);
-      return (
-        !material.productId ||
-        !Number.isFinite(material.quantity) ||
-        material.quantity <= 0 ||
-        !product ||
-        product.status === "inactive" ||
-        stockCategoryIdForProduct(product) !== RAW_MATERIALS_CATEGORY
-      );
-    });
-    const insufficient = materials.find((material) => Number(state.products.find((product) => product.id === material.productId)?.stock || 0) < material.quantity);
-    const duplicateBatch = (state.productionBatches || []).some((batch) => (
-      productionBatchReference(batch).toLowerCase() === String(formData.get("batchReference") || "").trim().toLowerCase()
-    ));
-
-    if (message) message.textContent = "";
-    if (
-      !formData.get("batchDate") ||
-      !String(formData.get("batchReference") || "").trim() ||
-      !finishedProduct ||
-      finishedProduct.status === "inactive" ||
-      stockCategoryIdForProduct(finishedProduct) !== FINISHED_PRODUCTS_CATEGORY ||
-      !Number.isFinite(quantityProduced) ||
-      quantityProduced <= 0 ||
-      !purpose ||
-      invalid
-    ) {
-      if (message) message.textContent = "Enter the batch date and number, finished product, quantity produced, purpose, and every raw material used.";
-      return;
-    }
-    if (duplicateBatch) {
-      if (message) message.textContent = "This batch name or number has already been recorded.";
-      return;
-    }
-    if (duplicate) {
-      if (message) message.textContent = "Choose each raw material only once per batch.";
-      return;
-    }
-    if (insufficient) {
-      const product = state.products.find((item) => item.id === insufficient.productId);
-      if (message) message.textContent = `Only ${formatNumber(product?.stock || 0)} ${productUnit(product || {})} of ${product?.name || "this material"} is available.`;
-      return;
-    }
-
-    store.dispatch({
-      type: "RECORD_PRODUCTION_USAGE",
-      batchDate: formData.get("batchDate"),
-      batchReference: formData.get("batchReference"),
-      finishedProductId,
-      quantityProduced,
-      purpose,
-      notes,
-      materials,
-      message: "Production batch saved"
-    });
-  });
-
   function updateRawSaleCustomerFields() {
     if (!rawSaleCustomerSelect || !rawSaleOtherCustomer || !rawSalePaymentSelect) return;
 
@@ -1691,6 +1659,25 @@ export function bindInventory({ root, store, signal }) {
 
     const product = store.getState().products.find((item) => item.id === rawSaleProductSelect.value);
     rawSaleUnitPriceInput.value = product ? String(Number(product.unitPrice || 0) || "") : "";
+  }
+
+  function closeRawMaterialSaleModal() {
+    if (rawMaterialSaleModal) rawMaterialSaleModal.hidden = true;
+  }
+
+  function openRawMaterialSaleModal(productId) {
+    if (!rawMaterialSaleModal || !rawMaterialSaleForm || !rawSaleProductSelect) return;
+
+    rawMaterialSaleForm.reset();
+    rawSaleProductSelect.value = productId || "";
+    const saleDateInput = rawMaterialSaleForm.elements.saleDate;
+    if (saleDateInput) saleDateInput.value = todayISO();
+    updateRawSaleCustomerFields();
+    updateRawSaleUnitPrice();
+    const message = qs("#raw-material-sale-message", root);
+    if (message) message.textContent = "";
+    rawMaterialSaleModal.hidden = false;
+    rawMaterialSaleForm.elements.quantity?.focus();
   }
 
   updateRawSaleCustomerFields();
@@ -1767,6 +1754,20 @@ export function bindInventory({ root, store, signal }) {
       notes,
       message: "Raw material sale recorded"
     });
+    closeRawMaterialSaleModal();
+  });
+
+  qsa(".js-sell-raw-material", root).forEach((button) => {
+    button.addEventListener("click", () => openRawMaterialSaleModal(button.dataset.productId));
+  });
+  qsa(".js-close-raw-sale-modal", root).forEach((button) => {
+    button.addEventListener("click", closeRawMaterialSaleModal);
+  });
+  rawMaterialSaleModal?.addEventListener("click", (event) => {
+    if (event.target === rawMaterialSaleModal) closeRawMaterialSaleModal();
+  });
+  rawMaterialSaleModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeRawMaterialSaleModal();
   });
 
   function closeProductionTraceability() {
@@ -1938,8 +1939,8 @@ export function bindInventory({ root, store, signal }) {
   applyAssignmentFilters();
 
   function applyStockTypeFilter() {
-    qsa(".product-card", root).forEach((card) => {
-      card.hidden = categoryFilter.value !== "all" && card.dataset.stockCategory !== categoryFilter.value;
+    qsa("[data-stock-category]", root).forEach((row) => {
+      row.hidden = categoryFilter.value !== "all" && row.dataset.stockCategory !== categoryFilter.value;
     });
   }
 
@@ -2080,12 +2081,34 @@ export function bindInventory({ root, store, signal }) {
     }
   }
 
+  function updateProductionStockVisibility() {
+    if (!productForm || !productionStockUpdate) return;
+
+    const isExistingFinishedProduct = Boolean(productForm.elements.productId.value) &&
+      productForm.elements.stockCategory.value === FINISHED_PRODUCTS_CATEGORY;
+    productionStockUpdate.hidden = !isExistingFinishedProduct;
+  }
+
+  function resetProductionStockFields() {
+    if (!productForm) return;
+
+    ["productionBatchReference", "productionQuantity", "productionNotes"].forEach((name) => {
+      if (productForm.elements[name]) productForm.elements[name].value = "";
+    });
+    if (productForm.elements.productionBatchDate) productForm.elements.productionBatchDate.value = todayISO();
+    const rows = qsa("[data-batch-material-row]", batchMaterialList);
+    rows.slice(1).forEach((row) => row.remove());
+    rows[0]?.querySelectorAll("input, select").forEach((control) => { control.value = ""; });
+  }
+
   function resetProductForm() {
     if (!productForm) return;
 
     productForm.reset();
     productForm.elements.productId.value = "";
     productForm.elements.sku.value = nextAutomaticProductId(store.getState().products);
+    resetProductionStockFields();
+    updateProductionStockVisibility();
     stockImageDataUrl = "";
     if (stockImageInput) stockImageInput.value = "";
     setStockImageUploadState();
@@ -2202,6 +2225,22 @@ export function bindInventory({ root, store, signal }) {
       const numberValue = Number(rawValue);
       return rawValue !== "" && (!Number.isFinite(numberValue) || numberValue < 0);
     });
+    const productionBatchDate = String(formData.get("productionBatchDate") || "");
+    const productionBatchReferenceValue = String(formData.get("productionBatchReference") || "").trim();
+    const productionQuantityRaw = String(formData.get("productionQuantity") || "").trim();
+    const productionQuantity = Number(productionQuantityRaw || 0);
+    const productionNotes = String(formData.get("productionNotes") || "").trim();
+    const productionMaterialIds = formData.getAll("batchMaterialId").map((value) => String(value || ""));
+    const productionMaterialQuantities = formData.getAll("batchMaterialQuantity").map((value) => Number(value || 0));
+    const productionMaterials = productionMaterialIds.map((materialId, index) => ({
+      productId: materialId,
+      quantity: productionMaterialQuantities[index]
+    }));
+    const hasProductionUsage = Boolean(
+      productionBatchReferenceValue || productionQuantityRaw || productionNotes ||
+      productionMaterialIds.some(Boolean) || productionMaterialQuantities.some((quantity) => quantity > 0)
+    );
+    const state = store.getState();
 
     if (productMessage) productMessage.textContent = "";
 
@@ -2225,6 +2264,44 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
+    if (hasProductionUsage) {
+      const duplicateMaterial = productionMaterialIds.find((materialId, index) => materialId && productionMaterialIds.indexOf(materialId) !== index);
+      const invalidMaterial = productionMaterials.find((material) => {
+        const stockMaterial = state.products.find((item) => item.id === material.productId);
+        return !material.productId || !Number.isFinite(material.quantity) || material.quantity <= 0 ||
+          !stockMaterial || stockMaterial.status === "inactive" ||
+          stockCategoryIdForProduct(stockMaterial) !== RAW_MATERIALS_CATEGORY;
+      });
+      const insufficientMaterial = productionMaterials.find((material) => (
+        Number(state.products.find((item) => item.id === material.productId)?.stock || 0) < material.quantity
+      ));
+      const duplicateBatch = (state.productionBatches || []).some((batch) => (
+        productionBatchReference(batch).toLowerCase() === productionBatchReferenceValue.toLowerCase()
+      ));
+
+      if (!existingProductId || formData.get("stockCategory") !== FINISHED_PRODUCTS_CATEGORY) {
+        if (productMessage) productMessage.textContent = "Raw-material usage can only be recorded while updating an existing finished product.";
+        return;
+      }
+      if (!productionBatchDate || !productionBatchReferenceValue || !Number.isFinite(productionQuantity) || productionQuantity <= 0 || invalidMaterial) {
+        if (productMessage) productMessage.textContent = "Enter the production date, batch number, quantity produced, and every raw material used.";
+        return;
+      }
+      if (duplicateBatch) {
+        if (productMessage) productMessage.textContent = "This batch name or number has already been recorded.";
+        return;
+      }
+      if (duplicateMaterial) {
+        if (productMessage) productMessage.textContent = "Choose each raw material only once per batch.";
+        return;
+      }
+      if (insufficientMaterial) {
+        const stockMaterial = state.products.find((item) => item.id === insufficientMaterial.productId);
+        if (productMessage) productMessage.textContent = `Only ${formatNumber(stockMaterial?.stock || 0)} ${productUnit(stockMaterial || {})} of ${stockMaterial?.name || "this material"} is available.`;
+        return;
+      }
+    }
+
     store.dispatch({
       type: "UPSERT_PRODUCT",
       productId,
@@ -2240,6 +2317,20 @@ export function bindInventory({ root, store, signal }) {
       imageUrl: stockImageDataUrl,
       message: existingProductId ? "Stock updated" : "Stock added"
     });
+
+    if (hasProductionUsage) {
+      store.dispatch({
+        type: "RECORD_PRODUCTION_USAGE",
+        batchDate: productionBatchDate,
+        batchReference: productionBatchReferenceValue,
+        finishedProductId: productId,
+        quantityProduced: productionQuantity,
+        purpose: "Stock production",
+        notes: productionNotes,
+        materials: productionMaterials,
+        message: "Stock and raw-material usage updated"
+      });
+    }
 
     closeStockModal();
   });
@@ -2264,12 +2355,16 @@ export function bindInventory({ root, store, signal }) {
     productForm.elements.unitCost.value = product.unitCost || 0;
     productForm.elements.unitPrice.value = product.unitPrice || 0;
     productForm.elements.status.value = product.status || "active";
+    resetProductionStockFields();
+    updateProductionStockVisibility();
     stockImageDataUrl = product.imageUrl || "";
     if (stockImageInput) stockImageInput.value = "";
     setStockImageUploadState();
     openStockModal();
     return true;
   }
+
+  productForm?.elements.stockCategory?.addEventListener("change", updateProductionStockVisibility);
 
   if (requestedProductId) {
     fillProductForm(requestedProductId);

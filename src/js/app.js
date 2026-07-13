@@ -384,7 +384,7 @@ function updateTopbarUtilities(state, view) {
   messagesButton?.classList.toggle("has-alert", unreadMessages > 0);
   notificationsButton?.setAttribute(
     "aria-label",
-    unreadNotifications ? `Notifications, ${unreadNotifications} new` : notificationCount ? `Notifications, ${notificationCount} latest` : "Notifications"
+    unreadNotifications ? `Notifications, ${unreadNotifications} new` : notificationCount ? `Notifications, ${notificationCount} available` : "Notifications"
   );
   messagesButton?.setAttribute(
     "aria-label",
@@ -560,7 +560,10 @@ store.subscribe((state, action) => {
   showToast(action?.message);
 });
 
-window.addEventListener("hashchange", render);
+window.addEventListener("hashchange", () => {
+  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  render();
+});
 
 function featureModuleSignature(featureModules) {
   return (featureModules || [])
