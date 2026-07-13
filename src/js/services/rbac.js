@@ -174,7 +174,18 @@ export function accountForUser(state) {
 }
 
 export function currentUserRole(state) {
-  return normalizeRole(accountForUser(state)?.role || state.user?.user_metadata?.role || "sales_rep");
+  const account = accountForUser(state);
+
+  if (
+    !account ||
+    String(account.status || "").toLowerCase() !== "active" ||
+    account.passwordResetRequired
+  ) {
+    return "sales_rep";
+  }
+
+  const role = normalizeRole(account.role);
+  return ROLE_OPTIONS.some((option) => option.value === role) ? role : "sales_rep";
 }
 
 export function currentUserPermissions(state) {

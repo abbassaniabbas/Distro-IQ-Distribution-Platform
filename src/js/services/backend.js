@@ -1,8 +1,8 @@
 import { CURRENCY_OPTIONS } from "./tenant.js";
 import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
 
-const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, created_at)";
-const CLIENT_SELECT_LEGACY = "id, client_id, role, status, clients(id, company_name, logo_data_url, timezone, currency, currency_symbol, created_at)";
+const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, created_at)";
+const CLIENT_SELECT_LEGACY = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, timezone, currency, currency_symbol, created_at)";
 
 function mapClient(row) {
   if (!row) return null;
@@ -12,8 +12,8 @@ function mapClient(row) {
     companyName: row.company_name,
     logoDataUrl: row.logo_data_url || "",
     brandColor: row.brand_color || "#0B1F3A",
-    timezone: row.timezone,
-    currency: row.currency,
+    timezone: row.timezone || "Africa/Lagos",
+    currency: row.currency || "NGN",
     currencySymbol: row.currency_symbol || "₦",
     creditLimitEmailEnabled: row.credit_limit_email_enabled === true,
     creditLimitSmsEnabled: row.credit_limit_sms_enabled === true,
@@ -340,7 +340,20 @@ export async function loadWorkspace() {
   }
 
   const activeMembership = membershipRows?.find((item) => ["active", "invited"].includes(item.status));
-  const client = mapClient(activeMembership?.clients);
+  let client = mapClient(activeMembership?.clients);
+
+  if (!client && activeMembership?.password_reset_required) {
+    const { data: pendingClientRows, error: pendingClientError } = await supabase.rpc(
+      "get_my_pending_workspace_identity",
+      { p_client_id: activeMembership.client_id }
+    );
+
+    if (pendingClientError) {
+      throw new Error(pendingClientError.message);
+    }
+
+    client = mapClient(Array.isArray(pendingClientRows) ? pendingClientRows[0] : pendingClientRows);
+  }
 
   if (!client) {
     return {
@@ -646,17 +659,14 @@ export async function deleteWorkspace({ clientId }) {
   }
 }
 
-export async function updateMyMembershipProfile({ clientId, userId, name }) {
+export async function updateMyMembershipProfile({ clientId, name }) {
   throwIfBackendMissing();
 
   const supabase = await getSupabaseClient();
-  const { error } = await supabase
-    .from("memberships")
-    .update({
-      name: name.trim()
-    })
-    .eq("client_id", clientId)
-    .eq("user_id", userId);
+  const { error } = await supabase.rpc("update_my_membership_profile", {
+    p_client_id: clientId,
+    p_name: name.trim()
+  });
 
   if (error) {
     throw new Error(error.message);
@@ -745,12 +755,13 @@ export async function saveRepresentativeCreditLimit(payload) {
   return data;
 }
 
-export async function activateCurrentMembership(clientId) {
+export async function activateCurrentMembership(clientId, newPassword) {
   throwIfBackendMissing();
 
   const supabase = await getSupabaseClient();
   const { error } = await supabase.rpc("activate_my_membership", {
-    p_client_id: clientId
+    p_client_id: clientId,
+    p_new_password: newPassword
   });
 
   if (error) {

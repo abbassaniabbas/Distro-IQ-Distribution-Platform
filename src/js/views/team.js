@@ -6,14 +6,20 @@ import {
 import { inviteAccount } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { formatDate } from "../services/formatters.js";
-import { currentUserPermissions, roleLabel } from "../services/rbac.js";
+import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
+import { icon } from "../ui/icons.js";
 
 let activeLoginDetailsModal = null;
+const MANAGER_ASSIGNABLE_ROLES = new Set(["sales_rep", "store_keeper", "accountant"]);
 
-function renderRoleOptions() {
-  return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
+function renderRoleOptions(state) {
+  const roles = currentUserRole(state) === "manager"
+    ? ROLE_OPTIONS.filter((role) => MANAGER_ASSIGNABLE_ROLES.has(role.value))
+    : ROLE_OPTIONS;
+
+  return roles.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
 }
 
 function renderFieldError(name, errors = {}) {
@@ -38,27 +44,37 @@ function collectAccountForm(form) {
 }
 
 function appLoginUrl() {
-  const basePath = `${window.location.origin}${window.location.pathname}`;
-  return `${basePath}#/login`;
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.hash = "/login";
+  return url.href;
 }
 
-function emailLoginDetails({ client, invite }) {
+export function buildLoginDetailsEmail({ client, invite, loginUrl } = {}) {
   const companyName = client?.companyName || "DistroIQ";
+  const recipient = String(invite?.to || "").trim();
   const subject = `Your DistroIQ login for ${companyName}`;
   const body = [
     `Hello,`,
     "",
     `Your DistroIQ account for ${companyName} is ready.`,
     "",
-    `Sign-in page: ${appLoginUrl()}`,
-    `Email: ${invite.to}`,
-    `Temporary password: ${invite.temporaryPassword}`,
-    `Role: ${roleLabel(invite.role)}`,
+    `Sign-in page: ${String(loginUrl || "").trim()}`,
+    `Email: ${recipient}`,
+    `Temporary password: ${invite?.temporaryPassword || ""}`,
+    `Role: ${roleLabel(invite?.role)}`,
     "",
     `After signing in, you will be asked to create your own password.`
   ].join("\n");
+  const recipientPath = encodeURIComponent(recipient).replace(/%40/gi, "@");
+  const mailtoHref = `mailto:${recipientPath}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 
-  window.location.href = `mailto:${encodeURIComponent(invite.to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  return {
+    subject,
+    body,
+    mailtoHref,
+    clipboardText: [`To: ${recipient}`, `Subject: ${subject}`, "", body].join("\n")
+  };
 }
 
 function findCreatedInvite(workspace, email) {
@@ -69,13 +85,13 @@ function findCreatedInvite(workspace, email) {
   )) || null;
 }
 
-async function copyPasswordToClipboard(password, statusTarget, trigger) {
+async function copyTextToClipboard(text, statusTarget, trigger, successMessage, successLabel) {
   try {
-    await navigator.clipboard.writeText(password);
-    if (statusTarget) statusTarget.textContent = "Password copied.";
-    if (trigger) trigger.querySelector("span").textContent = "Copied";
+    await navigator.clipboard.writeText(text);
+    if (statusTarget) statusTarget.textContent = successMessage;
+    if (trigger?.querySelector("span")) trigger.querySelector("span").textContent = successLabel;
   } catch {
-    if (statusTarget) statusTarget.textContent = "Copy failed. Select and copy the password manually.";
+    if (statusTarget) statusTarget.textContent = "Copy failed. Select and copy the login details manually.";
   }
 }
 
@@ -96,6 +112,11 @@ function showLoginDetailsModal({ client, invite }) {
 
   closeLoginDetailsModal();
 
+  const emailDetails = buildLoginDetailsEmail({
+    client,
+    invite,
+    loginUrl: appLoginUrl()
+  });
   const modal = document.createElement("div");
   modal.className = "login-details-modal-backdrop";
   modal.innerHTML = `
@@ -127,13 +148,16 @@ function showLoginDetailsModal({ client, invite }) {
         ${textButton({
           iconName: "check",
           label: "Copy password",
-          className: "js-modal-copy-password",
-          data: { "temporary-password": invite.temporaryPassword }
+          className: "js-modal-copy-password"
         })}
+        <a class="button primary js-modal-email-login-details" href="${escapeHtml(emailDetails.mailtoHref)}">
+          ${icon("mail")}
+          <span>Open email app</span>
+        </a>
         ${textButton({
-          iconName: "mail",
-          label: "Email login details",
-          className: "primary js-modal-email-login-details"
+          iconName: "check",
+          label: "Copy email details",
+          className: "js-modal-copy-email-details span-full"
         })}
       </div>
       <span class="login-details-status" aria-live="polite"></span>
@@ -151,11 +175,28 @@ function showLoginDetailsModal({ client, invite }) {
   });
 
   qs(".js-modal-copy-password", modal).addEventListener("click", (event) => {
-    copyPasswordToClipboard(invite.temporaryPassword, qs(".login-details-status", modal), event.currentTarget);
+    copyTextToClipboard(
+      invite.temporaryPassword,
+      qs(".login-details-status", modal),
+      event.currentTarget,
+      "Password copied.",
+      "Copied"
+    );
+  });
+
+  qs(".js-modal-copy-email-details", modal).addEventListener("click", (event) => {
+    copyTextToClipboard(
+      emailDetails.clipboardText,
+      qs(".login-details-status", modal),
+      event.currentTarget,
+      "Email details copied. Paste them into any email app.",
+      "Email details copied"
+    );
   });
 
   qs(".js-modal-email-login-details", modal).addEventListener("click", () => {
-    emailLoginDetails({ client, invite });
+    const status = qs(".login-details-status", modal);
+    if (status) status.textContent = "Opening your email app...";
   });
 
   qs(".js-modal-copy-password", modal).focus();
@@ -260,7 +301,7 @@ export function renderTeam({ state }) {
             <label class="field span-full">
               <span>Role assignment</span>
               <select name="role">
-                ${renderRoleOptions()}
+                ${renderRoleOptions(state)}
               </select>
               ${renderFieldError("role")}
             </label>

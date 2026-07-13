@@ -172,6 +172,7 @@ let activeViewAbortController = null;
 let featureModuleRefreshPending = false;
 let selectedSearchSuggestion = "";
 const FEATURE_MODULE_REFRESH_MS = 5000;
+const DELAY_STATUS_REFRESH_MS = 15 * 60 * 1000;
 
 searchSuggestions.className = "search-suggestions";
 searchSuggestions.hidden = true;
@@ -570,6 +571,15 @@ async function refreshWorkspaceFeatureModules() {
 }
 
 window.setInterval(refreshWorkspaceFeatureModules, FEATURE_MODULE_REFRESH_MS);
+
+function refreshDelayedOrderStatuses() {
+  const state = store.getState();
+  if (!state.session || !state.client?.id || state.platformAdmin) return;
+  store.dispatch({ type: "AUTO_UPDATE_DELAYED_ORDERS" });
+}
+
+window.setInterval(refreshDelayedOrderStatuses, DELAY_STATUS_REFRESH_MS);
+window.addEventListener("focus", refreshDelayedOrderStatuses);
 
 replaceIconPlaceholders(document);
 

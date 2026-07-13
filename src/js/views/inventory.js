@@ -1,5 +1,6 @@
 import {
   creditUsageTone,
+  getCreditLimitForParty,
   getProductMap,
   getStockHealth,
   stockCategoryIdForProduct
@@ -25,9 +26,24 @@ const DEFAULT_STOCK_TAB = "stock-health";
 const DISPATCH_PAGE_SIZE = 10;
 const MOVEMENT_PAGE_SIZE = 10;
 const FINISHED_PRODUCTS_CATEGORY = "finished_products";
+const RAW_MATERIALS_CATEGORY = "raw_materials";
+const PRODUCTION_PURPOSE_OPTIONS = [
+  "Build factory stock",
+  "Fulfil customer orders",
+  "Sales representative distribution",
+  "Samples and promotions",
+  "Product testing",
+  "Other"
+];
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function tomorrowISO() {
+  const tomorrow = new Date();
+  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+  return tomorrow.toISOString().slice(0, 10);
 }
 
 function inventoryRouteParams() {
@@ -218,7 +234,35 @@ function renderLifecycle(state) {
 }
 
 function productUnit(product) {
-  return product.unit || (stockCategoryIdForProduct(product) === "raw_materials" ? "kg" : "unit");
+  return product.unit || (stockCategoryIdForProduct(product) === RAW_MATERIALS_CATEGORY ? "kg" : "unit");
+}
+
+function productionBatchReference(batch) {
+  return String(batch?.reference || batch?.batchReference || "Production batch").trim();
+}
+
+function productionBatchesForProduct(state, productId) {
+  return (state.productionBatches || [])
+    .filter((batch) => String(batch.finishedProductId || "") === String(productId || ""))
+    .sort((a, b) => (
+      String(b.batchDate || b.createdAt || "").localeCompare(String(a.batchDate || a.createdAt || "")) ||
+      productionBatchReference(b).localeCompare(productionBatchReference(a))
+    ));
+}
+
+function batchMaterialDescription(material, productMap) {
+  const product = productMap.get(material.productId);
+  const name = material.productName || product?.name || material.productId || "Raw material";
+  const unit = material.unit || productUnit(product || { stockCategory: RAW_MATERIALS_CATEGORY });
+  return `${name}: ${formatNumber(material.quantity)} ${unit}`;
+}
+
+function batchOutputDescription(batch, product) {
+  const name = batch.finishedProductName || product?.name || "Finished product";
+  const quantity = Number(batch.quantityProduced || 0);
+  return quantity > 0
+    ? `${formatNumber(quantity)} ${batch.outputUnit || productUnit(product || {})} ${name}`
+    : name;
 }
 
 function normalizedProductName(value) {
@@ -315,11 +359,11 @@ function renderStockProductModal(state, permissions) {
         </label>
         <label class="field">
           <span>Factory stock</span>
-          <input name="stock" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
+          <input name="stock" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
         </label>
         <label class="field">
           <span>Reorder point</span>
-          <input name="reorderPoint" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
+          <input name="reorderPoint" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
         </label>
         <label class="field">
           <span>Cost price (${escapeHtml(moneySymbol)})</span>
@@ -399,7 +443,7 @@ function renderRestockModal(permissions) {
           </label>
           <label class="field">
             <span>Quantity to add</span>
-            <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Enter amount" required>
+            <input name="quantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Enter amount" required>
           </label>
           <div class="manager-form-actions span-full">
             ${textButton({
@@ -441,7 +485,7 @@ function renderStockReductionModal(permissions) {
           </label>
           <label class="field">
             <span>Quantity to remove</span>
-            <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="Enter amount" required>
+            <input name="quantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="Enter amount" required>
           </label>
           <label class="field">
             <span>Reason</span>
@@ -485,11 +529,23 @@ function managerRepOptions(state) {
   return [...names].sort();
 }
 
-function renderProductCard(product, permissions) {
+function renderProductCard(product, state, permissions) {
   const health = getStockHealth(product);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
   const canReduceStock = permissions.canManageStockMovements;
   const canManageProducts = permissions.canManageProducts;
+  const isFinishedProduct = stockCategoryIdForProduct(product) === FINISHED_PRODUCTS_CATEGORY;
+  const productionBatches = isFinishedProduct ? productionBatchesForProduct(state, product.id) : [];
+  const batchesUsingStockMaterials = productionBatches.filter((batch) => (batch.materials || []).length > 0);
+  const hasStockMaterialUsage = batchesUsingStockMaterials.length > 0;
+  const latestBatch = productionBatches[0];
+  const lineageTitle = hasStockMaterialUsage
+    ? "Made using stock raw materials"
+    : "No stock-material usage recorded";
+  const lineageDescription = hasStockMaterialUsage
+    ? `${formatNumber(batchesUsingStockMaterials.length)} linked batch${batchesUsingStockMaterials.length === 1 ? "" : "es"}${latestBatch ? ` - latest ${productionBatchReference(latestBatch)}` : ""}`
+    : "Production batches with raw materials will appear here.";
+  const lineageTooltipId = `production-lineage-tooltip-${String(product.id || "product").replace(/[^a-zA-Z0-9_-]/g, "-")}`;
   const searchIndex = [
     product.id,
     product.name,
@@ -532,6 +588,25 @@ function renderProductCard(product, permissions) {
         <span class="muted">Cost ${formatCurrency(product.unitCost)}</span>
         <strong>${product.unitPrice ? formatCurrency(product.unitPrice) : "Factory use"}</strong>
       </div>
+
+      ${isFinishedProduct ? `
+        <span class="product-production-lineage ${hasStockMaterialUsage ? "has-lineage" : "no-lineage"}">
+          <button
+            class="icon-button product-production-lineage-button js-open-production-traceability"
+            type="button"
+            title="${escapeHtml(`${lineageTitle}. ${lineageDescription}`)}"
+            aria-label="${escapeHtml(`${lineageTitle}. ${lineageDescription} Open details.`)}"
+            aria-describedby="${escapeHtml(lineageTooltipId)}"
+            data-product-id="${escapeHtml(product.id)}"
+          >
+            ${icon(hasStockMaterialUsage ? "eye" : "history")}
+          </button>
+          <span class="product-production-lineage-tooltip" id="${escapeHtml(lineageTooltipId)}" role="tooltip">
+            <strong>${escapeHtml(lineageTitle)}</strong>
+            <span>${escapeHtml(lineageDescription)}</span>
+          </span>
+        </span>
+      ` : ""}
 
       <footer>
         <span class="muted">${escapeHtml(product.category)}</span>
@@ -704,15 +779,19 @@ function renderDispatchForm(state, permissions) {
         </label>
         <label class="field">
           <span>Quantity</span>
-          <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+          <input name="quantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
         </label>
         <label class="field">
           <span>Destination / drop-off point</span>
           <input name="destination" placeholder="${escapeHtml(destinationPlaceholder("Sales Representative"))}" required>
         </label>
         <label class="field">
-          <span>Date</span>
+          <span>Dispatch date</span>
           <input name="dispatchDate" type="date" value="${escapeHtml(todayISO())}" required>
+        </label>
+        <label class="field">
+          <span>Expected delivery date</span>
+          <input name="expectedDeliveryAt" type="date" min="${escapeHtml(todayISO())}" value="${escapeHtml(tomorrowISO())}" required>
         </label>
         <label class="field span-full">
           <span>Staff responsible</span>
@@ -736,9 +815,9 @@ function renderDispatchPage(state, permissions) {
   return `
     ${renderDispatchForm(state, permissions)}
     <section class="panel inventory-layout">
-      ${panelHeader("Dispatch log", "Item, quantity, date, recipient, destination, and staff responsible")}
+      ${panelHeader("Dispatch log", "Item, quantity, dispatch and expected delivery dates, recipient, destination, and staff responsible")}
       ${table(
-        ["Item", "Quantity", "Date", "Recipient", "Destination", "Staff"],
+        ["Item", "Quantity", "Dispatched", "Expected", "Recipient", "Destination", "Staff"],
         renderDispatchRows(state),
         "No factory dispatches recorded yet"
       )}
@@ -772,6 +851,7 @@ function renderDispatchRows(state) {
       product?.name,
       transaction.quantity,
       transaction.date,
+      transaction.expectedDeliveryAt,
       recipient,
       destination,
       staff
@@ -785,6 +865,7 @@ function renderDispatchRows(state) {
         </td>
         <td>${formatNumber(transaction.quantity)}</td>
         <td>${formatDate(transaction.date)}</td>
+        <td>${transaction.expectedDeliveryAt ? formatDate(transaction.expectedDeliveryAt) : '<span class="muted">Not set</span>'}</td>
         <td>
           ${escapeHtml(recipient)}
           <div class="muted">${escapeHtml(transaction.partyType || "Recipient")}</div>
@@ -811,6 +892,7 @@ function renderMovementRows(state) {
     .map((transaction, index) => {
       const product = productMap.get(transaction.productId);
       const direction = movementDirection(transaction);
+      const unit = transaction.unit || productUnit(product || {});
       const searchIndex = [
         transaction.type,
         direction,
@@ -829,7 +911,7 @@ function renderMovementRows(state) {
             <strong>${escapeHtml(product?.name || transaction.productId)}</strong>
             <div class="muted">${escapeHtml(transaction.id)}</div>
           </td>
-          <td>${formatNumber(transaction.quantity)}</td>
+          <td>${formatNumber(transaction.quantity)} ${escapeHtml(unit)}</td>
           <td>${formatDate(transaction.date)}</td>
           <td>
             ${escapeHtml(transaction.partyName || transaction.recipientName || "Factory")}
@@ -1013,7 +1095,7 @@ function renderTransactionRows(state) {
         <td>${statusPill(transaction.type)}</td>
         <td>
           ${escapeHtml(product?.name || transaction.productId)}
-          <div class="muted">${formatNumber(transaction.quantity)} units</div>
+          <div class="muted">${formatNumber(transaction.quantity)} ${escapeHtml(transaction.unit || productUnit(product || {}))}</div>
         </td>
         <td>
           <strong>${formatCurrency(transaction.amount)}</strong>
@@ -1103,7 +1185,7 @@ function renderStockHealthPage(state, permissions) {
 
       <div class="product-grid">
         ${visibleProducts.length
-          ? visibleProducts.map((product) => renderProductCard(product, permissions)).join("")
+          ? visibleProducts.map((product) => renderProductCard(product, state, permissions)).join("")
           : '<div class="empty-state">No active stock items available</div>'}
       </div>
     </section>
@@ -1222,13 +1304,106 @@ function renderBatchMaterialRow(rawMaterials) {
   `;
 }
 
+function renderProductionTraceabilityModal() {
+  return `
+    <div id="production-traceability-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal production-traceability-modal" role="dialog" aria-modal="true" aria-labelledby="production-traceability-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Production traceability</span>
+            <h2 id="production-traceability-title">Stock materials used</h2>
+          </div>
+          ${textButton({ iconName: "x", label: "Close", className: "js-close-production-traceability" })}
+        </header>
+        <div id="production-traceability-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function renderProductionTraceabilityDetails(product, state) {
+  const batches = productionBatchesForProduct(state, product.id);
+  const productMap = getProductMap(state.products || []);
+  const materialIds = new Set(batches.flatMap((batch) => (batch.materials || []).map((material) => material.productId)).filter(Boolean));
+  const quantityProduced = batches.reduce((total, batch) => total + Number(batch.quantityProduced || 0), 0);
+
+  return `
+    <div class="production-traceability-heading">
+      <div>
+        <span class="eyebrow">${escapeHtml(product.id)}</span>
+        <h3>${escapeHtml(product.name)}</h3>
+        <p>Every recorded batch, its purpose, and the stock materials consumed.</p>
+      </div>
+      <span class="production-traceability-badge">${icon("package")}<span>Traceable output</span></span>
+    </div>
+    <div class="production-traceability-summary" aria-label="Production traceability summary">
+      <div><span>Linked batches</span><strong>${formatNumber(batches.length)}</strong></div>
+      <div><span>Raw materials</span><strong>${formatNumber(materialIds.size)}</strong></div>
+      <div><span>Total recorded output</span><strong>${formatNumber(quantityProduced)} ${escapeHtml(productUnit(product))}</strong></div>
+    </div>
+    ${batches.length ? `
+      <div class="production-traceability-list">
+        ${batches.map((batch) => {
+          const materials = batch.materials || [];
+          return `
+            <article class="production-traceability-batch">
+              <header>
+                <div>
+                  <span class="eyebrow">${escapeHtml(productionBatchReference(batch))}</span>
+                  <h4>${escapeHtml(batchOutputDescription(batch, product))}</h4>
+                </div>
+                <time datetime="${escapeHtml(String(batch.batchDate || ""))}">${formatDate(batch.batchDate)}</time>
+              </header>
+              <div class="production-traceability-purpose">
+                <span>Purpose</span>
+                <strong>${escapeHtml(batch.purpose || "Not recorded")}</strong>
+                ${batch.notes ? `<p>${escapeHtml(batch.notes)}</p>` : ""}
+              </div>
+              <div>
+                <span class="production-traceability-label">Raw materials used</span>
+                ${materials.length ? `
+                  <ul class="production-material-list">
+                    ${materials.map((material) => `<li>${escapeHtml(batchMaterialDescription(material, productMap))}</li>`).join("")}
+                  </ul>
+                ` : '<p class="muted">No stock materials were recorded for this batch.</p>'}
+              </div>
+              <footer>Recorded by ${escapeHtml(batch.recordedBy || "Factory staff")}</footer>
+            </article>
+          `;
+        }).join("")}
+      </div>
+    ` : '<div class="empty-state">No production batches are linked to this finished product yet.</div>'}
+  `;
+}
+
+function renderRawMaterialCustomerOptions(state) {
+  const customers = (state.retailers || [])
+    .filter((customer) => customer.id && customer.name)
+    .slice()
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+
+  return [
+    ...customers.map((customer) => `<option value="${escapeHtml(customer.id)}">${escapeHtml(customer.name)}${customer.city || customer.stateName ? ` - ${escapeHtml(customer.city || customer.stateName)}` : ""}</option>`),
+    '<option value="__other__">Other customer</option>'
+  ].join("");
+}
+
 function renderProductionUsagePage(state) {
-  const rawMaterials = (state.products || []).filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === "raw_materials");
+  const rawMaterials = (state.products || []).filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === RAW_MATERIALS_CATEGORY);
+  const finishedProducts = (state.products || []).filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === FINISHED_PRODUCTS_CATEGORY);
+  const saleableRawMaterials = rawMaterials.filter((product) => Number(product.stock || 0) > 0);
   const batches = [...(state.productionBatches || [])].sort((a, b) => String(b.batchDate || "").localeCompare(String(a.batchDate || "")));
+  const productMap = getProductMap(state.products || []);
+  const canRecordProduction = rawMaterials.length > 0 && finishedProducts.length > 0;
+  const productionUnavailableMessage = !rawMaterials.length
+    ? "Add raw materials to stock before recording production."
+    : !finishedProducts.length
+      ? "Add a finished product before recording production."
+      : "";
 
   return `
     <section class="panel inventory-layout">
-      ${panelHeader("Production usage", "Record raw materials consumed by each production batch")}
+      ${panelHeader("Production usage", "Record the finished output, its purpose, and every raw material consumed from stock")}
       <form id="production-usage-form" class="manager-form-grid" novalidate>
         <label class="field">
           <span>Batch date</span>
@@ -1238,21 +1413,100 @@ function renderProductionUsagePage(state) {
           <span>Batch name or number</span>
           <input name="batchReference" placeholder="BATCH-1001" required>
         </label>
+        <label class="field">
+          <span>Finished product</span>
+          <select name="finishedProductId" required>
+            <option value="">Choose finished product</option>
+            ${finishedProducts.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} in stock</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Quantity produced</span>
+          <input name="quantityProduced" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
+        </label>
+        <label class="field span-full">
+          <span>Production purpose</span>
+          <select name="purpose" required>
+            <option value="">Choose why this product was made</option>
+            ${PRODUCTION_PURPOSE_OPTIONS.map((purpose) => `<option value="${escapeHtml(purpose)}">${escapeHtml(purpose)}</option>`).join("")}
+          </select>
+        </label>
+        <label class="field span-full">
+          <span>Production notes (optional)</span>
+          <textarea name="notes" rows="3" maxlength="500" placeholder="Quality notes, destination, shift, or other useful batch details"></textarea>
+        </label>
         <div class="span-full batch-material-list" data-batch-material-list>
           ${renderBatchMaterialRow(rawMaterials)}
         </div>
         <div class="span-full manager-form-actions">
           <button class="button" type="button" data-add-batch-material>${icon("plus")}<span>Add another material</span></button>
-          <button class="button primary" type="submit" ${rawMaterials.length ? "" : "disabled"}>${icon("check")}<span>Save usage</span></button>
+          <button class="button primary" type="submit" ${canRecordProduction ? "" : "disabled"}>${icon("check")}<span>Save production batch</span></button>
         </div>
-        <span id="production-usage-message" class="field-error span-full" role="status">${rawMaterials.length ? "" : "Add raw materials to stock before recording production usage."}</span>
+        <span id="production-usage-message" class="field-error span-full" role="status">${escapeHtml(productionUnavailableMessage)}</span>
+      </form>
+    </section>
+    <section class="panel inventory-layout raw-material-sale-panel">
+      ${panelHeader("Sell raw material from factory stock", "Sell an ingredient or packaging item directly without using it in production")}
+      <form id="raw-material-sale-form" class="manager-form-grid" novalidate>
+        <label class="field">
+          <span>Raw material</span>
+          <select name="productId" data-raw-sale-product required>
+            <option value="">Choose raw material</option>
+            ${saleableRawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
+          </select>
+        </label>
+        <label class="field">
+          <span>Quantity to sell</span>
+          <input name="quantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
+        </label>
+        <label class="field">
+          <span>Customer</span>
+          <select name="customerChoice" data-raw-sale-customer required>
+            ${renderRawMaterialCustomerOptions(state)}
+          </select>
+          <input name="customerNameOther" data-raw-sale-other-customer placeholder="Type customer name" hidden>
+        </label>
+        <label class="field">
+          <span>Payment type</span>
+          <select name="paymentType" data-raw-sale-payment required>
+            <option value="cash">Cash</option>
+            <option value="credit">Credit</option>
+          </select>
+          <small class="field-help" data-raw-sale-credit-help>Credit is available only for a saved customer.</small>
+        </label>
+        <label class="field">
+          <span>Unit selling price</span>
+          <input name="unitPrice" data-raw-sale-unit-price type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0.00" required>
+        </label>
+        <label class="field">
+          <span>Sale date</span>
+          <input name="saleDate" type="date" value="${escapeHtml(todayISO())}" required>
+        </label>
+        <label class="field span-full">
+          <span>Sale notes (optional)</span>
+          <textarea name="notes" rows="3" maxlength="500" placeholder="Delivery arrangement, reference, or other useful details"></textarea>
+        </label>
+        <div class="manager-form-actions span-full">
+          <button class="button primary" type="submit" ${saleableRawMaterials.length ? "" : "disabled"}>${icon("wallet")}<span>Record raw material sale</span></button>
+        </div>
+        <span id="raw-material-sale-message" class="field-error span-full" role="status">${saleableRawMaterials.length ? "" : "No raw material stock is currently available to sell."}</span>
       </form>
     </section>
     <section class="panel inventory-layout">
-      ${panelHeader("Production batch history", "Materials used and the staff member who recorded them")}
+      ${panelHeader("Production batch history", "Finished output, purpose, raw materials used, and the staff member who recorded them")}
       ${table(
-        ["Batch", "Date", "Raw materials used", "Recorded by"],
-        batches.map((batch) => `<tr><td><strong>${escapeHtml(batch.reference)}</strong></td><td>${formatDate(batch.batchDate)}</td><td>${escapeHtml((batch.materials || []).map((material) => `${material.productName}: ${formatNumber(material.quantity)}`).join(", "))}</td><td>${escapeHtml(batch.recordedBy || "Factory staff")}</td></tr>`),
+        ["Batch", "Finished output", "Purpose / notes", "Raw materials used", "Recorded by"],
+        batches.map((batch) => {
+          const finishedProduct = productMap.get(batch.finishedProductId);
+          const materials = (batch.materials || []).map((material) => batchMaterialDescription(material, productMap)).join(", ");
+          return `<tr>
+            <td><strong>${escapeHtml(productionBatchReference(batch))}</strong><div class="muted">${formatDate(batch.batchDate)}</div></td>
+            <td>${escapeHtml(batchOutputDescription(batch, finishedProduct))}</td>
+            <td><strong>${escapeHtml(batch.purpose || "Not recorded")}</strong>${batch.notes ? `<div class="muted">${escapeHtml(batch.notes)}</div>` : ""}</td>
+            <td>${materials ? escapeHtml(materials) : '<span class="muted">No materials recorded</span>'}</td>
+            <td>${escapeHtml(batch.recordedBy || "Factory staff")}</td>
+          </tr>`;
+        }),
         "No production usage recorded yet"
       )}
     </section>
@@ -1282,6 +1536,7 @@ export function renderInventory({ state }) {
       ${renderRestockModal(permissions)}
       ${renderStockReductionModal(permissions)}
       ${renderAssignmentDetailsModal()}
+      ${renderProductionTraceabilityModal()}
     </section>
   `;
 }
@@ -1309,6 +1564,8 @@ export function bindInventory({ root, store, signal }) {
   const dispatchRecipientSelect = dispatchForm ? qs("[data-dispatch-recipient-select]", dispatchForm) : null;
   const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
   const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
+  const dispatchDateInput = dispatchForm ? qs('input[name="dispatchDate"]', dispatchForm) : null;
+  const expectedDeliveryInput = dispatchForm ? qs('input[name="expectedDeliveryAt"]', dispatchForm) : null;
   const routeParams = inventoryRouteParams();
   const requestedProductId = routeParams.get("product");
   const requestedStockType = routeParams.get("type");
@@ -1316,6 +1573,14 @@ export function bindInventory({ root, store, signal }) {
   let stockImageDataUrl = "";
   const productionUsageForm = qs("#production-usage-form", root);
   const batchMaterialList = qs("[data-batch-material-list]", root);
+  const rawMaterialSaleForm = qs("#raw-material-sale-form", root);
+  const rawSaleProductSelect = rawMaterialSaleForm ? qs("[data-raw-sale-product]", rawMaterialSaleForm) : null;
+  const rawSaleCustomerSelect = rawMaterialSaleForm ? qs("[data-raw-sale-customer]", rawMaterialSaleForm) : null;
+  const rawSaleOtherCustomer = rawMaterialSaleForm ? qs("[data-raw-sale-other-customer]", rawMaterialSaleForm) : null;
+  const rawSalePaymentSelect = rawMaterialSaleForm ? qs("[data-raw-sale-payment]", rawMaterialSaleForm) : null;
+  const rawSaleUnitPriceInput = rawMaterialSaleForm ? qs("[data-raw-sale-unit-price]", rawMaterialSaleForm) : null;
+  const productionTraceabilityModal = qs("#production-traceability-modal", root);
+  const productionTraceabilityContent = qs("#production-traceability-content", root);
 
   function bindBatchMaterialRemoveButtons() {
     if (!batchMaterialList) return;
@@ -1342,15 +1607,47 @@ export function bindInventory({ root, store, signal }) {
     const productIds = formData.getAll("batchMaterialId").map(String);
     const quantities = formData.getAll("batchMaterialQuantity").map(Number);
     const materials = productIds.map((productId, index) => ({ productId, quantity: quantities[index] }));
+    const finishedProductId = String(formData.get("finishedProductId") || "");
+    const quantityProduced = Number(formData.get("quantityProduced") || 0);
+    const purpose = String(formData.get("purpose") || "").trim();
+    const notes = String(formData.get("notes") || "").trim();
     const state = store.getState();
+    const finishedProduct = state.products.find((product) => product.id === finishedProductId);
     const message = qs("#production-usage-message", root);
     const duplicate = productIds.find((productId, index) => productId && productIds.indexOf(productId) !== index);
-    const invalid = materials.find((material) => !material.productId || !Number.isFinite(material.quantity) || material.quantity <= 0);
+    const invalid = materials.find((material) => {
+      const product = state.products.find((item) => item.id === material.productId);
+      return (
+        !material.productId ||
+        !Number.isFinite(material.quantity) ||
+        material.quantity <= 0 ||
+        !product ||
+        product.status === "inactive" ||
+        stockCategoryIdForProduct(product) !== RAW_MATERIALS_CATEGORY
+      );
+    });
     const insufficient = materials.find((material) => Number(state.products.find((product) => product.id === material.productId)?.stock || 0) < material.quantity);
+    const duplicateBatch = (state.productionBatches || []).some((batch) => (
+      productionBatchReference(batch).toLowerCase() === String(formData.get("batchReference") || "").trim().toLowerCase()
+    ));
 
     if (message) message.textContent = "";
-    if (!formData.get("batchDate") || !String(formData.get("batchReference") || "").trim() || invalid) {
-      if (message) message.textContent = "Enter the batch date, batch number, material, and quantity used.";
+    if (
+      !formData.get("batchDate") ||
+      !String(formData.get("batchReference") || "").trim() ||
+      !finishedProduct ||
+      finishedProduct.status === "inactive" ||
+      stockCategoryIdForProduct(finishedProduct) !== FINISHED_PRODUCTS_CATEGORY ||
+      !Number.isFinite(quantityProduced) ||
+      quantityProduced <= 0 ||
+      !purpose ||
+      invalid
+    ) {
+      if (message) message.textContent = "Enter the batch date and number, finished product, quantity produced, purpose, and every raw material used.";
+      return;
+    }
+    if (duplicateBatch) {
+      if (message) message.textContent = "This batch name or number has already been recorded.";
       return;
     }
     if (duplicate) {
@@ -1367,9 +1664,137 @@ export function bindInventory({ root, store, signal }) {
       type: "RECORD_PRODUCTION_USAGE",
       batchDate: formData.get("batchDate"),
       batchReference: formData.get("batchReference"),
+      finishedProductId,
+      quantityProduced,
+      purpose,
+      notes,
       materials,
-      message: "Production usage saved"
+      message: "Production batch saved"
     });
+  });
+
+  function updateRawSaleCustomerFields() {
+    if (!rawSaleCustomerSelect || !rawSaleOtherCustomer || !rawSalePaymentSelect) return;
+
+    const isOtherCustomer = rawSaleCustomerSelect.value === "__other__";
+    const creditOption = [...rawSalePaymentSelect.options].find((option) => option.value === "credit");
+
+    rawSaleOtherCustomer.hidden = !isOtherCustomer;
+    rawSaleOtherCustomer.required = isOtherCustomer;
+    if (!isOtherCustomer) rawSaleOtherCustomer.value = "";
+    if (creditOption) creditOption.disabled = isOtherCustomer;
+    if (isOtherCustomer && rawSalePaymentSelect.value === "credit") rawSalePaymentSelect.value = "cash";
+  }
+
+  function updateRawSaleUnitPrice() {
+    if (!rawSaleProductSelect || !rawSaleUnitPriceInput) return;
+
+    const product = store.getState().products.find((item) => item.id === rawSaleProductSelect.value);
+    rawSaleUnitPriceInput.value = product ? String(Number(product.unitPrice || 0) || "") : "";
+  }
+
+  updateRawSaleCustomerFields();
+  rawSaleCustomerSelect?.addEventListener("change", updateRawSaleCustomerFields);
+  rawSaleProductSelect?.addEventListener("change", updateRawSaleUnitPrice);
+
+  rawMaterialSaleForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const state = store.getState();
+    const formData = new FormData(rawMaterialSaleForm);
+    const productId = String(formData.get("productId") || "");
+    const product = state.products.find((item) => item.id === productId);
+    const quantity = Number(formData.get("quantity") || 0);
+    const customerChoice = String(formData.get("customerChoice") || "");
+    const savedCustomer = (state.retailers || []).find((customer) => customer.id === customerChoice);
+    const isOtherCustomer = customerChoice === "__other__";
+    const customerName = isOtherCustomer
+      ? String(formData.get("customerNameOther") || "").trim()
+      : String(savedCustomer?.name || "").trim();
+    const customerId = savedCustomer?.id || "";
+    const paymentType = String(formData.get("paymentType") || "").trim();
+    const unitPrice = Number(formData.get("unitPrice") || 0);
+    const saleDate = String(formData.get("saleDate") || "");
+    const notes = String(formData.get("notes") || "").trim();
+    const message = qs("#raw-material-sale-message", root);
+
+    if (message) message.textContent = "";
+    if (
+      !product ||
+      stockCategoryIdForProduct(product) !== RAW_MATERIALS_CATEGORY ||
+      product.status === "inactive" ||
+      !Number.isFinite(quantity) ||
+      quantity <= 0 ||
+      !customerName ||
+      !paymentType ||
+      !Number.isFinite(unitPrice) ||
+      unitPrice <= 0 ||
+      !saleDate
+    ) {
+      if (message) message.textContent = "Choose a raw material and enter the quantity, customer, payment type, unit price, and sale date.";
+      return;
+    }
+    if (quantity > Number(product.stock || 0)) {
+      if (message) message.textContent = `Only ${formatNumber(product.stock)} ${productUnit(product)} of ${product.name} is available.`;
+      return;
+    }
+    if (paymentType === "credit" && !savedCustomer) {
+      if (message) message.textContent = "Credit sales require a saved customer. Select a saved customer or use cash.";
+      return;
+    }
+    if (paymentType === "credit") {
+      const creditLimit = getCreditLimitForParty(state.creditLimits || [], savedCustomer.name);
+      const projectedBalance = Number(creditLimit?.balance || 0) + quantity * unitPrice;
+
+      if (!creditLimit || Number(creditLimit.limit || 0) <= 0) {
+        if (message) message.textContent = "This customer does not have an approved credit limit. Use cash or set a credit limit first.";
+        return;
+      }
+      if (projectedBalance > Number(creditLimit.limit || 0)) {
+        if (message) message.textContent = "This sale would exceed the customer's credit limit.";
+        return;
+      }
+    }
+
+    store.dispatch({
+      type: "RECORD_RAW_MATERIAL_SALE",
+      productId,
+      quantity,
+      customerId,
+      customerName,
+      paymentType,
+      unitPrice,
+      saleDate,
+      notes,
+      message: "Raw material sale recorded"
+    });
+  });
+
+  function closeProductionTraceability() {
+    if (productionTraceabilityModal) productionTraceabilityModal.hidden = true;
+  }
+
+  qsa(".js-open-production-traceability", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const state = store.getState();
+      const product = state.products.find((item) => item.id === button.dataset.productId);
+      if (!product || !productionTraceabilityModal || !productionTraceabilityContent) return;
+
+      productionTraceabilityContent.innerHTML = renderProductionTraceabilityDetails(product, state);
+      productionTraceabilityModal.hidden = false;
+      qs(".js-close-production-traceability", productionTraceabilityModal)?.focus();
+    });
+  });
+
+  qsa(".js-close-production-traceability", root).forEach((button) => {
+    button.addEventListener("click", closeProductionTraceability);
+  });
+
+  productionTraceabilityModal?.addEventListener("click", (event) => {
+    if (event.target === productionTraceabilityModal) closeProductionTraceability();
+  });
+
+  productionTraceabilityModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeProductionTraceability();
   });
 
   const assignmentRepFilter = qs("[data-assignment-rep-filter]", root);
@@ -1991,6 +2416,19 @@ export function bindInventory({ root, store, signal }) {
 
   updateDispatchRecipientOptions();
   updateDispatchProductOptions();
+
+  function syncExpectedDeliveryDate() {
+    if (!dispatchDateInput || !expectedDeliveryInput) return;
+
+    const dispatchDate = dispatchDateInput.value || todayISO();
+    expectedDeliveryInput.min = dispatchDate;
+    if (!expectedDeliveryInput.value || expectedDeliveryInput.value < dispatchDate) {
+      expectedDeliveryInput.value = dispatchDate;
+    }
+  }
+
+  syncExpectedDeliveryDate();
+  dispatchDateInput?.addEventListener("change", syncExpectedDeliveryDate);
   dispatchRecipientType?.addEventListener("change", () => {
     updateDispatchRecipientOptions();
     updateDispatchProductOptions();
@@ -2007,12 +2445,19 @@ export function bindInventory({ root, store, signal }) {
     const recipientChoice = String(formData.get("recipientNameChoice") || "").trim();
     const otherRecipient = String(formData.get("recipientNameOther") || "").trim();
     const recipientName = recipientChoice === "__other__" ? otherRecipient : recipientChoice;
+    const dispatchDate = String(formData.get("dispatchDate") || "");
+    const expectedDeliveryAt = String(formData.get("expectedDeliveryAt") || "");
     const message = qs("#stock-dispatch-message", root);
 
     if (message) message.textContent = "";
 
-    if (!product || !quantity || quantity <= 0 || !recipientName || !formData.get("destination")) {
-      if (message) message.textContent = "Choose an item, quantity, recipient, and destination.";
+    if (!product || !quantity || quantity <= 0 || !recipientName || !formData.get("destination") || !dispatchDate || !expectedDeliveryAt) {
+      if (message) message.textContent = "Choose an item, quantity, recipient, destination, dispatch date, and expected delivery date.";
+      return;
+    }
+
+    if (expectedDeliveryAt < dispatchDate) {
+      if (message) message.textContent = "Expected delivery cannot be before the dispatch date.";
       return;
     }
 
@@ -2036,14 +2481,17 @@ export function bindInventory({ root, store, signal }) {
       recipientType: formData.get("recipientType"),
       recipientName,
       destination: formData.get("destination"),
-      dispatchDate: formData.get("dispatchDate"),
+      dispatchDate,
+      expectedDeliveryAt,
       staffName: formData.get("staffName"),
       message: "Factory dispatch recorded"
     });
 
     dispatchForm.reset();
     dispatchForm.elements.dispatchDate.value = todayISO();
+    dispatchForm.elements.expectedDeliveryAt.value = tomorrowISO();
     dispatchForm.elements.staffName.value = currentStaffName(store.getState());
+    syncExpectedDeliveryDate();
     updateDispatchRecipientOptions();
     updateDispatchProductOptions();
   });

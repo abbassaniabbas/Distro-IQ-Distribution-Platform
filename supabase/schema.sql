@@ -1,4 +1,5 @@
-create extension if not exists pgcrypto;
+create schema if not exists extensions;
+create extension if not exists pgcrypto with schema extensions;
 
 create table if not exists public.clients (
   id uuid primary key default gen_random_uuid(),
@@ -51,6 +52,113 @@ create table if not exists public.memberships (
 
 alter table public.memberships
 add column if not exists phone_number text not null default '';
+
+alter table public.memberships
+add column if not exists password_reset_requested_at timestamptz not null default now();
+
+create table if not exists public.membership_password_security (
+  membership_id uuid primary key references public.memberships(id) on delete cascade,
+  password_fingerprint text not null,
+  password_hash_at_request text not null,
+  requested_at timestamptz not null default now()
+);
+
+alter table public.membership_password_security
+add column if not exists password_hash_at_request text not null default '';
+
+alter table public.membership_password_security enable row level security;
+
+create or replace function public.stamp_membership_password_reset_requested_at()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if tg_op = 'INSERT' then
+    new.password_reset_requested_at := coalesce(new.password_reset_requested_at, now());
+  elsif new.password_reset_required then
+    new.password_reset_requested_at := now();
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists memberships_password_reset_requested_at on public.memberships;
+create trigger memberships_password_reset_requested_at
+before insert or update of password_reset_required on public.memberships
+for each row execute function public.stamp_membership_password_reset_requested_at();
+
+create or replace function public.snapshot_membership_password_fingerprint()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_password_fingerprint text;
+begin
+  if not new.password_reset_required then
+    return new;
+  end if;
+
+  select encode(extensions.digest(coalesce(users.encrypted_password, ''), 'sha256'), 'hex')
+  into v_password_fingerprint
+  from auth.users users
+  where users.id = new.user_id;
+
+  if v_password_fingerprint is null then
+    raise exception 'Password security state could not be read';
+  end if;
+
+  insert into public.membership_password_security (
+    membership_id,
+    password_fingerprint,
+    password_hash_at_request,
+    requested_at
+  ) values (
+    new.id,
+    v_password_fingerprint,
+    (select coalesce(users.encrypted_password, '') from auth.users users where users.id = new.user_id),
+    new.password_reset_requested_at
+  )
+  on conflict (membership_id) do update
+  set
+    password_fingerprint = excluded.password_fingerprint,
+    password_hash_at_request = excluded.password_hash_at_request,
+    requested_at = excluded.requested_at;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists memberships_password_fingerprint on public.memberships;
+create trigger memberships_password_fingerprint
+after insert or update of password_reset_required on public.memberships
+for each row execute function public.snapshot_membership_password_fingerprint();
+
+insert into public.membership_password_security (
+  membership_id,
+  password_fingerprint,
+  password_hash_at_request,
+  requested_at
+)
+select
+  memberships.id,
+  encode(extensions.digest(coalesce(users.encrypted_password, ''), 'sha256'), 'hex'),
+  coalesce(users.encrypted_password, ''),
+  greatest(memberships.created_at, memberships.password_reset_requested_at)
+from public.memberships memberships
+join auth.users users on users.id = memberships.user_id
+where memberships.password_reset_required
+on conflict (membership_id) do nothing;
+
+update public.membership_password_security password_security
+set password_hash_at_request = coalesce(users.encrypted_password, '')
+from public.memberships memberships
+join auth.users users on users.id = memberships.user_id
+where memberships.id = password_security.membership_id
+  and password_security.password_hash_at_request = '';
 
 create table if not exists public.invites (
   id uuid primary key default gen_random_uuid(),
@@ -178,6 +286,46 @@ create table if not exists public.production_batch_materials (
   unique (batch_id, product_id)
 );
 
+alter table public.production_batches
+add column if not exists finished_product_id uuid references public.stock_products(id) on delete restrict;
+
+alter table public.production_batches
+add column if not exists quantity_produced numeric(14, 2);
+
+alter table public.production_batches
+add column if not exists purpose text not null default '';
+
+alter table public.production_batches
+add column if not exists notes text not null default '';
+
+do $$ begin
+  alter table public.production_batches
+  add constraint production_batches_quantity_produced_check
+  check (quantity_produced is null or quantity_produced > 0);
+exception
+  when duplicate_object then null;
+end $$;
+
+do $$ begin
+  alter table public.production_batches
+  add constraint production_batches_output_required
+  check (
+    finished_product_id is not null
+    and quantity_produced is not null
+    and quantity_produced > 0
+    and char_length(trim(purpose)) between 1 and 160
+    and char_length(notes) <= 1000
+  ) not valid;
+exception
+  when duplicate_object then null;
+end $$;
+
+create index if not exists production_batches_finished_product_idx
+on public.production_batches (client_id, finished_product_id, batch_date desc);
+
+alter table public.production_batch_materials
+add column if not exists unit_cost_at_use numeric(14, 2) not null default 0 check (unit_cost_at_use >= 0);
+
 create table if not exists public.stock_transactions (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
@@ -195,6 +343,35 @@ create table if not exists public.stock_transactions (
   credit_impact numeric(14, 2) not null default 0,
   created_at timestamptz not null default now()
 );
+
+alter table public.stock_transactions
+drop constraint if exists stock_transactions_transaction_type_check;
+
+alter table public.stock_transactions
+add constraint stock_transactions_transaction_type_check
+check (transaction_type in (
+  'sale',
+  'return',
+  'supply',
+  'internal_movement',
+  'write_off',
+  'restock',
+  'return_to_factory',
+  'production_consumption',
+  'production_output'
+));
+
+alter table public.stock_transactions
+add column if not exists batch_id uuid references public.production_batches(id) on delete set null;
+
+alter table public.stock_transactions
+add column if not exists order_reference text not null default '';
+
+alter table public.stock_transactions
+add column if not exists customer_reference text not null default '';
+
+alter table public.stock_transactions
+add column if not exists reason text not null default '';
 
 alter table public.stock_transactions
 add column if not exists recipient_name text not null default '';
@@ -215,6 +392,64 @@ do $$ begin
 exception
   when duplicate_object then null;
 end $$;
+
+alter table public.stock_transactions
+drop constraint if exists stock_transactions_production_shape_check;
+
+alter table public.stock_transactions
+add constraint stock_transactions_production_shape_check
+check (
+  transaction_type not in ('production_consumption', 'production_output')
+  or (
+    batch_id is not null
+    and product_id is not null
+    and assignment_id is null
+    and quantity > 0
+    and payment_type = 'none'
+    and party_type = 'production'
+    and (
+      (transaction_type = 'production_consumption' and movement_direction = 'out')
+      or (transaction_type = 'production_output' and movement_direction = 'in')
+    )
+  )
+) not valid;
+
+create or replace function public.stamp_stock_transaction_actor()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $$
+declare
+  v_actor_name text;
+begin
+  if auth.uid() is null then
+    return new;
+  end if;
+
+  select memberships.name
+  into v_actor_name
+  from public.memberships
+  where memberships.client_id = new.client_id
+    and memberships.user_id = auth.uid()
+    and memberships.status = 'active'
+    and not memberships.password_reset_required
+  limit 1;
+
+  if v_actor_name is null then
+    raise exception 'Active company access required';
+  end if;
+
+  new.recorded_by_user_id := auth.uid();
+  new.recorded_by_name := v_actor_name;
+  return new;
+end;
+$$;
+
+drop trigger if exists stock_transactions_actor on public.stock_transactions;
+create trigger stock_transactions_actor
+before insert on public.stock_transactions
+for each row execute function public.stamp_stock_transaction_actor();
 
 create table if not exists public.credit_limits (
   id uuid primary key default gen_random_uuid(),
@@ -477,8 +712,51 @@ as $$
     from public.memberships
     where client_id = p_client_id
       and user_id = auth.uid()
-      and status in ('active', 'invited')
+      and status = 'active'
+      and not password_reset_required
   );
+$$;
+
+create or replace function public.has_pending_membership_setup(p_client_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.memberships
+    where client_id = p_client_id
+      and user_id = auth.uid()
+      and status in ('active', 'invited')
+      and password_reset_required
+  );
+$$;
+
+create or replace function public.get_my_pending_workspace_identity(p_client_id uuid)
+returns table (
+  id uuid,
+  company_name text
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.has_pending_membership_setup(p_client_id) then
+    raise exception 'Pending password setup required';
+  end if;
+
+  return query
+  select clients.id, clients.company_name
+  from public.clients clients
+  where clients.id = p_client_id;
+end;
 $$;
 
 create or replace function public.is_client_admin(p_client_id uuid)
@@ -494,6 +772,7 @@ as $$
     where client_id = p_client_id
       and user_id = auth.uid()
       and status = 'active'
+      and not password_reset_required
       and role in ('ceo', 'manager')
   );
 $$;
@@ -526,8 +805,338 @@ as $$
     where client_id = p_client_id
       and user_id = auth.uid()
       and status = 'active'
+      and not password_reset_required
       and role = any(p_roles)
   );
+$$;
+
+create or replace function public.record_production_batch(
+  p_client_id uuid,
+  p_batch_reference text,
+  p_batch_date date,
+  p_finished_product_id uuid,
+  p_quantity_produced numeric,
+  p_purpose text,
+  p_notes text,
+  p_materials jsonb
+)
+returns public.production_batches
+language plpgsql
+security definer
+set search_path = pg_catalog
+as $$
+declare
+  v_batch public.production_batches;
+  v_actor_name text;
+  v_finished_product_name text;
+  v_finished_unit_cost numeric(14, 2);
+  v_item jsonb;
+  v_material_id uuid;
+  v_quantity_used numeric(14, 2);
+  v_material_ids uuid[] := array[]::uuid[];
+  v_material_quantities numeric[] := array[]::numeric[];
+  v_material_count integer;
+  v_valid_material_count integer;
+  v_shortages text;
+  v_batch_reference text := trim(coalesce(p_batch_reference, ''));
+  v_purpose text := trim(coalesce(p_purpose, ''));
+  v_notes text := coalesce(p_notes, '');
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.has_client_role(p_client_id, array['ceo', 'manager', 'store_keeper']) then
+    raise exception 'CEO, manager, or store keeper access required';
+  end if;
+
+  if p_client_id is null or not exists (
+    select 1
+    from public.clients client
+    where client.id = p_client_id
+  ) then
+    raise exception 'Company was not found';
+  end if;
+
+  if char_length(v_batch_reference) < 1
+    or char_length(v_batch_reference) > 120
+    or v_batch_reference ~ '[[:cntrl:]]' then
+    raise exception 'Batch reference must be between 1 and 120 characters';
+  end if;
+
+  if p_batch_date is null or p_batch_date > current_date then
+    raise exception 'Production date must be today or earlier';
+  end if;
+
+  if p_finished_product_id is null
+    or p_quantity_produced is null
+    or p_quantity_produced <= 0
+    or p_quantity_produced::text = 'NaN' then
+    raise exception 'Quantity produced must be greater than zero';
+  end if;
+
+  if char_length(v_purpose) < 1
+    or char_length(v_purpose) > 160
+    or v_purpose ~ '[[:cntrl:]]' then
+    raise exception 'Purpose must be between 1 and 160 characters';
+  end if;
+
+  if char_length(v_notes) > 1000 then
+    raise exception 'Notes cannot exceed 1000 characters';
+  end if;
+
+  if p_materials is null or jsonb_typeof(p_materials) <> 'array' then
+    raise exception 'Raw materials must be provided as an array';
+  end if;
+
+  v_material_count := jsonb_array_length(p_materials);
+  if v_material_count < 1 or v_material_count > 100 then
+    raise exception 'Use between 1 and 100 raw materials per production batch';
+  end if;
+
+  for v_item in
+    select material.value
+    from jsonb_array_elements(p_materials) material(value)
+  loop
+    if jsonb_typeof(v_item) <> 'object' then
+      raise exception 'Each raw material must be an object';
+    end if;
+
+    begin
+      v_material_id := coalesce(
+        nullif(v_item ->> 'productId', ''),
+        nullif(v_item ->> 'product_id', '')
+      )::uuid;
+      v_quantity_used := coalesce(
+        nullif(v_item ->> 'quantityUsed', ''),
+        nullif(v_item ->> 'quantity_used', ''),
+        nullif(v_item ->> 'quantity', '')
+      )::numeric;
+    exception
+      when invalid_text_representation or numeric_value_out_of_range then
+        raise exception 'A raw material has an invalid product or quantity';
+    end;
+
+    if v_material_id is null then
+      raise exception 'Each raw material requires a product';
+    end if;
+
+    if v_quantity_used is null
+      or v_quantity_used <= 0
+      or v_quantity_used::text = 'NaN' then
+      raise exception 'Each raw material quantity must be greater than zero';
+    end if;
+
+    if v_material_id = any(v_material_ids) then
+      raise exception 'A raw material cannot be listed more than once';
+    end if;
+
+    v_material_ids := array_append(v_material_ids, v_material_id);
+    v_material_quantities := array_append(v_material_quantities, v_quantity_used);
+  end loop;
+
+  -- Every stock mutation uses the same deterministic lock order, preventing two
+  -- concurrent production runs from consuming the same available stock.
+  perform product.id
+  from public.stock_products product
+  where product.client_id = p_client_id
+    and product.id = any(array_append(v_material_ids, p_finished_product_id))
+  order by product.id
+  for update;
+
+  select product.name, product.unit_cost
+  into v_finished_product_name, v_finished_unit_cost
+  from public.stock_products product
+  join public.stock_categories category
+    on category.id = product.category_id
+   and category.client_id = product.client_id
+  where product.id = p_finished_product_id
+    and product.client_id = p_client_id
+    and product.status = 'active'
+    and category.code = 'finished_products';
+
+  if v_finished_product_name is null then
+    raise exception 'Select an active finished product in this company';
+  end if;
+
+  select count(*)
+  into v_valid_material_count
+  from unnest(v_material_ids, v_material_quantities) requested(product_id, quantity_used)
+  join public.stock_products product
+    on product.id = requested.product_id
+   and product.client_id = p_client_id
+   and product.status = 'active'
+  join public.stock_categories category
+    on category.id = product.category_id
+   and category.client_id = product.client_id
+   and category.code = 'raw_materials';
+
+  if v_valid_material_count <> v_material_count then
+    raise exception 'Every material must be an active raw material in this company';
+  end if;
+
+  select string_agg(
+    format('%s (need %s, have %s)', product.name, requested.quantity_used, product.stock),
+    ', '
+    order by product.name
+  )
+  into v_shortages
+  from unnest(v_material_ids, v_material_quantities) requested(product_id, quantity_used)
+  join public.stock_products product
+    on product.id = requested.product_id
+   and product.client_id = p_client_id
+  where product.stock < requested.quantity_used;
+
+  if v_shortages is not null then
+    raise exception 'Insufficient raw material stock: %', v_shortages;
+  end if;
+
+  select membership.name
+  into v_actor_name
+  from public.memberships membership
+  where membership.client_id = p_client_id
+    and membership.user_id = auth.uid()
+    and membership.status = 'active'
+    and not membership.password_reset_required
+    and membership.role in ('ceo', 'manager', 'store_keeper')
+  order by membership.created_at desc
+  limit 1;
+
+  if v_actor_name is null then
+    raise exception 'Active production access required';
+  end if;
+
+  insert into public.production_batches (
+    client_id,
+    batch_reference,
+    batch_date,
+    recorded_by_user_id,
+    recorded_by_name,
+    finished_product_id,
+    quantity_produced,
+    purpose,
+    notes
+  )
+  values (
+    p_client_id,
+    v_batch_reference,
+    p_batch_date,
+    auth.uid(),
+    v_actor_name,
+    p_finished_product_id,
+    p_quantity_produced,
+    v_purpose,
+    v_notes
+  )
+  returning * into v_batch;
+
+  update public.stock_products product
+  set
+    stock = product.stock - requested.quantity_used,
+    updated_at = now()
+  from unnest(v_material_ids, v_material_quantities) requested(product_id, quantity_used)
+  where product.id = requested.product_id
+    and product.client_id = p_client_id;
+
+  insert into public.production_batch_materials (
+    batch_id,
+    product_id,
+    quantity_used,
+    unit_cost_at_use
+  )
+  select
+    v_batch.id,
+    product.id,
+    requested.quantity_used,
+    product.unit_cost
+  from unnest(v_material_ids, v_material_quantities) requested(product_id, quantity_used)
+  join public.stock_products product
+    on product.id = requested.product_id
+   and product.client_id = p_client_id;
+
+  insert into public.stock_transactions (
+    client_id,
+    product_id,
+    batch_id,
+    transaction_type,
+    quantity,
+    amount,
+    payment_type,
+    party_type,
+    party_name,
+    recorded_by_user_id,
+    recorded_by_name,
+    occurred_at,
+    reason,
+    recipient_name,
+    movement_direction
+  )
+  select
+    p_client_id,
+    product.id,
+    v_batch.id,
+    'production_consumption',
+    requested.quantity_used,
+    requested.quantity_used * product.unit_cost,
+    'none',
+    'production',
+    v_batch_reference,
+    auth.uid(),
+    v_actor_name,
+    p_batch_date,
+    v_purpose,
+    v_finished_product_name,
+    'out'
+  from unnest(v_material_ids, v_material_quantities) requested(product_id, quantity_used)
+  join public.stock_products product
+    on product.id = requested.product_id
+   and product.client_id = p_client_id;
+
+  update public.stock_products
+  set
+    stock = stock + p_quantity_produced,
+    updated_at = now()
+  where id = p_finished_product_id
+    and client_id = p_client_id;
+
+  insert into public.stock_transactions (
+    client_id,
+    product_id,
+    batch_id,
+    transaction_type,
+    quantity,
+    amount,
+    payment_type,
+    party_type,
+    party_name,
+    recorded_by_user_id,
+    recorded_by_name,
+    occurred_at,
+    reason,
+    movement_direction
+  )
+  values (
+    p_client_id,
+    p_finished_product_id,
+    v_batch.id,
+    'production_output',
+    p_quantity_produced,
+    p_quantity_produced * v_finished_unit_cost,
+    'none',
+    'production',
+    v_batch_reference,
+    auth.uid(),
+    v_actor_name,
+    p_batch_date,
+    v_purpose,
+    'in'
+  );
+
+  return v_batch;
+exception
+  when unique_violation then
+    raise exception 'Batch reference already exists for this company' using errcode = '23505';
+end;
 $$;
 
 create or replace function public.get_my_workspace_messages(p_client_id uuid)
@@ -566,6 +1175,7 @@ begin
   where memberships.client_id = p_client_id
     and memberships.user_id = auth.uid()
     and memberships.status = 'active'
+    and not memberships.password_reset_required
   limit 1;
 
   if v_current_membership_id is null then
@@ -629,6 +1239,7 @@ begin
   where client_id = p_client_id
     and user_id = auth.uid()
     and status = 'active'
+    and not password_reset_required
   limit 1;
 
   if v_sender.id is null then
@@ -735,6 +1346,7 @@ begin
   where memberships.client_id = p_client_id
     and memberships.user_id = auth.uid()
     and memberships.status = 'active'
+    and not memberships.password_reset_required
   limit 1;
 
   if v_current_membership_id is null then
@@ -1200,7 +1812,12 @@ begin
 end;
 $$;
 
-create or replace function public.activate_my_membership(p_client_id uuid)
+drop function if exists public.activate_my_membership(uuid);
+
+create or replace function public.activate_my_membership(
+  p_client_id uuid,
+  p_new_password text
+)
 returns public.memberships
 language plpgsql
 security definer
@@ -1208,21 +1825,125 @@ set search_path = public
 as $$
 declare
   v_membership public.memberships;
+  v_auth_updated_at timestamptz;
+  v_reset_requested_at timestamptz;
+  v_initial_password_fingerprint text;
+  v_current_password_fingerprint text;
+  v_initial_password_hash text;
+  v_current_password_hash text;
+  v_new_password text := coalesce(p_new_password, '');
 begin
   if auth.uid() is null then
     raise exception 'Authentication required';
+  end if;
+
+  if char_length(v_new_password) < 12
+    or v_new_password !~ '[a-z]'
+    or v_new_password !~ '[A-Z]'
+    or v_new_password !~ '[0-9]'
+    or v_new_password !~ '[^A-Za-z0-9]' then
+    raise exception 'Use 12 or more characters with uppercase, lowercase, a number, and a symbol';
+  end if;
+
+  select memberships.*
+  into v_membership
+  from public.memberships
+  where client_id = p_client_id
+    and user_id = auth.uid()
+    and status in ('active', 'invited')
+    and password_reset_required
+  for update;
+
+  if v_membership.id is null then
+    raise exception 'A pending password setup was not found';
+  end if;
+
+  select
+    users.updated_at,
+    encode(extensions.digest(coalesce(users.encrypted_password, ''), 'sha256'), 'hex'),
+    users.encrypted_password
+  into
+    v_auth_updated_at,
+    v_current_password_fingerprint,
+    v_current_password_hash
+  from auth.users users
+  where users.id = auth.uid();
+
+  select
+    password_security.requested_at,
+    password_security.password_fingerprint,
+    password_security.password_hash_at_request
+  into
+    v_reset_requested_at,
+    v_initial_password_fingerprint,
+    v_initial_password_hash
+  from public.membership_password_security password_security
+  where password_security.membership_id = v_membership.id;
+
+  v_reset_requested_at := greatest(
+    v_membership.created_at,
+    coalesce(v_reset_requested_at, v_membership.password_reset_requested_at, v_membership.created_at)
+  );
+
+  if v_auth_updated_at is null
+    or v_auth_updated_at <= v_reset_requested_at
+    or v_initial_password_fingerprint is null
+    or v_current_password_fingerprint is not distinct from v_initial_password_fingerprint
+    or v_initial_password_hash is null
+    or v_initial_password_hash = ''
+    or extensions.crypt(v_new_password, v_initial_password_hash) = v_initial_password_hash
+    or v_current_password_hash is null
+    or extensions.crypt(v_new_password, v_current_password_hash) <> v_current_password_hash then
+    raise exception 'Change your password before completing account setup';
   end if;
 
   update public.memberships
   set
     status = 'active',
     password_reset_required = false
+  where id = v_membership.id
+  returning * into v_membership;
+
+  delete from public.membership_password_security
+  where membership_id = v_membership.id;
+
+  return v_membership;
+end;
+$$;
+
+create or replace function public.update_my_membership_profile(
+  p_client_id uuid,
+  p_name text
+)
+returns public.memberships
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_membership public.memberships;
+  v_name text := trim(coalesce(p_name, ''));
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if char_length(v_name) < 2
+    or char_length(v_name) > 120
+    or v_name ~ '[[:cntrl:]]' then
+    raise exception 'Name must be between 2 and 120 characters';
+  end if;
+
+  update public.memberships
+  set name = v_name
   where client_id = p_client_id
     and user_id = auth.uid()
+    and status = 'active'
+    and not password_reset_required
   returning * into v_membership;
 
   if v_membership.id is null then
-    raise exception 'Membership not found';
+    raise exception 'Active company access required';
   end if;
 
   return v_membership;
@@ -1231,27 +1952,132 @@ $$;
 
 grant execute on function public.create_client_workspace(text, text, text, text, text, text) to authenticated;
 grant execute on function public.record_activity(uuid, text, text, text, text) to authenticated;
-grant execute on function public.activate_my_membership(uuid) to authenticated;
+grant execute on function public.activate_my_membership(uuid, text) to authenticated;
+grant execute on function public.update_my_membership_profile(uuid, text) to authenticated;
 grant execute on function public.is_client_member(uuid) to authenticated;
+grant execute on function public.get_my_pending_workspace_identity(uuid) to authenticated;
 grant execute on function public.is_client_admin(uuid) to authenticated;
 grant execute on function public.is_platform_admin() to authenticated;
 grant execute on function public.has_client_role(uuid, text[]) to authenticated;
+revoke all on function public.record_production_batch(uuid, text, date, uuid, numeric, text, text, jsonb) from public, anon, authenticated;
+grant execute on function public.record_production_batch(uuid, text, date, uuid, numeric, text, text, jsonb) to authenticated;
 grant execute on function public.get_my_workspace_messages(uuid) to authenticated;
 grant execute on function public.send_workspace_message(uuid, text, uuid, text) to authenticated;
 grant execute on function public.mark_my_workspace_conversation_read(uuid, uuid) to authenticated;
 grant execute on function public.get_platform_overview() to authenticated;
 grant execute on function public.get_platform_console() to authenticated;
 
-grant select, update, delete on public.clients to authenticated;
-grant select, insert, update on public.stock_categories to authenticated;
-grant select, insert, update on public.stock_products to authenticated;
-grant select, insert, update on public.stock_assignments to authenticated;
-grant select, insert on public.production_batches to authenticated;
-grant select, insert on public.production_batch_materials to authenticated;
-grant select, insert, update on public.stock_transactions to authenticated;
-grant select, insert, update on public.credit_limits to authenticated;
-revoke insert, update, delete on public.credit_limit_history from authenticated;
+revoke all on function public.activate_my_membership(uuid, text) from public, anon;
+revoke all on function public.update_my_membership_profile(uuid, text) from public, anon;
+revoke all on function public.has_pending_membership_setup(uuid) from public, anon, authenticated;
+revoke all on function public.get_my_pending_workspace_identity(uuid) from public, anon;
+revoke all on function public.stamp_membership_password_reset_requested_at() from public, anon, authenticated;
+revoke all on function public.snapshot_membership_password_fingerprint() from public, anon, authenticated;
+revoke all on function public.stamp_stock_transaction_actor() from public, anon, authenticated;
+
+-- Supabase may have broad default grants for API roles. Reset every application
+-- table first, then grant only the operations used by RLS-backed UI flows.
+revoke all privileges on table
+  public.clients,
+  public.memberships,
+  public.membership_password_security,
+  public.invites,
+  public.activity_logs,
+  public.workspace_messages,
+  public.stock_categories,
+  public.stock_products,
+  public.stock_assignments,
+  public.production_batches,
+  public.production_batch_materials,
+  public.stock_transactions,
+  public.credit_limits,
+  public.credit_limit_history,
+  public.platform_admins,
+  public.platform_feature_modules,
+  public.platform_email_templates,
+  public.platform_document_sequences,
+  public.platform_audit_logs,
+  public.platform_health_events
+from public, anon, authenticated;
+
+grant select on public.memberships to authenticated;
+grant select on public.invites to authenticated;
+grant select on public.activity_logs to authenticated;
+
+grant select, delete on public.clients to authenticated;
+grant update (
+  company_name,
+  logo_data_url,
+  brand_color,
+  timezone,
+  currency,
+  currency_symbol,
+  date_format,
+  document_business_name,
+  credit_limit_email_enabled,
+  credit_limit_sms_enabled
+) on public.clients to authenticated;
+
+grant select, insert on public.stock_categories to authenticated;
+grant update (code, name, timeframe, behavior)
+on public.stock_categories to authenticated;
+
+grant select, insert on public.stock_products to authenticated;
+grant update (
+  category_id,
+  sku,
+  name,
+  warehouse,
+  region,
+  reorder_point,
+  daily_velocity,
+  unit_cost,
+  unit_price,
+  equipment_status,
+  updated_at,
+  unit,
+  image_url,
+  status
+) on public.stock_products to authenticated;
+
+grant select, insert on public.stock_assignments to authenticated;
+grant update (
+  product_id,
+  rep_membership_id,
+  route_label,
+  rep_name,
+  assigned_at,
+  quantity_assigned,
+  quantity_sold,
+  quantity_returned,
+  status
+) on public.stock_assignments to authenticated;
+
+-- Production records are immutable and can only be created by the atomic RPC.
+grant select on public.production_batches to authenticated;
+grant select on public.production_batch_materials to authenticated;
+
+-- The stock ledger is append-only. Production ledger entries are created only by
+-- record_production_batch; other inserts still pass the strict insert policy.
+grant select, insert on public.stock_transactions to authenticated;
+
+grant select, insert on public.credit_limits to authenticated;
+grant update (
+  party_type,
+  party_name,
+  membership_id,
+  limit_amount,
+  balance_amount,
+  previous_limit_amount,
+  changed_by_user_id,
+  changed_by_name,
+  changed_at,
+  discount_percent,
+  payment_period_days,
+  late_penalty_percent
+) on public.credit_limits to authenticated;
 grant select on public.credit_limit_history to authenticated;
+
 grant select on public.platform_admins to authenticated;
 grant select, insert, update on public.platform_feature_modules to authenticated;
 grant select, insert, update on public.platform_email_templates to authenticated;
@@ -1264,7 +2090,10 @@ create policy "clients_select_by_membership"
 on public.clients
 for select
 to authenticated
-using (public.is_client_member(id) or public.is_platform_admin());
+using (
+  public.is_client_member(id)
+  or public.is_platform_admin()
+);
 
 drop policy if exists "clients_update_by_admin" on public.clients;
 create policy "clients_update_by_admin"
@@ -1289,12 +2118,6 @@ to authenticated
 using (public.is_client_member(client_id) or user_id = auth.uid() or public.is_platform_admin());
 
 drop policy if exists "memberships_update_by_admin_or_self" on public.memberships;
-create policy "memberships_update_by_admin_or_self"
-on public.memberships
-for update
-to authenticated
-using (public.is_client_admin(client_id) or user_id = auth.uid())
-with check (public.is_client_admin(client_id) or user_id = auth.uid());
 
 drop policy if exists "invites_select_by_admin" on public.invites;
 create policy "invites_select_by_admin"
@@ -1444,7 +2267,18 @@ on public.stock_products
 for all
 to authenticated
 using (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']))
-with check (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']));
+with check (
+  public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper'])
+  and (
+    category_id is null
+    or exists (
+      select 1
+      from public.stock_categories linked_category
+      where linked_category.id = stock_products.category_id
+        and linked_category.client_id = stock_products.client_id
+    )
+  )
+);
 
 drop policy if exists "stock_assignments_select_by_client" on public.stock_assignments;
 create policy "stock_assignments_select_by_client"
@@ -1459,30 +2293,46 @@ on public.stock_assignments
 for all
 to authenticated
 using (public.has_client_role(client_id, array['manager', 'store_keeper']))
-with check (public.has_client_role(client_id, array['manager', 'store_keeper']));
+with check (
+  public.has_client_role(client_id, array['manager', 'store_keeper'])
+  and exists (
+    select 1
+    from public.stock_products assigned_product
+    where assigned_product.id = stock_assignments.product_id
+      and assigned_product.client_id = stock_assignments.client_id
+  )
+  and (
+    rep_membership_id is null
+    or exists (
+      select 1
+      from public.memberships representative
+      where representative.id = stock_assignments.rep_membership_id
+        and representative.client_id = stock_assignments.client_id
+        and representative.role = 'sales_rep'
+        and representative.status = 'active'
+    )
+  )
+);
 
 drop policy if exists "production_batches_by_stock_roles" on public.production_batches;
-create policy "production_batches_by_stock_roles"
+drop policy if exists "production_batches_select_by_client" on public.production_batches;
+create policy "production_batches_select_by_client"
 on public.production_batches
-for all
+for select
 to authenticated
-using (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']))
-with check (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']));
+using (public.is_client_member(client_id));
 
 drop policy if exists "production_batch_materials_by_stock_roles" on public.production_batch_materials;
-create policy "production_batch_materials_by_stock_roles"
+drop policy if exists "production_batch_materials_select_by_client" on public.production_batch_materials;
+create policy "production_batch_materials_select_by_client"
 on public.production_batch_materials
-for all
+for select
 to authenticated
 using (exists (
-  select 1 from public.production_batches batch
-  where batch.id = batch_id
-    and public.has_client_role(batch.client_id, array['ceo', 'manager', 'store_keeper'])
-))
-with check (exists (
-  select 1 from public.production_batches batch
-  where batch.id = batch_id
-    and public.has_client_role(batch.client_id, array['ceo', 'manager', 'store_keeper'])
+  select 1
+  from public.production_batches batch
+  where batch.id = production_batch_materials.batch_id
+    and public.is_client_member(batch.client_id)
 ));
 
 drop policy if exists "stock_transactions_select_by_client" on public.stock_transactions;
@@ -1490,15 +2340,85 @@ create policy "stock_transactions_select_by_client"
 on public.stock_transactions
 for select
 to authenticated
-using (public.is_client_member(client_id));
+using (
+  public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper', 'accountant'])
+  or (
+    public.has_client_role(client_id, array['sales_rep'])
+    and (
+      recorded_by_user_id = auth.uid()
+      or exists (
+        select 1
+        from public.stock_assignments stock_assignment
+        join public.memberships representative
+          on representative.id = stock_assignment.rep_membership_id
+        where stock_assignment.id = stock_transactions.assignment_id
+          and stock_assignment.client_id = stock_transactions.client_id
+          and representative.client_id = stock_transactions.client_id
+          and representative.user_id = auth.uid()
+          and representative.status = 'active'
+      )
+    )
+  )
+);
 
 drop policy if exists "stock_transactions_write_by_stock_roles" on public.stock_transactions;
-create policy "stock_transactions_write_by_stock_roles"
+drop policy if exists "stock_transactions_insert_by_stock_roles" on public.stock_transactions;
+create policy "stock_transactions_insert_by_stock_roles"
 on public.stock_transactions
-for all
+for insert
 to authenticated
-using (public.has_client_role(client_id, array['manager', 'store_keeper', 'sales_rep']))
-with check (public.has_client_role(client_id, array['manager', 'store_keeper', 'sales_rep']));
+with check (
+  (
+    (
+      public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper'])
+      and transaction_type not in ('production_consumption', 'production_output')
+    )
+    or (
+      public.has_client_role(client_id, array['sales_rep'])
+      and transaction_type in ('sale', 'return')
+      and recorded_by_user_id = auth.uid()
+      and quantity > 0
+      and assignment_id is not null
+      and product_id is not null
+      and exists (
+        select 1
+        from public.stock_assignments stock_assignment
+        join public.memberships representative
+          on representative.id = stock_assignment.rep_membership_id
+        where stock_assignment.id = stock_transactions.assignment_id
+          and stock_assignment.client_id = stock_transactions.client_id
+          and stock_assignment.product_id = stock_transactions.product_id
+          and stock_assignment.status = 'open'
+          and representative.client_id = stock_transactions.client_id
+          and representative.user_id = auth.uid()
+          and representative.status = 'active'
+          and representative.role = 'sales_rep'
+      )
+    )
+  )
+  and batch_id is null
+  and quantity > 0
+  and product_id is not null
+  and exists (
+    select 1
+    from public.stock_products linked_product
+    where linked_product.id = stock_transactions.product_id
+      and linked_product.client_id = stock_transactions.client_id
+  )
+  and (
+    assignment_id is null
+    or exists (
+      select 1
+      from public.stock_assignments linked_assignment
+      where linked_assignment.id = stock_transactions.assignment_id
+        and linked_assignment.client_id = stock_transactions.client_id
+        and (
+          stock_transactions.product_id is null
+          or linked_assignment.product_id = stock_transactions.product_id
+        )
+    )
+  )
+);
 
 drop policy if exists "credit_limits_select_by_client" on public.credit_limits;
 create policy "credit_limits_select_by_client"
@@ -1513,7 +2433,19 @@ on public.credit_limits
 for all
 to authenticated
 using (public.has_client_role(client_id, array['manager', 'accountant', 'ceo']))
-with check (public.has_client_role(client_id, array['manager', 'accountant', 'ceo']));
+with check (
+  public.has_client_role(client_id, array['manager', 'accountant', 'ceo'])
+  and (
+    membership_id is null
+    or exists (
+      select 1
+      from public.memberships linked_membership
+      where linked_membership.id = credit_limits.membership_id
+        and linked_membership.client_id = credit_limits.client_id
+        and linked_membership.role = 'sales_rep'
+    )
+  )
+);
 
 drop policy if exists "credit_limit_history_select_by_client" on public.credit_limit_history;
 create policy "credit_limit_history_select_by_client"

@@ -1,18 +1,27 @@
 import assert from "node:assert/strict";
 
-import { effectiveOrderStatus, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
+import { effectiveOrderStatus, getCustomerOrderCompletion, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
 import { buildInvoiceDocument, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
-import { scopeStateForCurrentRole } from "../src/js/services/rbac.js";
+import { currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
 import { renderAuth } from "../src/js/views/auth.js";
 import { renderDashboard } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
+import { renderOrders } from "../src/js/views/orders.js";
 import { renderSettings } from "../src/js/views/settings.js";
+import { buildLoginDetailsEmail } from "../src/js/views/team.js";
+import { renderTeam } from "../src/js/views/team.js";
 
 globalThis.window = { location: { hash: "#/dashboard" } };
+const browserStorage = new Map();
+globalThis.localStorage = {
+  getItem(key) { return browserStorage.get(key) || null; },
+  setItem(key, value) { browserStorage.set(key, String(value)); },
+  removeItem(key) { browserStorage.delete(key); }
+};
 
 const client = { id: "client-test", companyName: "Test Factory", currencySymbol: "₦" };
 const accounts = [
@@ -23,6 +32,12 @@ const accounts = [
   { id: "membership-store", userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" }
 ];
 const store = createStore();
+
+assert.equal(
+  currentUserRole({ accounts: [], user: { user_metadata: { role: "ceo" } } }),
+  "sales_rep",
+  "untrusted user metadata must not grant a privileged role"
+);
 
 const loginHtml = renderAuth({ routeId: "login" });
 assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 5, "login must show five role cards");
@@ -49,6 +64,9 @@ assert.match(managerSettings, /name="creditLimitEmailEnabled" type="checkbox"/);
 assert.match(managerSettings, /name="creditLimitSmsEnabled" type="checkbox"/);
 assert.doesNotMatch(managerSettings, /name="creditLimitEmailEnabled" type="checkbox" checked/);
 assert.doesNotMatch(managerSettings, /name="creditLimitSmsEnabled" type="checkbox" checked/);
+const managerTeam = renderTeam({ state: store.getState() });
+assert.doesNotMatch(managerTeam, /<option value="ceo">/);
+assert.doesNotMatch(managerTeam, /<option value="manager">/);
 store.dispatch({
   type: "UPSERT_PRODUCT",
   productId: "SKU-CHIPS",
@@ -84,6 +102,7 @@ store.dispatch({
   recipientName: "Amina Rep",
   destination: "Route A",
   dispatchDate: "2026-07-10",
+  expectedDeliveryAt: "2099-07-11",
   staffName: "Musa Manager"
 });
 assert.equal(store.getState().stockAssignments.length, 0, "raw materials must not be assigned to a representative");
@@ -93,6 +112,9 @@ store.dispatch({
   type: "RECORD_PRODUCTION_USAGE",
   batchDate: "2026-07-10",
   batchReference: "BATCH-REJECTED",
+  finishedProductId: "SKU-CHIPS",
+  quantityProduced: 10,
+  purpose: "Factory stock",
   materials: [{ productId: "RAW-OIL", quantity: 51 }]
 });
 assert.equal(store.getState().products.find((item) => item.id === "RAW-OIL").stock, 50, "batch usage above stock on hand must be rejected");
@@ -102,14 +124,41 @@ store.dispatch({
   type: "RECORD_PRODUCTION_USAGE",
   batchDate: "2026-07-10",
   batchReference: "BATCH-1001",
+  finishedProductId: "SKU-CHIPS",
+  quantityProduced: 10,
+  purpose: "Customer orders",
+  notes: "Morning production run",
   materials: [{ productId: "RAW-OIL", quantity: 5 }]
 });
 assert.equal(store.getState().products.find((item) => item.id === "RAW-OIL").stock, 45);
+assert.equal(store.getState().products.find((item) => item.id === "SKU-CHIPS").stock, 110, "production output must increase finished stock");
 assert.equal(store.getState().productionBatches[0].materials[0].productId, "RAW-OIL");
+assert.equal(store.getState().productionBatches[0].finishedProductId, "SKU-CHIPS");
+assert.equal(store.getState().stockTransactions[0].type, "production usage");
+assert.equal(store.getState().stockTransactions[1].type, "production output");
 globalThis.window.location.hash = "#/inventory?tab=production-usage";
 const productionUsage = renderInventory({ state: store.getState() });
 assert.match(productionUsage, /Production usage/);
 assert.match(productionUsage, /BATCH-1001/);
+assert.match(productionUsage, /Customer orders/);
+assert.match(productionUsage, /Plantain Chips/);
+assert.match(productionUsage, /Sell raw material/);
+
+store.dispatch({
+  type: "RECORD_RAW_MATERIAL_SALE",
+  productId: "RAW-OIL",
+  quantity: 2,
+  customerName: "Bakery Direct",
+  paymentType: "cash",
+  unitPrice: 1200,
+  saleDate: "2026-07-10",
+  notes: "Factory-gate sale"
+});
+assert.equal(store.getState().products.find((item) => item.id === "RAW-OIL").stock, 43, "raw-material sale must reduce raw stock");
+const rawMaterialSale = store.getState().stockTransactions.find((item) => item.productId === "RAW-OIL" && item.type === "sale");
+assert.ok(rawMaterialSale, "raw-material sale must create a stock movement");
+assert.ok(store.getState().orders.some((order) => order.transactionId === rawMaterialSale.id), "raw-material sale must create an order");
+assert.ok(store.getState().invoices.some((invoice) => invoice.transactionId === rawMaterialSale.id), "raw-material sale must create an invoice");
 
 store.getState().featureModules = [{ clientId: client.id, moduleKey: "raw_materials", enabled: false }];
 globalThis.window.location.hash = "#/inventory?tab=stock-health";
@@ -126,16 +175,18 @@ store.dispatch({
   recipientName: "Amina Rep",
   destination: "Route A",
   dispatchDate: "2026-07-10",
+  expectedDeliveryAt: "2099-07-11",
   staffName: "Musa Manager"
 });
 
 let state = store.getState();
 const assignment = state.stockAssignments[0];
-assert.equal(state.products.find((item) => item.id === "SKU-CHIPS").stock, 80, "dispatch must immediately reduce factory stock");
+assert.equal(state.products.find((item) => item.id === "SKU-CHIPS").stock, 90, "dispatch must immediately reduce factory stock");
 assert.equal(assignment.assigned, 20);
 assert.equal(assignment.repUserId, "user-rep", "assignment must be scoped to the selected representative account");
 
 authenticate("user-rep");
+const salesBeforeRejectedWalkInCredit = store.getState().stockTransactions.filter((item) => item.type === "sale").length;
 store.dispatch({
   type: "LOG_REP_TRANSACTION",
   assignmentIds: [assignment.id],
@@ -148,7 +199,11 @@ store.dispatch({
   paymentType: "credit",
   repName: "Amina Rep"
 });
-assert.equal(store.getState().stockTransactions.filter((item) => item.type === "sale").length, 0, "walk-in credit must be rejected");
+assert.equal(
+  store.getState().stockTransactions.filter((item) => item.type === "sale").length,
+  salesBeforeRejectedWalkInCredit,
+  "walk-in credit must be rejected"
+);
 
 store.dispatch({
   type: "LOG_REP_TRANSACTION",
@@ -164,7 +219,7 @@ store.dispatch({
 });
 
 state = store.getState();
-const sale = state.stockTransactions.find((item) => item.type === "sale");
+const sale = state.stockTransactions.find((item) => item.type === "sale" && item.productId === "SKU-CHIPS");
 assert.ok(sale, "cash walk-in sale must be saved");
 assert.equal(sale.partyName, "Walk-in customer");
 assert.equal(state.stockAssignments[0].sold, 2);
@@ -264,8 +319,50 @@ const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
 assert.match(storeKeeperInventory, /name="sku" value="PRD-\d+"/, "new products must receive an editable automatic Product ID");
 
-assert.equal(effectiveOrderStatus({ status: "in_transit", dueAt: "2026-07-01" }, "2026-07-11"), "delayed");
-assert.equal(effectiveOrderStatus({ status: "delivered", dueAt: "2026-07-01" }, "2026-07-11"), "delivered");
+assert.equal(effectiveOrderStatus({ status: "in_transit", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delayed");
+assert.equal(effectiveOrderStatus({ status: "delivered", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delivered");
+assert.equal(
+  effectiveOrderStatus({ source: "quick_sale", status: "in_transit", dueAt: "2026-07-01" }, "2026-07-11"),
+  "in_transit",
+  "payment due dates must not trigger delivery delays"
+);
+
+store.getState().orders.unshift({
+  id: "ORD-AUTO-DELAY",
+  source: "factory_dispatch",
+  customerName: "Late Outlet",
+  retailerId: "",
+  region: "Lagos",
+  priority: "Normal",
+  status: "in_transit",
+  paymentType: "pending",
+  paymentStatus: "pending",
+  dueAt: "2026-07-01",
+  expectedDeliveryAt: "2026-07-01",
+  originalExpectedDeliveryAt: "2026-07-01",
+  items: [{ productId: "SKU-CHIPS", quantity: 1, unitPrice: 500 }]
+});
+store.dispatch({ type: "AUTO_UPDATE_DELAYED_ORDERS", referenceDate: "2026-07-11" });
+assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").status, "delayed");
+assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delaySource, "automatic");
+
+authenticate("user-rep");
+store.dispatch({ type: "SET_ORDER_STATUS", orderId: "ORD-AUTO-DELAY", status: "delivered" });
+assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").status, "delayed", "representatives cannot change delayed status");
+
+authenticate("user-manager");
+store.dispatch({
+  type: "UPDATE_ORDER_DELAY_DETAILS",
+  orderId: "ORD-AUTO-DELAY",
+  reason: "Vehicle issue",
+  revisedExpectedDeliveryAt: "2026-07-13",
+  note: "Replacement van assigned"
+});
+assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delayReason, "Vehicle issue");
+assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delayHistory.length, 1);
+const delayedOrdersPage = renderOrders({ state: store.getState() });
+assert.match(delayedOrdersPage, /Automatically detected/);
+assert.match(delayedOrdersPage, /Replacement van assigned|Review delay plan/);
 
 authenticate("user-manager");
 globalThis.window.location.hash = "#/inventory?tab=assignments";
@@ -441,5 +538,88 @@ assert.equal(store.getState().stockTransactions[0].type, "return to factory");
 const reportAfterFactoryReturn = renderDashboard({ state: scopeStateForCurrentRole(store.getState()) });
 assert.match(reportAfterFactoryReturn, /Back to factory/);
 assert.match(reportAfterFactoryReturn, /Returned to factory/);
+
+const completion = getCustomerOrderCompletion(
+  { id: "RTL-METRIC", name: "Metric Mart" },
+  {
+    orders: [
+      { retailerId: "RTL-METRIC", status: "delivered" },
+      { retailerId: "RTL-METRIC", status: "delayed", expectedDeliveryAt: "2026-07-01" },
+      { retailerId: "RTL-OTHER", status: "delivered" }
+    ]
+  },
+  "2026-07-11"
+);
+assert.deepEqual(completion, { completedOrders: 1, totalOrders: 2, percent: 50 });
+
+const emailDetails = buildLoginDetailsEmail({
+  client: { companyName: "Test Factory" },
+  invite: {
+    to: "new.staff@example.com",
+    temporaryPassword: "Distro-Secure123!",
+    role: "store_keeper"
+  },
+  loginUrl: "https://app.example.com/#/login"
+});
+assert.match(emailDetails.mailtoHref, /^mailto:new\.staff@example\.com\?/);
+assert.match(decodeURIComponent(emailDetails.mailtoHref), /Temporary password: Distro-Secure123!/);
+
+authenticate("user-manager");
+store.dispatch({
+  type: "CREATE_ACCOUNT",
+  payload: {
+    name: "Security Test",
+    email: "security-test@example.com",
+    phoneNumber: "08000000000",
+    role: "sales_rep"
+  }
+});
+const temporaryPassword = store.getState().invites.find((invite) => invite.to === "security-test@example.com")?.temporaryPassword;
+assert.ok(temporaryPassword, "temporary password must be available once for staff handoff");
+assert.ok(
+  [...browserStorage.values()].every((value) => !String(value).includes(temporaryPassword)),
+  "temporary passwords must never be persisted in browser storage"
+);
+
+const secondClient = { id: "client-other", companyName: "Other Factory", currencySymbol: "₦" };
+store.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: "other-manager" } },
+  user: { id: "other-manager", email: "other@example.com" },
+  client: secondClient,
+  accounts: [{ id: "other-membership", userId: "other-manager", name: "Other Manager", email: "other@example.com", role: "manager", status: "active" }],
+  invites: [],
+  featureModules: [],
+  messages: [],
+  activityLogs: []
+});
+assert.equal(store.getState().products.length, 0, "a different company must not inherit the previous company's browser records");
+authenticate("user-manager");
+assert.ok(store.getState().products.some((product) => product.id === "SKU-CHIPS"), "returning to a company restores only that company's records");
+
+const onboardingStore = createStore();
+onboardingStore.dispatch({
+  type: "SET_AUTH_CONTEXT",
+  session: { user: { id: "new-ceo" } },
+  user: { id: "new-ceo", email: "new-ceo@example.com" }
+});
+const onboardingClient = { id: "client-onboarding", companyName: "Onboarding Factory", currencySymbol: "₦" };
+onboardingStore.dispatch({
+  type: "SET_WORKSPACE",
+  client: onboardingClient,
+  accounts: [{ id: "onboarding-ceo", userId: "new-ceo", name: "New CEO", email: "new-ceo@example.com", role: "ceo", status: "active" }],
+  invites: [],
+  featureModules: [],
+  messages: [],
+  activityLogs: []
+});
+assert.equal(onboardingStore.getState().session?.user?.id, "new-ceo", "creating a workspace must preserve the authenticated session");
+assert.equal(onboardingStore.getState().backend.status, "authenticated");
+assert.ok([...browserStorage.keys()].some((key) => key.endsWith(":client-onboarding")));
+onboardingStore.dispatch({ type: "DELETE_CLIENT_ACCOUNT" });
+assert.ok(
+  [...browserStorage.keys()].every((key) => !key.endsWith(":client-onboarding")),
+  "deleting a company must remove its tenant-scoped browser state"
+);
 
 console.log("Web acceptance smoke checks passed.");

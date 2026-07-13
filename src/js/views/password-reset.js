@@ -170,8 +170,14 @@ export function bindPasswordReset({ root, store }) {
     const confirmPassword = formData.get("confirmPassword") || "";
     const submitButton = qs('button[type="submit"]', form);
 
-    if (String(newPassword).length < 8) {
-      writeMessage(root, "New password must be at least 8 characters.", true);
+    if (
+      String(newPassword).length < 12 ||
+      !/[a-z]/.test(String(newPassword)) ||
+      !/[A-Z]/.test(String(newPassword)) ||
+      !/\d/.test(String(newPassword)) ||
+      !/[^A-Za-z0-9]/.test(String(newPassword))
+    ) {
+      writeMessage(root, "Use 12+ characters with uppercase, lowercase, a number, and a symbol.", true);
       return;
     }
 
@@ -190,7 +196,7 @@ export function bindPasswordReset({ root, store }) {
         await updateCurrentUserPassword(newPassword);
 
         if (clientId) {
-          const workspace = await activateCurrentMembership(clientId);
+          const workspace = await activateCurrentMembership(clientId, newPassword);
           store.dispatch({
             type: "SET_WORKSPACE",
             ...workspace,

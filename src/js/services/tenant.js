@@ -60,12 +60,15 @@ export function createClientProfile(formData) {
 }
 
 export function generateTemporaryPassword() {
-  const words = ["Distro", "Route", "Stock", "Ledger", "Depot", "Retail"];
-  const word = words[Math.floor(Math.random() * words.length)];
-  const number = Math.floor(1000 + Math.random() * 9000);
-  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  if (!globalThis.crypto?.getRandomValues) {
+    throw new Error("Secure temporary password generation is unavailable in this browser.");
+  }
 
-  return `${word}-${number}-${suffix}`;
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+  const bytes = globalThis.crypto.getRandomValues(new Uint8Array(18));
+  const passwordBody = Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
+
+  return `Distro-${passwordBody}!`;
 }
 
 export function createAccountInvite({ client, name, email, phoneNumber, role }) {
@@ -94,6 +97,7 @@ export function createAccountInvite({ client, name, email, phoneNumber, role }) 
     to: normalizedEmail,
     subject: `Temporary access for ${client.companyName}`,
     resetLink: "",
+    role,
     temporaryPassword,
     status: "ready",
     createdAt: new Date().toISOString()

@@ -1,4 +1,9 @@
-import { creditUsageTone, getCreditLimitForParty, getCustomerRating } from "../services/calculations.js";
+import {
+  creditUsageTone,
+  getCreditLimitForParty,
+  getCustomerOrderCompletion,
+  getCustomerRating
+} from "../services/calculations.js";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
@@ -64,10 +69,6 @@ function renderSupermarketManager(state, permissions) {
         ${canManagePaymentTerms
           ? `
             <label class="field">
-              <span>Orders completed (%)</span>
-              <input name="fillRate" type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="90">
-            </label>
-            <label class="field">
               <span>Amount owed (${escapeHtml(moneySymbol)})</span>
               <input name="outstanding" type="number" min="0" step="1000" inputmode="numeric" placeholder="0">
             </label>
@@ -112,8 +113,14 @@ function customerCreditSummary(retailer, state) {
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], retailer.name);
   const balance = Number(creditLimit?.balance ?? retailer.outstanding ?? 0);
   const limit = Number(creditLimit?.limit || 0);
-  const creditUsage = limit ? (balance / limit) * 100 : 100;
-  const creditStatus = creditUsage >= 100 ? "credit_hold" : creditUsage >= 85 ? "credit_watch" : "credit_clear";
+  const creditUsage = limit > 0 ? (balance / limit) * 100 : 0;
+  const creditStatus = limit <= 0
+    ? balance > 0 ? "credit_hold" : "no_limit"
+    : creditUsage >= 100
+      ? "credit_hold"
+      : creditUsage >= 85
+        ? "credit_watch"
+        : "credit_clear";
 
   return {
     creditLimit,
@@ -190,7 +197,22 @@ function detailItem(label, value) {
 
 function renderCustomerDetails(retailer, state, permissions) {
   const { creditLimit, balance, limit, creditUsage, creditStatus } = customerCreditSummary(retailer, state);
+  const orderCompletion = getCustomerOrderCompletion(retailer, state);
   const rating = getCustomerRating(retailer, state);
+  const completedOrderLabel = orderCompletion.totalOrders
+    ? `${formatNumber(orderCompletion.completedOrders)} of ${formatNumber(orderCompletion.totalOrders)} - ${formatPercent(orderCompletion.percent)}`
+    : "No orders yet";
+  const displayedCreditUsage = limit > 0 ? creditUsage : balance > 0 ? 100 : 0;
+  const creditUsageLabel = limit > 0
+    ? formatPercent(creditUsage)
+    : balance > 0
+      ? "Credit hold"
+      : "No limit set";
+  const creditUsageDescription = limit > 0
+    ? `${formatCurrency(balance)} of ${formatCurrency(limit)} used.`
+    : balance > 0
+      ? `${formatCurrency(balance)} is outstanding without an approved credit limit.`
+      : "Set a credit limit to begin tracking usage.";
 
   return `
     <div class="customer-detail-summary">
@@ -212,30 +234,35 @@ function renderCustomerDetails(retailer, state, permissions) {
       ${detailItem("Address", retailer.address || "Not set")}
       ${detailItem("Customer rating", rating.label)}
       ${detailItem("Rating basis", `${formatNumber(rating.score)} / 100`)}
-      ${detailItem("Orders completed", formatPercent(retailer.fillRate))}
       ${detailItem("Last sale", formatDate(retailer.lastOrder))}
       ${detailItem("Last contact", formatDate(retailer.lastContact))}
       ${detailItem("Balance owed", formatCurrency(balance))}
       ${detailItem("Credit limit", limit ? formatCurrency(limit) : "Not set")}
-      ${detailItem("Credit usage", limit ? formatPercent(creditUsage) : "No limit set")}
       ${detailItem("Days to pay", `${formatNumber(creditLimit?.paymentPeriodDays ?? 14)} days`)}
       ${detailItem("Discount / late penalty", `${formatTermPercent(creditLimit?.discountPercent)} / ${formatTermPercent(creditLimit?.latePenaltyPercent)}`)}
     </div>
 
-    <div class="stock-line">
-      <div class="stock-meta">
-        <span>Orders completed</span>
-        <span>${formatPercent(retailer.fillRate)}</span>
-      </div>
-      ${progressBar(retailer.fillRate, retailer.fillRate < 88 ? "warning" : "good")}
-    </div>
+    <div class="customer-performance-grid">
+      <section class="customer-performance-card stock-line${orderCompletion.totalOrders ? "" : " is-neutral"}">
+        <div class="stock-meta">
+          <span>Orders completed</span>
+          <strong>${escapeHtml(completedOrderLabel)}</strong>
+        </div>
+        ${progressBar(
+          orderCompletion.percent,
+          orderCompletion.totalOrders && orderCompletion.percent < 88 ? "warning" : "good"
+        )}
+        <p>Delivered orders for this customer outlet.</p>
+      </section>
 
-    <div class="stock-line">
-      <div class="stock-meta">
-        <span>Credit usage</span>
-        <span>${limit ? formatPercent(creditUsage) : "No limit"}</span>
-      </div>
-      ${progressBar(creditUsage, creditUsageTone(creditUsage))}
+      <section class="customer-performance-card stock-line${limit || balance > 0 ? "" : " is-neutral"}">
+        <div class="stock-meta">
+          <span>Credit usage</span>
+          <strong>${creditUsageLabel}</strong>
+        </div>
+        ${progressBar(displayedCreditUsage, limit || balance > 0 ? creditUsageTone(displayedCreditUsage) : "good")}
+        <p>${creditUsageDescription}</p>
+      </section>
     </div>
 
     <footer class="customer-detail-actions">
@@ -354,7 +381,6 @@ export function bindRetailers({ root, store }) {
     retailerForm.elements.channel.value = hasChannelOption ? channelValue : "Other";
     retailerForm.elements.contact.value = retailer.contact || "";
     retailerForm.elements.contactPhone.value = retailer.contactPhone || "";
-    if (retailerForm.elements.fillRate) retailerForm.elements.fillRate.value = retailer.fillRate || 0;
     if (retailerForm.elements.outstanding) retailerForm.elements.outstanding.value = creditLimit?.balance ?? retailer.outstanding ?? 0;
     if (retailerForm.elements.creditLimit) retailerForm.elements.creditLimit.value = creditLimit?.limit || 0;
     if (retailerForm.elements.discountPercent) retailerForm.elements.discountPercent.value = creditLimit?.discountPercent || 0;
@@ -394,7 +420,6 @@ export function bindRetailers({ root, store }) {
       channel: formData.get("channel"),
       contact: formData.get("contact"),
       contactPhone: formData.get("contactPhone"),
-      fillRate: formData.get("fillRate"),
       outstanding: formData.get("outstanding"),
       creditLimit: formData.get("creditLimit"),
       discountPercent: formData.get("discountPercent"),

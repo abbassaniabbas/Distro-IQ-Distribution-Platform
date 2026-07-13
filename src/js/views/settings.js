@@ -502,7 +502,6 @@ export function bindSettings({ root, store }) {
         });
         const workspace = await updateMyMembershipProfile({
           clientId: currentState.client.id,
-          userId: currentState.user.id,
           name: values.name
         });
         store.dispatch({

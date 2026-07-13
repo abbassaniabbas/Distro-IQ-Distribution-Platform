@@ -49,6 +49,7 @@ export function scopeStateForEnabledModules(state) {
   const productIds = new Set(products.map((product) => product.id));
   const creditEnabled = isModuleEnabled(state, "credit_control");
   const reportsEnabled = isModuleEnabled(state, "field_reports");
+  const productionTrackingEnabled = enabledCategories.has("raw_materials") && enabledCategories.has("finished_products");
 
   return {
     ...state,
@@ -56,6 +57,12 @@ export function scopeStateForEnabledModules(state) {
     products,
     stockAssignments: (state.stockAssignments || []).filter((assignment) => productIds.has(assignment.productId)),
     stockTransactions: (state.stockTransactions || []).filter((transaction) => productIds.has(transaction.productId)),
+    productionBatches: productionTrackingEnabled
+      ? (state.productionBatches || []).filter((batch) => (
+          productIds.has(batch.finishedProductId) &&
+          (batch.materials || []).every((material) => productIds.has(material.productId))
+        ))
+      : [],
     orders: (state.orders || []).map((order) => ({
       ...order,
       items: (order.items || []).filter((item) => productIds.has(item.productId))

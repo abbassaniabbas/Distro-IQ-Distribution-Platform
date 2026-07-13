@@ -10,6 +10,32 @@ import { iconButton, panelHeader, statusPill, table } from "../ui/components.js"
 
 const ORDER_PAGE_SIZE = 10;
 const ORDER_STATUSES = ["in_transit", "delayed", "delivered"];
+const DELAY_REASONS = [
+  "Missed expected delivery date",
+  "Traffic / route disruption",
+  "Vehicle issue",
+  "Customer unavailable",
+  "Weather disruption",
+  "Documentation / loading issue",
+  "Other"
+];
+
+function dateOnly(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function orderExpectedDate(order) {
+  return dateOnly(order.expectedDeliveryAt || (order.source === "factory_dispatch" ? order.dueAt : ""));
+}
+
+function orderDaysLate(order, today = new Date().toISOString().slice(0, 10)) {
+  const expected = order.originalExpectedDeliveryAt || orderExpectedDate(order);
+  const expectedTime = Date.parse(`${dateOnly(expected)}T00:00:00Z`);
+  const todayTime = Date.parse(`${dateOnly(today)}T00:00:00Z`);
+
+  if (Number.isNaN(expectedTime) || Number.isNaN(todayTime)) return 0;
+  return Math.max(0, Math.floor((todayTime - expectedTime) / 86400000));
+}
 
 function isCreditOrder(order) {
   const paymentType = String(order.paymentType || "").toLowerCase();
@@ -53,6 +79,100 @@ function renderSummaryTiles(orders) {
   `;
 }
 
+function renderDelayAlert(orders) {
+  const delayedOrders = orders.filter((order) => order.status === "delayed");
+  if (!delayedOrders.length) return "";
+
+  const longestDelay = Math.max(...delayedOrders.map((order) => orderDaysLate(order)), 0);
+
+  return `
+    <section class="order-delay-alert" role="status">
+      <div>
+        <span class="eyebrow">Delivery attention</span>
+        <strong>${formatNumber(delayedOrders.length)} delayed order${delayedOrders.length === 1 ? "" : "s"}</strong>
+        <p>Missed arrival dates are marked automatically and kept in the activity history.</p>
+      </div>
+      <div class="order-delay-alert-stat">
+        <span>Longest delay</span>
+        <strong>${formatNumber(longestDelay)} day${longestDelay === 1 ? "" : "s"}</strong>
+      </div>
+    </section>
+  `;
+}
+
+function renderDelayMeta(order) {
+  if (order.status !== "delayed") return "";
+
+  const daysLate = orderDaysLate(order);
+  const source = order.delaySource === "manual" ? "Manually flagged" : "Automatically detected";
+
+  return `
+    <div class="order-delay-meta">
+      <strong>${formatNumber(daysLate)} day${daysLate === 1 ? "" : "s"} late</strong>
+      <span>${escapeHtml(source)}</span>
+      <span>${escapeHtml(order.delayReason || "Delivery issue under review")}</span>
+    </div>
+  `;
+}
+
+function renderDelayModal() {
+  return `
+    <div id="order-delay-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal order-delay-modal" role="dialog" aria-modal="true" aria-labelledby="order-delay-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Delayed delivery</span>
+            <h2 id="order-delay-title">Delay details</h2>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close delay details", className: "js-close-order-delay" })}
+        </header>
+        <div id="order-delay-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function renderDelayDetails(order, canManageOrderFlow) {
+  const selectedReason = order.delayReason || "Missed expected delivery date";
+  const expectedAt = orderExpectedDate(order);
+  const originalExpectedAt = dateOnly(order.originalExpectedDeliveryAt || expectedAt);
+
+  return `
+    <div class="order-delay-summary">
+      <div><span>Order</span><strong>${escapeHtml(order.id)}</strong></div>
+      <div><span>Customer</span><strong>${escapeHtml(order.retailer?.name || order.customerName || "Customer")}</strong></div>
+      <div><span>Original arrival</span><strong>${escapeHtml(formatDate(originalExpectedAt))}</strong></div>
+      <div><span>Current ETA</span><strong>${escapeHtml(formatDate(expectedAt))}</strong></div>
+      <div><span>Delay</span><strong>${formatNumber(orderDaysLate(order))} day${orderDaysLate(order) === 1 ? "" : "s"}</strong></div>
+      <div><span>Detected</span><strong>${escapeHtml(order.delaySource === "manual" ? "Manual" : "Automatic")}</strong></div>
+    </div>
+    <form id="order-delay-form" class="manager-form-grid" novalidate>
+      <input type="hidden" name="orderId" value="${escapeHtml(order.id)}">
+      <label class="field">
+        <span>Reason</span>
+        <select name="reason" required ${canManageOrderFlow ? "" : "disabled"}>
+          ${DELAY_REASONS.map((reason) => `<option value="${escapeHtml(reason)}" ${reason === selectedReason ? "selected" : ""}>${escapeHtml(reason)}</option>`).join("")}
+        </select>
+      </label>
+      <label class="field">
+        <span>Revised expected arrival</span>
+        <input name="revisedExpectedDeliveryAt" type="date" value="${escapeHtml(expectedAt)}" ${canManageOrderFlow ? "" : "disabled"}>
+      </label>
+      <label class="field span-full">
+        <span>Follow-up note</span>
+        <textarea name="note" rows="4" maxlength="500" placeholder="Carrier update, customer contact, or recovery plan" ${canManageOrderFlow ? "" : "disabled"}>${escapeHtml(order.delayNote || "")}</textarea>
+      </label>
+      ${order.delayUpdatedBy ? `<p class="muted span-full">Last updated by ${escapeHtml(order.delayUpdatedBy)} on ${escapeHtml(formatDate(dateOnly(order.delayUpdatedAt)))}</p>` : ""}
+      ${canManageOrderFlow ? `
+        <div class="manager-form-actions span-full">
+          <button class="button primary" type="submit">Save delay plan</button>
+        </div>
+        <span id="order-delay-message" class="field-error span-full" role="status"></span>
+      ` : '<p class="muted span-full">Only the CEO or a Manager can change delayed-order details.</p>'}
+    </form>
+  `;
+}
+
 function renderOrderRows(orders, state, permissions) {
   const canManageOrderFlow = ["manager", "ceo"].includes(currentUserRole(state));
 
@@ -62,6 +182,10 @@ function renderOrderRows(orders, state, permissions) {
     const creditMeta = creditGuard.limitAmount
       ? `${formatPercent(creditGuard.usagePercent)} used`
       : "No limit set";
+    const expectedAt = orderExpectedDate(order);
+    const scheduleLabel = expectedAt
+      ? `Expected ${formatDate(expectedAt)}`
+      : `Payment due ${formatDate(order.dueAt)}`;
     const searchIndex = [
       order.id,
       order.retailer?.name,
@@ -82,13 +206,16 @@ function renderOrderRows(orders, state, permissions) {
       >
         <td>
           <strong>${escapeHtml(order.id)}</strong>
-          <div class="muted">Due ${formatDate(order.dueAt)} - ${escapeHtml(statusText(order.paymentType))}</div>
+          <div class="muted">${escapeHtml(scheduleLabel)} - ${escapeHtml(statusText(order.paymentType))}</div>
         </td>
         <td>
           ${escapeHtml(order.retailer?.name || "Unknown customer")}
           <div class="muted">${escapeHtml(order.region)} - ${escapeHtml(order.priority)}</div>
         </td>
-        <td>${statusPill(order.status)}</td>
+        <td>
+          ${statusPill(order.status)}
+          ${renderDelayMeta(order)}
+        </td>
         <td>
           ${statusPill(creditGuard.status)}
           <div class="muted">${escapeHtml(creditMeta)}</div>
@@ -98,7 +225,7 @@ function renderOrderRows(orders, state, permissions) {
           <div class="row-actions">
             <label class="order-status-select">
               <span class="sr-only">Set sales order step</span>
-              <select class="js-order-status-select" data-order-id="${escapeHtml(order.id)}" ${canManageOrderFlow ? "" : "disabled"}>
+              <select class="js-order-status-select" data-order-id="${escapeHtml(order.id)}" data-current-status="${escapeHtml(order.status)}" ${canManageOrderFlow ? "" : "disabled"}>
                 ${ORDER_STATUSES.map((status) => `
                   <option value="${escapeHtml(status)}" ${order.status === status ? "selected" : ""}>${escapeHtml(statusText(status))}</option>
                 `).join("")}
@@ -111,13 +238,20 @@ function renderOrderRows(orders, state, permissions) {
               disabled: !canAdvanceOrder,
               data: { "order-id": order.id }
             })}
-            ${iconButton({
-              iconName: "clock",
-              label: "Mark delayed",
-              className: "js-delay-order",
-              disabled: order.status === "delivered" || order.status === "delayed" || !canManageOrderFlow,
-              data: { "order-id": order.id }
-            })}
+            ${order.status === "delayed"
+              ? iconButton({
+                  iconName: "clock",
+                  label: canManageOrderFlow ? "Review delay plan" : "View delay details",
+                  className: "js-review-order-delay",
+                  data: { "order-id": order.id }
+                })
+              : iconButton({
+                  iconName: "clock",
+                  label: "Mark delayed",
+                  className: "js-delay-order",
+                  disabled: order.status === "delivered" || !canManageOrderFlow,
+                  data: { "order-id": order.id }
+                })}
           </div>
         </td>
       </tr>
@@ -126,13 +260,18 @@ function renderOrderRows(orders, state, permissions) {
 }
 
 export function renderOrders({ state }) {
-  const orders = getOrdersWithTotals(state);
+  const orders = getOrdersWithTotals(state).sort((a, b) => {
+    if (a.status === "delayed" && b.status !== "delayed") return -1;
+    if (a.status !== "delayed" && b.status === "delayed") return 1;
+    return String(a.expectedDeliveryAt || a.dueAt || "").localeCompare(String(b.expectedDeliveryAt || b.dueAt || ""));
+  });
   const regions = [...new Set(orders.map((order) => order.region).filter(Boolean))].sort();
   const permissions = currentUserPermissions(state);
 
   return `
     <section class="view orders-view">
       ${renderSummaryTiles(orders)}
+      ${renderDelayAlert(orders)}
 
       <section class="panel orders-layout">
         <div class="toolbar">
@@ -168,6 +307,7 @@ export function renderOrders({ state }) {
           <button class="button" type="button" data-order-page="next">Next</button>
         </div>
       </section>
+      ${renderDelayModal()}
     </section>
   `;
 }
@@ -176,6 +316,48 @@ export function bindOrders({ root, store, signal }) {
   const statusFilter = qs("#order-status-filter", root);
   const regionFilter = qs("#order-region-filter", root);
   const globalSearch = qs("#global-search", document);
+  const delayModal = qs("#order-delay-modal", root);
+  const delayContent = qs("#order-delay-content", root);
+
+  function closeDelayModal() {
+    if (delayModal) delayModal.hidden = true;
+  }
+
+  function openDelayModal(orderId) {
+    const state = store.getState();
+    const order = getOrdersWithTotals(state).find((item) => item.id === orderId);
+    const canManageOrderFlow = ["manager", "ceo"].includes(currentUserRole(state));
+
+    if (!order || !delayModal || !delayContent) return;
+
+    delayContent.innerHTML = renderDelayDetails(order, canManageOrderFlow);
+    delayModal.hidden = false;
+    delayModal.focus();
+
+    qs("#order-delay-form", delayContent)?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!canManageOrderFlow) return;
+
+      const formData = new FormData(event.currentTarget);
+      const reason = String(formData.get("reason") || "").trim();
+      const message = qs("#order-delay-message", delayContent);
+
+      if (!reason) {
+        if (message) message.textContent = "Choose a reason for the delay.";
+        return;
+      }
+
+      store.dispatch({
+        type: "UPDATE_ORDER_DELAY_DETAILS",
+        orderId: formData.get("orderId"),
+        reason,
+        revisedExpectedDeliveryAt: formData.get("revisedExpectedDeliveryAt"),
+        note: formData.get("note"),
+        message: "Delay plan updated"
+      });
+      closeDelayModal();
+    }, { signal });
+  }
 
   function setupOrderPagination() {
     const rows = qsa("[data-order-row]", root);
@@ -268,16 +450,30 @@ export function bindOrders({ root, store, signal }) {
 
   qsa(".js-delay-order", root).forEach((button) => {
     button.addEventListener("click", () => {
-      store.dispatch({
-        type: "DELAY_ORDER",
-        orderId: button.dataset.orderId,
-        message: "Sales order marked delayed"
-      });
+      openDelayModal(button.dataset.orderId);
     });
+  });
+
+  qsa(".js-review-order-delay", root).forEach((button) => {
+    button.addEventListener("click", () => openDelayModal(button.dataset.orderId));
+  });
+
+  delayModal?.addEventListener("click", (event) => {
+    if (event.target === delayModal || event.target.closest(".js-close-order-delay")) closeDelayModal();
+  });
+
+  delayModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeDelayModal();
   });
 
   qsa(".js-order-status-select", root).forEach((select) => {
     select.addEventListener("change", () => {
+      if (select.value === "delayed" && select.dataset.currentStatus !== "delayed") {
+        select.value = select.dataset.currentStatus || "in_transit";
+        openDelayModal(select.dataset.orderId);
+        return;
+      }
+
       store.dispatch({
         type: "SET_ORDER_STATUS",
         orderId: select.dataset.orderId,

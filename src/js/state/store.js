@@ -6,7 +6,7 @@ import {
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
 } from "../services/calculations.js";
-import { salesRepresentativeNames } from "../services/rbac.js";
+import { currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
 
@@ -70,6 +70,30 @@ function mergeCreditLimitRecords(existing, remote) {
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
+}
+
+function dateOnly(value) {
+  return String(value || "").slice(0, 10);
+}
+
+function isValidISODate(value) {
+  const candidate = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return false;
+
+  const parsed = new Date(`${candidate}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === candidate;
+}
+
+function expectedDeliveryDate(order) {
+  return dateOnly(order?.expectedDeliveryAt || (order?.source === "factory_dispatch" ? order?.dueAt : ""));
+}
+
+function daysBetween(startDate, endDate) {
+  const start = Date.parse(`${dateOnly(startDate)}T00:00:00Z`);
+  const end = Date.parse(`${dateOnly(endDate)}T00:00:00Z`);
+
+  if (Number.isNaN(start) || Number.isNaN(end)) return 0;
+  return Math.max(0, Math.floor((end - start) / 86400000));
 }
 
 function normalized(value) {
@@ -191,7 +215,10 @@ function normalizedOrderStatus(status) {
 function normalizeOrders(orders = []) {
   return (orders || []).map((order) => ({
     ...order,
-    status: normalizedOrderStatus(order.status)
+    status: normalizedOrderStatus(order.status),
+    expectedDeliveryAt: order.expectedDeliveryAt || (order.source === "factory_dispatch" ? order.dueAt || "" : ""),
+    originalExpectedDeliveryAt: order.originalExpectedDeliveryAt || order.expectedDeliveryAt || (order.source === "factory_dispatch" ? order.dueAt || "" : ""),
+    delayHistory: Array.isArray(order.delayHistory) ? order.delayHistory : []
   }));
 }
 
@@ -234,12 +261,55 @@ function ensureStateShape(value) {
 function getPersistableState(state) {
   return {
     ...state,
+    accounts: (state.accounts || []).map(({ temporaryPassword: _temporaryPassword, ...account }) => account),
+    invites: (state.invites || []).map(({ temporaryPassword: _temporaryPassword, ...invite }) => invite),
     backend: clone(seedData.backend),
     session: null,
     user: null,
     platformAdmin: false,
     platformOverview: []
   };
+}
+
+function canManageOrderFlow(state) {
+  return ["ceo", "manager"].includes(currentUserRole(state));
+}
+
+function automaticallyDelayOrders(state, writeActivity = true) {
+  const referenceDate = todayISO();
+  let updatedCount = 0;
+
+  (state.orders || []).forEach((order) => {
+    const expectedAt = expectedDeliveryDate(order);
+    if (normalizedOrderStatus(order.status) !== "in_transit" || !expectedAt || expectedAt >= referenceDate) return;
+
+    order.status = "delayed";
+    order.expectedDeliveryAt = order.expectedDeliveryAt || expectedAt;
+    order.originalExpectedDeliveryAt = order.originalExpectedDeliveryAt || expectedAt;
+    order.delaySource = "automatic";
+    order.delayReason = order.delayReason || "Missed expected delivery date";
+    order.delayDetectedAt = order.delayDetectedAt || new Date().toISOString();
+    order.delayDays = daysBetween(expectedAt, referenceDate);
+    order.updatedAt = referenceDate;
+    updatedCount += 1;
+
+    if (writeActivity) {
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "delayed",
+        recordType: "order",
+        recordLabel: order.id,
+        summary: `${order.id} was automatically marked delayed after missing its expected delivery date`,
+        actor: {
+          userId: "",
+          name: "DistroIQ system",
+          email: ""
+        }
+      });
+    }
+  });
+
+  return updatedCount;
 }
 
 function nextOrderStatus(status) {
@@ -407,6 +477,12 @@ function remapProductReferences(state, previousProductId, nextProductId) {
       if (line.productId === previousProductId) line.productId = nextProductId;
     });
   });
+  (state.productionBatches || []).forEach((batch) => {
+    if (batch.finishedProductId === previousProductId) batch.finishedProductId = nextProductId;
+    (batch.materials || []).forEach((material) => {
+      if (material.productId === previousProductId) material.productId = nextProductId;
+    });
+  });
 }
 
 function appendActivityLog(state, activity) {
@@ -415,7 +491,7 @@ function appendActivityLog(state, activity) {
   state.activityLogs = [
     createActivityLog({
       ...activity,
-      actor: getCurrentActor(state)
+      actor: activity.actor || getCurrentActor(state)
     }),
     ...state.activityLogs
   ];
@@ -457,10 +533,12 @@ function createQuickSaleOrder(state, {
   customerType,
   quantity,
   paymentType,
-  repName
+  repName,
+  saleDate = todayISO(),
+  unitPrice = Number(product?.unitPrice || 0)
 }) {
   const paymentLabel = String(paymentType || "cash").toLowerCase();
-  const today = todayISO();
+  const today = dateOnly(saleDate) || todayISO();
   const orderId = createId("ORD");
   const invoiceId = createId("INV");
   const isCreditSale = paymentLabel.includes("credit");
@@ -470,7 +548,7 @@ function createQuickSaleOrder(state, {
   const dueDate = new Date(`${today}T12:00:00`);
   dueDate.setDate(dueDate.getDate() + Number(customerLimit?.paymentPeriodDays ?? 14));
   const dueAt = dueDate.toISOString().slice(0, 10);
-  const amount = quantity * Number(product.unitPrice || 0);
+  const amount = quantity * Number(unitPrice || 0);
 
   state.orders = [
     {
@@ -497,7 +575,7 @@ function createQuickSaleOrder(state, {
           productId: product.id,
           productName: product.name,
           quantity,
-          unitPrice: Number(product.unitPrice || 0),
+          unitPrice: Number(unitPrice || 0),
           unitCost: Number(product.unitCost || 0)
         }
       ]
@@ -526,7 +604,7 @@ function createQuickSaleOrder(state, {
         productId: product.id,
         productName: product.name,
         quantity,
-        unitPrice: Number(product.unitPrice || 0),
+        unitPrice: Number(unitPrice || 0),
         unitCost: Number(product.unitCost || 0)
       }]
     },
@@ -554,6 +632,7 @@ function createDispatchSalesOrder(state, {
   recipientType,
   destination,
   dispatchDate,
+  expectedDeliveryAt,
   staffName,
   repUserId = ""
 }) {
@@ -575,7 +654,9 @@ function createDispatchSalesOrder(state, {
       status: "in_transit",
       paymentType: "pending",
       paymentStatus: "pending",
-      dueAt: dispatchDate,
+      dueAt: expectedDeliveryAt || dispatchDate,
+      expectedDeliveryAt: expectedDeliveryAt || dispatchDate,
+      originalExpectedDeliveryAt: expectedDeliveryAt || dispatchDate,
       createdAt: dispatchDate,
       updatedAt: dispatchDate,
       repName: dispatchesToRepresentative ? recipientName : staffName,
@@ -594,6 +675,11 @@ function createDispatchSalesOrder(state, {
   ];
 
   return orderId;
+}
+
+function workspaceBaseState(currentState, clientId) {
+  if (clientId && currentState.client?.id === clientId) return currentState;
+  return ensureStateShape(loadStoredState(clientId) || seedData);
 }
 
 function reducer(currentState, action) {
@@ -627,40 +713,48 @@ function reducer(currentState, action) {
     }
 
     case "SET_WORKSPACE": {
+      const baseState = workspaceBaseState(state, action.client?.id);
+
       return {
-        ...state,
+        ...baseState,
+        session: state.session,
+        user: state.user,
         client: action.client || null,
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
-        featureModules: Array.isArray(action.featureModules) ? action.featureModules : state.featureModules,
-        messages: Array.isArray(action.messages) ? action.messages : state.messages,
-        notificationReadAt: action.notificationReadAt || state.notificationReadAt,
-        activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
-        creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(state.creditLimits, action.creditLimits) : state.creditLimits,
+        featureModules: Array.isArray(action.featureModules) ? action.featureModules : baseState.featureModules,
+        messages: Array.isArray(action.messages) ? action.messages : baseState.messages,
+        notificationReadAt: action.notificationReadAt || baseState.notificationReadAt,
+        activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : baseState.activityLogs,
+        creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(baseState.creditLimits, action.creditLimits) : baseState.creditLimits,
         creditLimitHistory: Array.isArray(action.creditLimitHistory)
-          ? mergeCreditHistoryRecords(state.creditLimitHistory, action.creditLimitHistory)
-          : state.creditLimitHistory
+          ? mergeCreditHistoryRecords(baseState.creditLimitHistory, action.creditLimitHistory)
+          : baseState.creditLimitHistory,
+        backend: state.backend,
+        platformAdmin: state.platformAdmin,
+        platformOverview: state.platformOverview
       };
     }
 
     case "SET_AUTHENTICATED_WORKSPACE": {
-      return {
-        ...state,
+      const baseState = workspaceBaseState(state, action.client?.id);
+      const nextState = {
+        ...baseState,
         session: action.session || null,
         user: action.user || null,
         client: action.client || null,
         accounts: Array.isArray(action.accounts) ? action.accounts : [],
         invites: Array.isArray(action.invites) ? action.invites : [],
-        featureModules: Array.isArray(action.featureModules) ? action.featureModules : state.featureModules,
-        messages: Array.isArray(action.messages) ? action.messages : state.messages,
-        notificationReadAt: action.notificationReadAt || state.notificationReadAt,
-        activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : state.activityLogs,
-        creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(state.creditLimits, action.creditLimits) : state.creditLimits,
+        featureModules: Array.isArray(action.featureModules) ? action.featureModules : baseState.featureModules,
+        messages: Array.isArray(action.messages) ? action.messages : baseState.messages,
+        notificationReadAt: action.notificationReadAt || baseState.notificationReadAt,
+        activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : baseState.activityLogs,
+        creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(baseState.creditLimits, action.creditLimits) : baseState.creditLimits,
         creditLimitHistory: Array.isArray(action.creditLimitHistory)
-          ? mergeCreditHistoryRecords(state.creditLimitHistory, action.creditLimitHistory)
-          : state.creditLimitHistory,
+          ? mergeCreditHistoryRecords(baseState.creditLimitHistory, action.creditLimitHistory)
+          : baseState.creditLimitHistory,
         backend: {
-          ...state.backend,
+          ...baseState.backend,
           configured: true,
           status: action.session ? "authenticated" : "anonymous",
           error: ""
@@ -668,11 +762,14 @@ function reducer(currentState, action) {
         platformAdmin: false,
         platformOverview: []
       };
+
+      automaticallyDelayOrders(nextState);
+      return nextState;
     }
 
     case "SET_PLATFORM_CONTEXT": {
       return {
-        ...state,
+        ...ensureStateShape(seedData),
         session: action.session || null,
         user: action.user || null,
         client: null,
@@ -700,7 +797,7 @@ function reducer(currentState, action) {
 
     case "CLEAR_AUTH_CONTEXT": {
       return {
-        ...state,
+        ...ensureStateShape(seedData),
         session: null,
         user: null,
         client: null,
@@ -971,6 +1068,7 @@ function reducer(currentState, action) {
     }
 
     case "ADVANCE_ORDER": {
+      if (!canManageOrderFlow(state)) return state;
       const order = state.orders.find((item) => item.id === action.orderId);
       if (order) {
         order.status = nextOrderStatus(order.status);
@@ -987,12 +1085,23 @@ function reducer(currentState, action) {
     }
 
     case "SET_ORDER_STATUS": {
+      if (!canManageOrderFlow(state)) return state;
       const order = state.orders.find((item) => item.id === action.orderId);
-      const nextStatus = normalizedOrderStatus(action.status);
+      const requestedStatus = normalized(action.status);
+      if (!["in_transit", "delayed", "delivered"].includes(requestedStatus)) return state;
+      const nextStatus = normalizedOrderStatus(requestedStatus);
 
       if (order && order.status !== nextStatus) {
         order.status = nextStatus;
         order.updatedAt = todayISO();
+        if (nextStatus === "delayed") {
+          order.delaySource = "manual";
+          order.delayDetectedAt = order.delayDetectedAt || new Date().toISOString();
+          order.delayReason = order.delayReason || "Delivery issue under review";
+        }
+        if (nextStatus === "delivered") {
+          order.deliveredAt = action.deliveredAt || new Date().toISOString();
+        }
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "updated",
@@ -1005,10 +1114,15 @@ function reducer(currentState, action) {
     }
 
     case "DELAY_ORDER": {
+      if (!canManageOrderFlow(state)) return state;
       const order = state.orders.find((item) => item.id === action.orderId);
       if (order && order.status !== "delivered") {
         order.status = "delayed";
         order.updatedAt = todayISO();
+        order.delaySource = "manual";
+        order.delayDetectedAt = order.delayDetectedAt || new Date().toISOString();
+        order.delayReason = String(action.reason || order.delayReason || "Delivery issue under review").trim();
+        order.delayNote = String(action.note || order.delayNote || "").trim();
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "delayed",
@@ -1020,15 +1134,110 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "AUTO_UPDATE_DELAYED_ORDERS": {
+      automaticallyDelayOrders(state);
+      return state;
+    }
+
+    case "UPDATE_ORDER_DELAY_DETAILS": {
+      if (!canManageOrderFlow(state)) return state;
+
+      const order = state.orders.find((item) => item.id === action.orderId);
+      if (!order || order.status === "delivered") return state;
+
+      const previous = {
+        reason: order.delayReason || "",
+        note: order.delayNote || "",
+        expectedDeliveryAt: order.expectedDeliveryAt || ""
+      };
+      const revisedExpectedDeliveryAt = dateOnly(action.revisedExpectedDeliveryAt);
+      const actor = currentActorLabel(state);
+
+      if (
+        (action.revisedExpectedDeliveryAt && !isValidISODate(revisedExpectedDeliveryAt)) ||
+        (revisedExpectedDeliveryAt && revisedExpectedDeliveryAt < todayISO())
+      ) {
+        return state;
+      }
+
+      order.status = "delayed";
+      order.delaySource = order.delaySource || "manual";
+      order.delayDetectedAt = order.delayDetectedAt || new Date().toISOString();
+      order.delayReason = String(action.reason || "Delivery issue under review").trim().slice(0, 120);
+      order.delayNote = String(action.note || "").trim().slice(0, 500);
+      if (revisedExpectedDeliveryAt) order.expectedDeliveryAt = revisedExpectedDeliveryAt;
+      order.delayUpdatedAt = new Date().toISOString();
+      order.delayUpdatedBy = actor;
+      order.delayDays = daysBetween(order.originalExpectedDeliveryAt || expectedDeliveryDate(order), todayISO());
+      order.updatedAt = todayISO();
+      order.delayHistory = [
+        {
+          id: createId("DLY"),
+          changedAt: order.delayUpdatedAt,
+          changedBy: actor,
+          previous,
+          reason: order.delayReason,
+          note: order.delayNote,
+          expectedDeliveryAt: order.expectedDeliveryAt
+        },
+        ...(order.delayHistory || [])
+      ];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "updated",
+        recordType: "order",
+        recordLabel: order.id,
+        summary: `${actor} updated the delay plan for ${order.id}`
+      });
+      return state;
+    }
+
     case "RECORD_PRODUCTION_USAGE": {
+      if (!["ceo", "manager", "store_keeper"].includes(currentUserRole(state))) return state;
+
       const materials = Array.isArray(action.materials) ? action.materials : [];
+      const materialIds = materials.map((material) => String(material.productId || "").trim()).filter(Boolean);
+      const uniqueMaterialIds = new Set(materialIds);
       const productRows = materials.map((material) => ({
         product: state.products.find((item) => item.id === material.productId),
         quantity: Number(material.quantity || 0)
       }));
-      const valid = action.batchDate && String(action.batchReference || "").trim() && productRows.length && productRows.every(({ product, quantity }) => (
-        product && stockCategoryIdForProduct(product) === "raw_materials" && quantity > 0 && quantity <= Number(product.stock || 0)
+      const finishedProduct = state.products.find((item) => item.id === action.finishedProductId);
+      const quantityProduced = Number(action.quantityProduced || 0);
+      const batchDate = dateOnly(action.batchDate);
+      const batchReference = String(action.batchReference || "").trim();
+      const purpose = String(action.purpose || "").trim();
+      const duplicateReference = (state.productionBatches || []).some((batch) => (
+        normalized(batch.reference) === normalized(batchReference)
       ));
+      const valid = (
+        isValidISODate(batchDate) &&
+        batchReference &&
+        batchReference.length <= 80 &&
+        purpose &&
+        purpose.length <= 160 &&
+        !duplicateReference &&
+        productRows.length &&
+        materialIds.length === productRows.length &&
+        uniqueMaterialIds.size === materialIds.length &&
+        finishedProduct &&
+        finishedProduct.status !== "inactive" &&
+        stockCategoryIdForProduct(finishedProduct) === "finished_products" &&
+        Number.isFinite(Number(finishedProduct.stock)) &&
+        Number.isFinite(quantityProduced) &&
+        quantityProduced > 0 &&
+        Number.isFinite(Number(finishedProduct.stock) + quantityProduced) &&
+        productRows.every(({ product, quantity }) => (
+          product &&
+          product.status !== "inactive" &&
+          stockCategoryIdForProduct(product) === "raw_materials" &&
+          Number.isFinite(Number(product.stock)) &&
+          Number.isFinite(quantity) &&
+          quantity > 0 &&
+          quantity <= Number(product.stock || 0)
+        ))
+      );
 
       if (!valid) return state;
 
@@ -1037,13 +1246,27 @@ function reducer(currentState, action) {
       const recordedMaterials = productRows.map(({ product, quantity }) => {
         product.stock = Number(product.stock || 0) - quantity;
         product.updatedAt = todayISO();
-        return { productId: product.id, productName: product.name, quantity };
+        return {
+          productId: product.id,
+          productName: product.name,
+          quantity,
+          unit: product.unit || "unit",
+          unitCostAtUse: Number(product.unitCost || 0)
+        };
       });
+      finishedProduct.stock = Number(finishedProduct.stock || 0) + quantityProduced;
+      finishedProduct.updatedAt = todayISO();
       state.productionBatches = [{
         id: batchId,
         clientId: state.client?.id || "",
-        reference: String(action.batchReference).trim(),
-        batchDate: String(action.batchDate),
+        reference: batchReference,
+        batchDate,
+        finishedProductId: finishedProduct.id,
+        finishedProductName: finishedProduct.name,
+        quantityProduced,
+        outputUnit: finishedProduct.unit || "unit",
+        purpose,
+        notes: String(action.notes || "").trim().slice(0, 500),
         materials: recordedMaterials,
         recordedBy,
         createdAt: new Date().toISOString()
@@ -1051,28 +1274,146 @@ function reducer(currentState, action) {
       state.stockTransactions = [
         ...recordedMaterials.map((material) => ({
           id: createId("TXN"),
+          clientId: state.client?.id || "",
           type: "production usage",
           productId: material.productId,
           productName: material.productName,
           quantity: material.quantity,
+          unit: material.unit,
           amount: 0,
           partyType: "Production batch",
-          partyName: String(action.batchReference).trim(),
-          date: String(action.batchDate),
+          partyName: batchReference,
+          date: batchDate,
           createdAt: new Date().toISOString(),
           recordedBy,
           movementDirection: "out",
           batchId,
-          batchReference: String(action.batchReference).trim()
+          batchReference,
+          finishedProductId: finishedProduct.id,
+          finishedProductName: finishedProduct.name,
+          purpose
         })),
+        {
+          id: createId("TXN"),
+          clientId: state.client?.id || "",
+          type: "production output",
+          productId: finishedProduct.id,
+          productName: finishedProduct.name,
+          quantity: quantityProduced,
+          unit: finishedProduct.unit || "unit",
+          amount: 0,
+          partyType: "Production batch",
+          partyName: batchReference,
+          date: batchDate,
+          createdAt: new Date().toISOString(),
+          recordedBy,
+          movementDirection: "in",
+          batchId,
+          batchReference,
+          purpose
+        },
         ...(state.stockTransactions || [])
       ];
       appendActivityLog(state, {
         clientId: state.client?.id,
         actionType: "used",
         recordType: "production_batch",
-        recordLabel: String(action.batchReference).trim(),
-        summary: `${recordedBy} recorded ${recordedMaterials.length} raw material${recordedMaterials.length === 1 ? "" : "s"} used for ${String(action.batchReference).trim()}`
+        recordLabel: batchReference,
+        summary: `${recordedBy} used ${recordedMaterials.length} stock material${recordedMaterials.length === 1 ? "" : "s"} to produce ${quantityProduced} ${finishedProduct.name} for ${purpose}`
+      });
+      return state;
+    }
+
+    case "RECORD_RAW_MATERIAL_SALE": {
+      if (!["ceo", "manager", "store_keeper"].includes(currentUserRole(state))) return state;
+
+      const product = state.products.find((item) => item.id === action.productId);
+      const quantity = Number(action.quantity || 0);
+      const unitPrice = Number(action.unitPrice ?? product?.unitPrice ?? 0);
+      const customer = (state.retailers || []).find((item) => item.id === action.customerId);
+      const customerName = String(customer?.name || action.customerName || "").trim();
+      const requestedPaymentType = normalized(action.paymentType || "cash");
+      const paymentType = requestedPaymentType;
+      const requestedSaleDate = String(action.saleDate || "").trim();
+      const saleDate = requestedSaleDate ? dateOnly(requestedSaleDate) : todayISO();
+      const amount = quantity * unitPrice;
+      const customerCreditLimit = (state.creditLimits || []).find((limit) => (
+        normalized(limit.partyName) === normalized(customerName)
+      ));
+      const creditWouldExceedLimit = paymentType === "credit" && (
+        !customerCreditLimit ||
+        Number(customerCreditLimit.limit || 0) <= 0 ||
+        Number(customerCreditLimit.balance || 0) + amount > Number(customerCreditLimit.limit || 0)
+      );
+
+      if (
+        !product ||
+        product.status === "inactive" ||
+        stockCategoryIdForProduct(product) !== "raw_materials" ||
+        !Number.isFinite(Number(product.stock)) ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        quantity > Number(product.stock || 0) ||
+        !Number.isFinite(unitPrice) ||
+        unitPrice <= 0 ||
+        !Number.isFinite(amount) ||
+        !isValidISODate(saleDate) ||
+        !["cash", "credit"].includes(requestedPaymentType) ||
+        !customerName ||
+        (paymentType === "credit" && !customer) ||
+        creditWouldExceedLimit
+      ) {
+        return state;
+      }
+
+      const recordedBy = currentActorName(state);
+      const transactionId = createId("TXN");
+      const orderId = createQuickSaleOrder(state, {
+        transactionId,
+        product,
+        customer,
+        customerName,
+        customerType: customer?.channel || "Factory customer",
+        quantity,
+        unit: product.unit || "unit",
+        paymentType,
+        repName: recordedBy,
+        saleDate,
+        unitPrice
+      });
+
+      product.stock = Number(product.stock || 0) - quantity;
+      product.updatedAt = saleDate;
+      if (paymentType === "credit") updateCreditBalance(state, customerName, amount);
+      state.stockTransactions = [{
+        id: transactionId,
+        clientId: state.client?.id || "",
+        type: "sale",
+        productId: product.id,
+        productName: product.name,
+        quantity,
+        amount,
+        unitPrice,
+        unitCost: Number(product.unitCost || 0),
+        paymentType,
+        partyType: customer?.channel || "Factory customer",
+        partyName: customerName,
+        customerId: customer?.id || "",
+        date: saleDate,
+        createdAt: new Date().toISOString(),
+        recordedBy,
+        movementDirection: "out",
+        creditImpact: paymentType === "credit" ? amount : 0,
+        reason: String(action.notes || "Raw material sold directly from factory").trim().slice(0, 500),
+        orderId
+      }, ...(state.stockTransactions || [])];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "sold",
+        recordType: "stock_movement",
+        recordLabel: product.id,
+        summary: `${recordedBy} sold ${quantity} ${product.unit || "units"} of ${product.name} to ${customerName}`
       });
       return state;
     }
@@ -1444,8 +1785,10 @@ function reducer(currentState, action) {
     }
 
     case "RECORD_STOCK_DISPATCH": {
+      if (!["manager", "store_keeper"].includes(currentUserRole(state))) return state;
+
       const product = state.products.find((item) => item.id === action.productId);
-      const quantity = Math.max(0, Number(action.quantity || 0));
+      const quantity = Number(action.quantity || 0);
       const recipientType = String(action.recipientType || "Recipient").trim();
       const recipientName = String(action.recipientName || "Recipient").trim();
       const normalizedRecipientType = recipientType.toLowerCase();
@@ -1454,7 +1797,8 @@ function reducer(currentState, action) {
       const destination = String(action.destination || recipientType).trim();
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
-      const dispatchDate = action.dispatchDate || todayISO();
+      const dispatchDate = dateOnly(action.dispatchDate) || todayISO();
+      const expectedDeliveryAt = dateOnly(action.expectedDeliveryAt) || dispatchDate;
       const transactionId = createId("TXN");
       const representativeAccount = isRepresentativeDispatch
         ? (state.accounts || []).find((account) => (
@@ -1467,8 +1811,15 @@ function reducer(currentState, action) {
       if (
         !product ||
         product.status === "inactive" ||
-        !quantity ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isFinite(Number(product.stock)) ||
         Number(product.stock || 0) < quantity ||
+        !isValidISODate(dispatchDate) ||
+        (!isInternalDispatch && !isValidISODate(expectedDeliveryAt)) ||
+        (!isInternalDispatch && expectedDeliveryAt < dispatchDate) ||
+        !recipientName ||
+        !destination ||
         (isRepresentativeDispatch && stockCategoryIdForProduct(product) !== "finished_products")
       ) {
         return state;
@@ -1511,6 +1862,7 @@ function reducer(currentState, action) {
           recipientType,
           destination,
           dispatchDate,
+          expectedDeliveryAt,
           staffName,
           repUserId: representativeAccount?.userId || ""
         });
@@ -1519,10 +1871,12 @@ function reducer(currentState, action) {
       state.stockTransactions = [
         {
           id: transactionId,
+          clientId: state.client?.id || "",
           type: isInternalDispatch ? "internal movement" : "supply",
           productId: product.id,
           productName: product.name,
           quantity,
+          unit: product.unit || "unit",
           amount: quantity * Number(product.unitPrice || 0),
           unitPrice: Number(product.unitPrice || 0),
           unitCost: Number(product.unitCost || 0),
@@ -1536,7 +1890,8 @@ function reducer(currentState, action) {
           recordedBy: staffName,
           movementDirection: "out",
           creditImpact: 0,
-          orderId
+          orderId,
+          expectedDeliveryAt: isInternalDispatch ? "" : expectedDeliveryAt
         },
         ...(state.stockTransactions || [])
       ];
@@ -2086,7 +2441,8 @@ function reducer(currentState, action) {
 }
 
 export function createStore() {
-  let state = ensureStateShape(loadStoredState() || seedData);
+  // Operational data is loaded only after the authenticated tenant is known.
+  let state = ensureStateShape(seedData);
   const listeners = new Set();
 
   function notify(action) {
@@ -2105,13 +2461,16 @@ export function createStore() {
     },
 
     dispatch(action) {
+      const deletedClientId = action?.type === "DELETE_CLIENT_ACCOUNT" ? state.client?.id : "";
       state = reducer(state, action);
+      if (deletedClientId) clearStoredState(deletedClientId);
       notify(action);
     },
 
     reset() {
+      const clientId = state.client?.id;
       state = ensureStateShape(seedData);
-      clearStoredState();
+      clearStoredState(clientId);
       notify({
         type: "RESET_DATA",
         message: "Workspace data cleared"

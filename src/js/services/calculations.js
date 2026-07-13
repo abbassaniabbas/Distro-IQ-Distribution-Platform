@@ -179,11 +179,20 @@ export function getFinancialSalesLines(state) {
       const profit = revenue - cost;
       const paymentType = transaction.paymentType || (isReturn ? "return" : "cash");
       const isCredit = String(paymentType || "").toLowerCase().includes("credit");
+      const isFactoryRawMaterialSale = (
+        !isReturn &&
+        stockCategoryIdForProduct(product) === "raw_materials" &&
+        !transaction.assignmentId
+      );
 
       return {
         id: transaction.id,
         recordId: transaction.orderId || transaction.id,
-        source: isReturn ? "Customer return" : "Rep quick sale",
+        source: isReturn
+          ? "Customer return"
+          : isFactoryRawMaterialSale
+            ? "Factory raw-material sale"
+            : "Rep quick sale",
         date: dateOnly(transaction.date || transaction.createdAt),
         productId: transaction.productId,
         productName: transaction.productName || product?.name || "Unknown product",
@@ -267,19 +276,46 @@ function boundedScore(value) {
   return Math.max(0, Math.min(100, Number(value || 0)));
 }
 
+export function getCustomerOrderCompletion(retailer, state = {}, today = new Date().toISOString().slice(0, 10)) {
+  const retailerId = normalizedValue(retailer?.id);
+  const retailerName = normalizedValue(retailer?.name);
+  const orders = (state.orders || []).filter((order) => {
+    const orderRetailerId = normalizedValue(order?.retailerId);
+
+    if (retailerId && orderRetailerId) {
+      return orderRetailerId === retailerId;
+    }
+
+    return Boolean(retailerName) && normalizedValue(order?.customerName || order?.retailer?.name) === retailerName;
+  });
+  const completedOrders = orders.filter((order) => effectiveOrderStatus(order, today) === "delivered").length;
+  const totalOrders = orders.length;
+
+  return {
+    completedOrders,
+    totalOrders,
+    percent: totalOrders ? (completedOrders / totalOrders) * 100 : 0
+  };
+}
+
 export function getCustomerRating(retailer, state = {}) {
-  const orders = (state.orders || []).filter((order) => order.retailerId === retailer?.id);
+  const orderCompletion = getCustomerOrderCompletion(retailer, state);
   const invoices = (state.invoices || []).filter((invoice) => invoice.retailerId === retailer?.id);
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], retailer?.name);
   const balance = Number(creditLimit?.balance ?? retailer?.outstanding ?? 0);
   const limit = Number(creditLimit?.limit || 0);
-  const creditUsage = limit ? (balance / limit) * 100 : balance > 0 ? 100 : 0;
-  const ordersCompletedScore = boundedScore(retailer?.fillRate ?? 0);
+  const creditUsage = limit > 0 ? (balance / limit) * 100 : 0;
+  const creditRiskUsage = limit > 0 ? creditUsage : balance > 0 ? 100 : 0;
+  const ordersCompletedScore = boundedScore(orderCompletion.percent);
   const paidInvoices = invoices.filter((invoice) => String(invoice.status || "").toLowerCase() === "paid").length;
-  const paymentScore = invoices.length ? (paidInvoices / invoices.length) * 100 : balance > 0 ? 100 - creditUsage : 70;
-  const orderScore = boundedScore(orders.length * 15);
+  const paymentScore = invoices.length
+    ? (paidInvoices / invoices.length) * 100
+    : balance > 0
+      ? 100 - creditRiskUsage
+      : 70;
+  const orderScore = boundedScore(orderCompletion.totalOrders * 15);
 
-  if (!orders.length && !invoices.length && balance <= 0) {
+  if (!orderCompletion.totalOrders && !invoices.length && balance <= 0) {
     return {
       label: "New customer",
       status: "new_customer",
@@ -292,23 +328,23 @@ export function getCustomerRating(retailer, state = {}) {
   const score = Math.round(
     ordersCompletedScore * 0.3 +
     boundedScore(paymentScore) * 0.3 +
-    boundedScore(100 - creditUsage) * 0.25 +
+    boundedScore(100 - creditRiskUsage) * 0.25 +
     orderScore * 0.15
   );
 
   if (score >= 85) {
-    return { label: "Excellent customer", status: "excellent_customer", score, orderCount: orders.length, creditUsage };
+    return { label: "Excellent customer", status: "excellent_customer", score, orderCount: orderCompletion.totalOrders, creditUsage };
   }
 
   if (score >= 70) {
-    return { label: "Good customer", status: "good_customer", score, orderCount: orders.length, creditUsage };
+    return { label: "Good customer", status: "good_customer", score, orderCount: orderCompletion.totalOrders, creditUsage };
   }
 
   if (score >= 50) {
-    return { label: "Needs attention", status: "needs_attention", score, orderCount: orders.length, creditUsage };
+    return { label: "Needs attention", status: "needs_attention", score, orderCount: orderCompletion.totalOrders, creditUsage };
   }
 
-  return { label: "High risk", status: "high_risk", score, orderCount: orders.length, creditUsage };
+  return { label: "High risk", status: "high_risk", score, orderCount: orderCompletion.totalOrders, creditUsage };
 }
 
 export function creditUsageTone(percent) {
@@ -566,9 +602,11 @@ export function buildRegionalSummary(state) {
 
 export function effectiveOrderStatus(order, today = new Date().toISOString().slice(0, 10)) {
   const status = String(order?.status || "in_transit").toLowerCase();
-  const dueDate = dateOnly(order?.dueAt);
+  const expectedDeliveryDate = dateOnly(
+    order?.expectedDeliveryAt || (order?.source === "factory_dispatch" ? order?.dueAt : "")
+  );
 
-  if (status === "in_transit" && dueDate && dueDate < today) return "delayed";
+  if (status === "in_transit" && expectedDeliveryDate && expectedDeliveryDate < today) return "delayed";
   return status;
 }
 
