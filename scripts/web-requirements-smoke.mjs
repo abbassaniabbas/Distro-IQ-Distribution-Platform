@@ -238,11 +238,17 @@ store.dispatch({
   quantity: 2,
   transactionType: "sale",
   paymentType: "cash",
-  repName: "Amina Rep"
+  repName: "Amina Rep",
+  offline: true
 });
 
 state = store.getState();
 const sale = state.stockTransactions.find((item) => item.type === "sale" && item.productId === "SKU-CHIPS");
+assert.equal(sale.syncStatus, "pending", "offline sale must be saved as pending");
+assert.equal(state.offlineSalesQueue.length, 1, "offline sale must enter the sync queue");
+store.dispatch({ type: "SYNC_OFFLINE_SALES" });
+assert.equal(store.getState().offlineSalesQueue.length, 0, "online sync must clear the offline queue");
+assert.equal(store.getState().stockTransactions.find((item) => item.id === sale.id).syncStatus, "synced");
 assert.ok(sale, "cash walk-in sale must be saved");
 assert.equal(sale.partyName, "Walk-in customer");
 assert.equal(state.stockAssignments[0].sold, 2);

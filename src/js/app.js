@@ -171,6 +171,7 @@ let activeAuthFormFlows = 0;
 let activeViewAbortController = null;
 let featureModuleRefreshPending = false;
 let selectedSearchSuggestion = "";
+let preserveScrollOnNextHashChange = false;
 const FEATURE_MODULE_REFRESH_MS = 5000;
 const DELAY_STATUS_REFRESH_MS = 15 * 60 * 1000;
 
@@ -541,6 +542,12 @@ searchSuggestions.addEventListener("click", (event) => {
 
 bindTopbarCommunications({ store, notificationsButton, messagesButton });
 
+document.addEventListener("click", (event) => {
+  const link = event.target.closest?.("a[data-preserve-scroll]");
+  if (!link || link.getAttribute("href") === window.location.hash) return;
+  preserveScrollOnNextHashChange = true;
+});
+
 signOutButton.addEventListener("click", async () => {
   try {
     await signOut();
@@ -561,7 +568,22 @@ store.subscribe((state, action) => {
 });
 
 window.addEventListener("hashchange", () => {
-  window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  const preserveScroll = preserveScrollOnNextHashChange;
+  const previousScrollY = window.scrollY;
+  preserveScrollOnNextHashChange = false;
+  if (!preserveScroll) window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  render();
+  if (preserveScroll) {
+    window.requestAnimationFrame(() => window.scrollTo({ top: previousScrollY, left: 0, behavior: "auto" }));
+  }
+});
+
+window.addEventListener("offline", render);
+window.addEventListener("online", () => {
+  if ((store.getState().offlineSalesQueue || []).length) {
+    store.dispatch({ type: "SYNC_OFFLINE_SALES", message: "Offline sales synced" });
+    return;
+  }
   render();
 });
 

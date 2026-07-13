@@ -11,6 +11,7 @@ const seedData = {
   salesReports: [],
   creditLimitHistory: [],
   productionBatches: [],
+  offlineSalesQueue: [],
   backend: {
     configured: false,
     status: "idle",

@@ -815,6 +815,44 @@
   gap: 16px;
 }
 
+.rep-offline-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 11px 14px;
+  border: 1px solid rgba(180, 122, 17, 0.3);
+  border-radius: var(--radius);
+  background: var(--amber-soft);
+}
+
+.rep-offline-status.is-pending {
+  border-color: rgba(25, 185, 133, 0.3);
+  background: var(--mint-soft);
+}
+
+.rep-offline-status > div,
+.rep-offline-status span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.rep-offline-status span {
+  display: grid;
+  gap: 2px;
+}
+
+.rep-offline-status svg {
+  width: 21px;
+  height: 21px;
+  flex: 0 0 21px;
+}
+
+.rep-offline-status small {
+  color: var(--muted);
+}
+
 .rep-hero {
   display: grid;
   grid-template-columns: minmax(0, 0.9fr) minmax(320px, 1.1fr);

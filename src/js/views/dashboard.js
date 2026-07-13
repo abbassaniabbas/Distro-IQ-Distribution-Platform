@@ -1735,11 +1735,30 @@ function renderRepStockDateFilter(assignments, activeDate) {
   return `
     <nav class="subtab-nav rep-stock-date-filter" aria-label="Assigned stock days">
       ${dates.map((date) => `
-        <a class="subtab-link${date === activeDate ? " is-active" : ""}" href="${repStockDateHref(date)}">
+        <a class="subtab-link${date === activeDate ? " is-active" : ""}" href="${repStockDateHref(date)}" data-preserve-scroll>
           ${date === todayISO() ? "Today" : escapeHtml(formatDate(date))}
         </a>
       `).join("")}
     </nav>
+  `;
+}
+
+function renderRepOfflineStatus(state) {
+  const pendingCount = (state.offlineSalesQueue || []).filter((entry) => (
+    !entry.repUserId || entry.repUserId === state.user?.id
+  )).length;
+  const isOnline = typeof navigator === "undefined" || navigator.onLine !== false;
+
+  if (isOnline && !pendingCount) return "";
+
+  return `
+    <section class="rep-offline-status ${isOnline ? "is-pending" : "is-offline"}" role="status" aria-live="polite">
+      <div>
+        ${icon(isOnline ? "upload" : "alert")}
+        <span><strong>${isOnline ? `${formatNumber(pendingCount)} offline sale${pendingCount === 1 ? "" : "s"} waiting to sync` : "Working offline"}</strong><small>${isOnline ? "Your saved sales are still safe on this device." : "Sales will be saved on this device and queued until your connection returns."}</small></span>
+      </div>
+      ${isOnline && pendingCount ? '<button class="button js-sync-offline-sales" type="button"><span>Sync now</span></button>' : ""}
+    </section>
   `;
 }
 
@@ -2146,6 +2165,7 @@ function renderSalesRepDashboard(state) {
   return `
     <section class="view dashboard-view sales-rep-portal">
       ${dashboardIdentity(state, "sales_rep")}
+      ${renderRepOfflineStatus(state)}
       <section class="rep-hero">
         <div>
           <span class="eyebrow">Today</span>
@@ -2865,6 +2885,7 @@ function bindSalesRepDashboard({ root, store }) {
       }
     }
 
+    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     store.dispatch({
       type: "LOG_REP_TRANSACTION",
       assignmentIds: selectedAssignments.map((assignment) => assignment.id),
@@ -2879,7 +2900,8 @@ function bindSalesRepDashboard({ root, store }) {
       paymentType,
       returnDisposition: transactionType === "return" ? returnDisposition : "",
       repName,
-      message: transactionType === "return" ? "Customer return saved" : "Sale saved"
+      offline: transactionType === "sale" && offline,
+      message: transactionType === "return" ? "Customer return saved" : offline ? "Sale saved offline" : "Sale saved"
     });
   }
 
@@ -2926,6 +2948,10 @@ function bindSalesRepDashboard({ root, store }) {
       repName,
       message: "Stock returned to factory"
     });
+  });
+
+  qs(".js-sync-offline-sales", root)?.addEventListener("click", () => {
+    store.dispatch({ type: "SYNC_OFFLINE_SALES", message: "Offline sales synced" });
   });
 
   qsa(".js-submit-rep-report", root).forEach((button) => {

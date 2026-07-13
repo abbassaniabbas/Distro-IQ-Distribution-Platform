@@ -240,6 +240,7 @@ function ensureStateShape(value) {
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
     productionBatches: Array.isArray(state.productionBatches) ? state.productionBatches : [],
+    offlineSalesQueue: Array.isArray(state.offlineSalesQueue) ? state.offlineSalesQueue : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
     orders: normalizeOrders(mergeSeedRecords(state.orders, seedData.orders)),
     routes: mergeSeedRecords(state.routes, seedData.routes),
@@ -892,6 +893,7 @@ function reducer(currentState, action) {
         salesReports: [],
         creditLimitHistory: [],
         productionBatches: [],
+        offlineSalesQueue: [],
         retailers: [],
         orders: [],
         routes: [],
@@ -1644,10 +1646,25 @@ function reducer(currentState, action) {
           orderId,
           assignmentId: assignmentAllocations[0]?.assignmentId || "",
           assignmentIds: assignmentAllocations.map((allocation) => allocation.assignmentId),
-          assignmentAllocations
+          assignmentAllocations,
+          syncStatus: action.offline ? "pending" : "synced"
         },
         ...(state.stockTransactions || [])
       ];
+
+      if (transactionType === "sale" && action.offline) {
+        state.offlineSalesQueue = [
+          ...(state.offlineSalesQueue || []).filter((entry) => entry.transactionId !== transactionId),
+          {
+            id: `OFFLINE-${transactionId}`,
+            transactionId,
+            clientId: state.client?.id || "",
+            repUserId: state.user?.id || "",
+            createdAt: new Date().toISOString(),
+            status: "pending"
+          }
+        ];
+      }
 
       // Representative credit is recalculated daily from today's transactions.
       updateCreditBalance(state, customerName, creditImpact);
@@ -1695,6 +1712,16 @@ function reducer(currentState, action) {
         });
       }
 
+      return state;
+    }
+
+    case "SYNC_OFFLINE_SALES": {
+      const pendingIds = new Set((state.offlineSalesQueue || []).map((entry) => entry.transactionId));
+      if (!pendingIds.size) return state;
+      (state.stockTransactions || []).forEach((transaction) => {
+        if (pendingIds.has(transaction.id)) transaction.syncStatus = "synced";
+      });
+      state.offlineSalesQueue = [];
       return state;
     }
 
