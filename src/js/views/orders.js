@@ -7,6 +7,7 @@ import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } f
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, table } from "../ui/components.js";
+import { icon } from "../ui/icons.js";
 
 const ORDER_PAGE_SIZE = 10;
 const ORDER_STATUSES = ["in_transit", "delayed", "delivered"];
@@ -79,24 +80,31 @@ function renderSummaryTiles(orders) {
   `;
 }
 
-function renderDelayAlert(orders) {
+function renderDelayAttentionIcon(orders) {
   const delayedOrders = orders.filter((order) => order.status === "delayed");
   if (!delayedOrders.length) return "";
 
   const longestDelay = Math.max(...delayedOrders.map((order) => orderDaysLate(order)), 0);
+  const delayedLabel = `${formatNumber(delayedOrders.length)} delayed order${delayedOrders.length === 1 ? "" : "s"}`;
+  const longestDelayLabel = `${formatNumber(longestDelay)} day${longestDelay === 1 ? "" : "s"}`;
 
   return `
-    <section class="order-delay-alert" role="status">
-      <div>
+    <span class="order-delay-attention">
+      <span
+        class="order-delay-attention-icon"
+        tabindex="0"
+        role="img"
+        aria-label="Delivery attention. ${escapeHtml(delayedLabel)}. Longest delay ${escapeHtml(longestDelayLabel)}."
+      >
+        ${icon("alert")}
+      </span>
+      <span class="order-delay-attention-tooltip" role="tooltip">
         <span class="eyebrow">Delivery attention</span>
-        <strong>${formatNumber(delayedOrders.length)} delayed order${delayedOrders.length === 1 ? "" : "s"}</strong>
+        <strong>${escapeHtml(delayedLabel)}</strong>
         <p>Missed arrival dates are marked automatically and kept in the activity history.</p>
-      </div>
-      <div class="order-delay-alert-stat">
-        <span>Longest delay</span>
-        <strong>${formatNumber(longestDelay)} day${longestDelay === 1 ? "" : "s"}</strong>
-      </div>
-    </section>
+        <span>Longest delay: <strong>${escapeHtml(longestDelayLabel)}</strong></span>
+      </span>
+    </span>
   `;
 }
 
@@ -104,12 +112,10 @@ function renderDelayMeta(order) {
   if (order.status !== "delayed") return "";
 
   const daysLate = orderDaysLate(order);
-  const source = order.delaySource === "manual" ? "Manually flagged" : "Automatically detected";
 
   return `
     <div class="order-delay-meta">
       <strong>${formatNumber(daysLate)} day${daysLate === 1 ? "" : "s"} late</strong>
-      <span>${escapeHtml(source)}</span>
       <span>${escapeHtml(order.delayReason || "Delivery issue under review")}</span>
     </div>
   `;
@@ -186,16 +192,44 @@ function renderOrderRows(orders, state, permissions) {
     const scheduleLabel = expectedAt
       ? `Expected ${formatDate(expectedAt)}`
       : `Payment due ${formatDate(order.dueAt)}`;
-    const searchIndex = [
+    const retailer = (state.retailers || []).find((item) => item.id === order.retailerId) || order.retailer;
+    const transaction = (state.stockTransactions || []).find((item) => item.id === order.transactionId);
+    const customerName = retailer?.name || order.customerName || "Unknown customer";
+    const searchValues = [
       order.id,
-      order.retailer?.name,
+      order.transactionId,
+      customerName,
+      retailer?.id,
+      retailer?.address,
+      retailer?.city,
+      retailer?.stateName,
+      retailer?.region,
+      retailer?.channel,
+      retailer?.contact,
+      retailer?.contactPhone,
       order.region,
       order.priority,
       statusText(order.status),
-      statusText(creditGuard.status)
-    ]
-      .join(" ")
-      .toLowerCase();
+      statusText(creditGuard.status),
+      statusText(order.paymentType),
+      statusText(order.paymentStatus),
+      order.customerType,
+      order.repName,
+      order.staffName,
+      transaction?.recordedBy,
+      transaction?.staffResponsible,
+      transaction?.recipientName,
+      transaction?.dispatchDestination,
+      scheduleLabel,
+      expectedAt,
+      order.dueAt,
+      order.source,
+      order.delayReason,
+      order.delayNote,
+      ...(order.items || []).flatMap((item) => [item.productName, item.productId])
+    ].map((value) => String(value || "").trim()).filter(Boolean);
+    const searchSuggestions = [...new Set(searchValues)];
+    const searchIndex = searchValues.join(" ").toLowerCase();
 
     return `
       <tr ${index >= ORDER_PAGE_SIZE ? "hidden " : ""}
@@ -203,13 +237,14 @@ function renderOrderRows(orders, state, permissions) {
         data-status="${escapeHtml(order.status)}"
         data-region="${escapeHtml(order.region)}"
         data-search-index="${escapeHtml(searchIndex)}"
+        data-search-suggestions="${escapeHtml(JSON.stringify(searchSuggestions))}"
       >
         <td>
           <strong>${escapeHtml(order.id)}</strong>
           <div class="muted">${escapeHtml(scheduleLabel)} - ${escapeHtml(statusText(order.paymentType))}</div>
         </td>
         <td>
-          ${escapeHtml(order.retailer?.name || "Unknown customer")}
+          ${escapeHtml(customerName)}
           <div class="muted">${escapeHtml(order.region)} - ${escapeHtml(order.priority)}</div>
         </td>
         <td>
@@ -271,7 +306,6 @@ export function renderOrders({ state }) {
   return `
     <section class="view orders-view">
       ${renderSummaryTiles(orders)}
-      ${renderDelayAlert(orders)}
 
       <section class="panel orders-layout">
         <div class="toolbar">
@@ -293,6 +327,7 @@ export function renderOrders({ state }) {
                 ${regions.map((region) => `<option value="${escapeHtml(region)}">${escapeHtml(region)}</option>`).join("")}
               </select>
             </label>
+            ${renderDelayAttentionIcon(orders)}
           </div>
         </div>
 

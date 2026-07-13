@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 
 import { effectiveOrderStatus, getCustomerOrderCompletion, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
-import { buildInvoiceDocument, getInvoiceRecords } from "../src/js/services/invoices.js";
+import { buildInvoiceDocument, buildInvoicePreviewContent, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
 import { renderAuth } from "../src/js/views/auth.js";
+import { renderActivityLog } from "../src/js/views/activity-log.js";
 import { renderDashboard } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
@@ -235,6 +236,11 @@ assert.match(invoiceDocument, /Test Factory/);
 assert.match(invoiceDocument, /Walk-in customer/);
 assert.match(invoiceDocument, /Plantain Chips/);
 assert.match(invoiceDocument, /Sold by Amina Rep/);
+const invoicePreview = buildInvoicePreviewContent(cashInvoice, state);
+assert.match(invoicePreview, /invoice-modal-document/);
+assert.match(invoicePreview, /Bill to/);
+assert.match(invoicePreview, /Plantain Chips/);
+assert.doesNotMatch(invoicePreview, /iframe/);
 const representativeInvoices = renderInvoices({ state: scopeStateForCurrentRole(state) });
 assert.match(representativeInvoices, /My invoices/);
 assert.match(representativeInvoices, /js-download-invoice/);
@@ -361,7 +367,10 @@ store.dispatch({
 assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delayReason, "Vehicle issue");
 assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delayHistory.length, 1);
 const delayedOrdersPage = renderOrders({ state: store.getState() });
-assert.match(delayedOrdersPage, /Automatically detected/);
+assert.match(delayedOrdersPage, /order-delay-attention-icon/);
+assert.match(delayedOrdersPage, /Delivery attention/);
+assert.doesNotMatch(delayedOrdersPage, /Automatically detected/);
+assert.match(delayedOrdersPage, /data-search-suggestions="[^"]*Late Outlet/);
 assert.match(delayedOrdersPage, /Replacement van assigned|Review delay plan/);
 
 authenticate("user-manager");
@@ -377,10 +386,22 @@ assert.match(ledger, /Product ID/);
 assert.doesNotMatch(ledger, />SKU</);
 
 const managerDashboard = renderDashboard({ state: store.getState() });
-assert.match(managerDashboard, /Submitted sales reports/);
-assert.match(managerDashboard, /js-view-report-details/);
+assert.doesNotMatch(managerDashboard, /Recent sales orders/);
+assert.doesNotMatch(managerDashboard, /Consolidated sales activity/);
+assert.doesNotMatch(managerDashboard, /Submitted sales reports/);
 assert.match(managerDashboard, /Musa Manager/);
 assert.match(managerDashboard, /Test Factory/);
+
+globalThis.window.location.hash = "#/activity-log?tab=recent-orders";
+const managerRecentOrders = renderActivityLog({ state: store.getState() });
+assert.match(managerRecentOrders, /Activity log pages/);
+assert.match(managerRecentOrders, /Recent sales orders/);
+globalThis.window.location.hash = "#/activity-log?tab=sales-activity";
+assert.match(renderActivityLog({ state: store.getState() }), /Consolidated sales activity/);
+globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
+const managerSubmittedReports = renderActivityLog({ state: store.getState() });
+assert.match(managerSubmittedReports, /Submitted sales reports/);
+assert.match(managerSubmittedReports, /js-view-report-details/);
 
 globalThis.window.location.hash = "#/inventory?tab=overview";
 const stockJourney = renderInventory({ state: store.getState() });
@@ -459,6 +480,8 @@ assert.match(customerBalances, /Invoices, due dates, and payment status/);
 assert.match(customerBalances, /js-view-invoice/);
 assert.match(customerBalances, /js-download-invoice/);
 assert.match(customerBalances, /js-print-invoice/);
+assert.match(customerBalances, /icon-button js-download-invoice/);
+assert.match(customerBalances, /icon-button invoice-paid-action/);
 
 authenticate("user-accountant");
 globalThis.window.location.hash = "#/finance?tab=invoices";

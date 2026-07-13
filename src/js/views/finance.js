@@ -159,26 +159,26 @@ function renderInvoiceRows(state, permissions) {
           <div class="row-actions invoice-row-actions">
             ${iconButton({
               iconName: "eye",
-              label: "Quick view invoice",
+              label: "View",
               className: "js-view-invoice",
               data: { "invoice-id": invoice.id }
             })}
-            ${textButton({
+            ${iconButton({
               iconName: "download",
               label: "Download",
-              className: "subtle js-download-invoice",
+              className: "js-download-invoice",
               data: { "invoice-id": invoice.id }
             })}
-            ${textButton({
+            ${iconButton({
               iconName: "print",
               label: "Print",
-              className: "subtle js-print-invoice",
+              className: "js-print-invoice",
               data: { "invoice-id": invoice.id }
             })}
-            ${textButton({
+            ${iconButton({
               iconName: "check",
               label: invoice.status === "paid" ? "Paid" : "Mark paid",
-              className: invoice.status === "paid" ? "" : "primary js-mark-paid",
+              className: `invoice-paid-action${invoice.status === "paid" ? " is-paid" : " js-mark-paid"}`,
               disabled: invoice.status === "paid" || !canUpdateCredit || invoice.derived,
               data: { "invoice-id": invoice.id }
             })}

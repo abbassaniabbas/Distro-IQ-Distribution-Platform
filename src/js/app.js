@@ -406,6 +406,32 @@ function searchSuggestionLabel(item) {
   return text.replace(/\s+/g, " ").trim().slice(0, 96);
 }
 
+function explicitSearchSuggestions(item) {
+  const value = item.dataset.searchSuggestions;
+  if (!value) return [];
+
+  try {
+    const suggestions = JSON.parse(value);
+    return Array.isArray(suggestions)
+      ? suggestions.map((item) => String(item || "").trim()).filter(Boolean)
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function matchingSearchSuggestions(item, query) {
+  const explicit = explicitSearchSuggestions(item)
+    .filter((label) => label.toLowerCase().includes(query))
+    .sort((a, b) => {
+      const aStarts = a.toLowerCase().startsWith(query) ? 0 : 1;
+      const bStarts = b.toLowerCase().startsWith(query) ? 0 : 1;
+      return aStarts - bStarts || a.localeCompare(b);
+    });
+
+  return explicit.length ? explicit : [searchSuggestionLabel(item)].filter(Boolean);
+}
+
 function updateSearchSuggestions() {
   const query = String(globalSearch.value || "").trim().toLowerCase();
 
@@ -421,9 +447,9 @@ function updateSearchSuggestions() {
 
   const seen = new Set();
   const matches = qsa("[data-search-index]", viewRoot)
-    .filter((item) => !item.closest?.(".activity-log-view"))
+    .filter((item) => !item.closest?.(".activity-log-view") || item.closest?.("[data-global-search-enabled]"))
     .filter((item) => String(item.dataset.searchIndex || "").includes(query))
-    .map((item) => searchSuggestionLabel(item))
+    .flatMap((item) => matchingSearchSuggestions(item, query))
     .filter(Boolean)
     .filter((label) => {
       const key = label.toLowerCase();

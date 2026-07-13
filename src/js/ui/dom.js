@@ -25,7 +25,7 @@ export function applySearchFilter(root, query) {
   const searchableItems = qsa("[data-search-index]", root);
 
   searchableItems.forEach((item) => {
-    if (item.closest?.(".activity-log-view")) return;
+    if (item.closest?.(".activity-log-view") && !item.closest?.("[data-global-search-enabled]")) return;
 
     const haystack = item.dataset.searchIndex || "";
     item.hidden = Boolean(normalizedQuery) && !haystack.includes(normalizedQuery);

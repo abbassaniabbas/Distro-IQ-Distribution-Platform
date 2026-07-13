@@ -1,7 +1,7 @@
 import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
+import { iconButton, metricCard, panelHeader, statusPill, table } from "../ui/components.js";
 
 const INVOICE_PAGE_SIZE = 10;
 
@@ -24,9 +24,9 @@ function renderInvoiceRows(invoices) {
       <td>${statusPill(invoice.status)}</td>
       <td>
         <div class="row-actions invoice-row-actions">
-          ${iconButton({ iconName: "eye", label: "Quick view invoice", className: "js-view-invoice", data: { "invoice-id": invoice.id } })}
-          ${textButton({ iconName: "download", label: "Download", className: "subtle js-download-invoice", data: { "invoice-id": invoice.id } })}
-          ${textButton({ iconName: "print", label: "Print", className: "subtle js-print-invoice", data: { "invoice-id": invoice.id } })}
+          ${iconButton({ iconName: "eye", label: "View", className: "js-view-invoice", data: { "invoice-id": invoice.id } })}
+          ${iconButton({ iconName: "download", label: "Download", className: "js-download-invoice", data: { "invoice-id": invoice.id } })}
+          ${iconButton({ iconName: "print", label: "Print", className: "js-print-invoice", data: { "invoice-id": invoice.id } })}
         </div>
       </td>
     </tr>

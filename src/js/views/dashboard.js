@@ -1270,12 +1270,27 @@ function renderRecentOrders(state, permissions) {
 
   return getOrdersWithTotals(state)
     .slice(0, 5)
-    .map(
-      (order) => `
-        <tr data-search-index="${escapeHtml(`${order.id} ${order.retailer?.name} ${order.region} ${order.status}`.toLowerCase())}">
+    .map((order) => {
+      const customerName = order.retailer?.name || order.customerName || "Unknown customer";
+      const searchValues = [
+        order.id,
+        customerName,
+        order.region,
+        statusText(order.status),
+        order.priority,
+        order.repName,
+        statusText(order.paymentType),
+        ...(order.items || []).flatMap((item) => [item.productName, item.productId])
+      ].map((value) => String(value || "").trim()).filter(Boolean);
+
+      return `
+        <tr
+          data-search-index="${escapeHtml(searchValues.join(" ").toLowerCase())}"
+          data-search-suggestions="${escapeHtml(JSON.stringify([...new Set(searchValues)]))}"
+        >
           <td>
             <strong>${escapeHtml(order.id)}</strong>
-            <div class="muted">${escapeHtml(order.retailer?.name || "Unknown customer")}</div>
+            <div class="muted">${escapeHtml(customerName)}</div>
           </td>
           <td>${escapeHtml(order.region)}</td>
           <td>${statusPill(order.status)}</td>
@@ -1292,8 +1307,8 @@ function renderRecentOrders(state, permissions) {
             </div>
           </td>
         </tr>
-      `
-    )
+      `;
+    })
     .join("");
 }
 
@@ -1589,7 +1604,7 @@ function renderManagerSalesOperationsRows(state) {
     });
 }
 
-function renderManagerSalesOperations(state) {
+export function renderManagerSalesOperations(state) {
   return `
     <section class="panel" id="manager-sales-operations">
       ${panelHeader("Consolidated sales activity", "Sales, cash, credit, and returns across all sales representatives")}
@@ -1668,7 +1683,7 @@ function renderReportDetailsModal() {
   `;
 }
 
-function renderManagerReportReview(state, { readOnly = false } = {}) {
+export function renderManagerReportReview(state, { readOnly = false } = {}) {
   return `
     <section class="panel" id="manager-report-review">
       ${panelHeader("Submitted sales reports", readOnly ? "Open any report to see its customers, products, quantities, and payment details" : "Open a report for full details, then review it or flag it for correction")}
@@ -2463,27 +2478,69 @@ export function renderDashboard({ state }) {
           </section>
         `}
 
-      <section class="panel">
-        ${panelHeader("Recent sales orders", `${formatCurrency(metrics.orderRevenue)} in cycle - ${formatNumber(metrics.openOrders)} still open - ${formatPercent(metrics.fillRate)} delivered`)}
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Sales order</th>
-                <th>Region</th>
-                <th>Status</th>
-                <th>Value</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>${renderRecentOrders(state, permissions)}</tbody>
-          </table>
-        </div>
-      </section>
-      ${isManagerPortal ? renderManagerSalesOperations(state) : ""}
-      ${isManagerPortal && isModuleEnabled(state, "field_reports") ? renderManagerReportReview(state) : ""}
+      ${isManagerPortal ? "" : renderManagerRecentSalesOrders(state)}
     </section>
   `;
+}
+
+export function renderManagerRecentSalesOrders(state) {
+  const metrics = calculateMetrics(state);
+  const permissions = currentUserPermissions(state);
+
+  return `
+    <section class="panel">
+      ${panelHeader("Recent sales orders", `${formatCurrency(metrics.orderRevenue)} in cycle - ${formatNumber(metrics.openOrders)} still open - ${formatPercent(metrics.fillRate)} delivered`)}
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Sales order</th>
+              <th>Region</th>
+              <th>Status</th>
+              <th>Value</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${renderRecentOrders(state, permissions)}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
+export function bindManagerActivitySections({ root, store }) {
+  bindSubmittedReportDetails({ root, store });
+
+  qsa(".js-advance-order", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "ADVANCE_ORDER",
+        orderId: button.dataset.orderId,
+        message: "Sales order status updated"
+      });
+    });
+  });
+
+  qsa(".js-review-report", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "REVIEW_SALES_REPORT",
+        reportId: button.dataset.reportId,
+        message: "Report reviewed"
+      });
+    });
+  });
+
+  qsa(".js-flag-report", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "FLAG_SALES_REPORT",
+        reportId: button.dataset.reportId,
+        note: "Manager query raised",
+        message: "Report flagged"
+      });
+    });
+  });
 }
 
 export function bindDashboard({ root, store }) {

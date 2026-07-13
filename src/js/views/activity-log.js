@@ -5,8 +5,62 @@ import {
 } from "../services/activity.js";
 import { formatCurrency, formatDateTime, formatNumber } from "../services/formatters.js";
 import { accountForUser, currentUserRole } from "../services/rbac.js";
+import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { panelHeader, table } from "../ui/components.js";
+import {
+  bindManagerActivitySections,
+  renderManagerRecentSalesOrders,
+  renderManagerReportReview,
+  renderManagerSalesOperations
+} from "./dashboard.js";
+
+const DEFAULT_ACTIVITY_TAB = "activity";
+
+function activityRouteParams() {
+  if (typeof window === "undefined") return new URLSearchParams();
+
+  const query = window.location.hash.split("?")[1] || "";
+  return new URLSearchParams(query);
+}
+
+function managerActivityTabs(state) {
+  return [
+    { id: "activity", label: "Activity log" },
+    { id: "recent-orders", label: "Recent sales orders" },
+    { id: "sales-activity", label: "Consolidated sales activity" },
+    ...(isModuleEnabled(state, "field_reports")
+      ? [{ id: "submitted-reports", label: "Submitted sales reports" }]
+      : [])
+  ];
+}
+
+function activeManagerActivityTab(state) {
+  const tabs = managerActivityTabs(state);
+  const requested = activityRouteParams().get("tab") || DEFAULT_ACTIVITY_TAB;
+  return tabs.some((tab) => tab.id === requested) ? requested : DEFAULT_ACTIVITY_TAB;
+}
+
+function renderManagerActivitySubnav(state, activeTab) {
+  return `
+    <nav class="subtab-nav stock-subtabs activity-log-subtabs" aria-label="Activity log pages">
+      ${managerActivityTabs(state).map((tab) => `
+        <a
+          class="subtab-link ${tab.id === activeTab ? "is-active" : ""}"
+          href="#/activity-log?tab=${escapeHtml(tab.id)}"
+          aria-current="${tab.id === activeTab ? "page" : "false"}"
+        >${escapeHtml(tab.label)}</a>
+      `).join("")}
+    </nav>
+  `;
+}
+
+function renderManagerActivitySection(state, activeTab) {
+  if (activeTab === "recent-orders") return renderManagerRecentSalesOrders(state);
+  if (activeTab === "sales-activity") return renderManagerSalesOperations(state);
+  if (activeTab === "submitted-reports") return renderManagerReportReview(state);
+  return "";
+}
 
 function entryDate(value) {
   if (!value) return "";
@@ -295,6 +349,20 @@ export function renderActivityLog({ state }) {
     return renderSalesRepRecentActivity(state);
   }
 
+  const managerActiveTab = role === "manager" ? activeManagerActivityTab(state) : DEFAULT_ACTIVITY_TAB;
+  const managerSubnav = role === "manager" ? renderManagerActivitySubnav(state, managerActiveTab) : "";
+
+  if (role === "manager" && managerActiveTab !== DEFAULT_ACTIVITY_TAB) {
+    return `
+      <section class="view activity-log-view">
+        ${managerSubnav}
+        <div data-global-search-enabled>
+          ${renderManagerActivitySection(state, managerActiveTab)}
+        </div>
+      </section>
+    `;
+  }
+
   const logs = getScopedActivityLogs(state);
   const isStoreKeeper = role === "store_keeper";
   const isAccountant = role === "accountant";
@@ -307,6 +375,7 @@ export function renderActivityLog({ state }) {
 
   return `
     <section class="view activity-log-view">
+      ${managerSubnav}
       <section class="panel">
         <div class="toolbar">
           ${panelHeader(title, subtitle)}
@@ -359,7 +428,7 @@ export function renderActivityLog({ state }) {
   `;
 }
 
-export function bindActivityLog({ root }) {
+export function bindActivityLog({ root, store }) {
   const pageSize = 10;
   let currentPage = 1;
   const searchFilter = qs("#activity-search", root);
@@ -373,6 +442,9 @@ export function bindActivityLog({ root }) {
   const previousButton = qs('[data-activity-page="prev"]', root);
   const nextButton = qs('[data-activity-page="next"]', root);
   const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter, recordFilter].filter(Boolean);
+
+  bindManagerActivitySections({ root, store });
+  if (!searchFilter) return;
 
   function applyFilters() {
     const query = String(searchFilter?.value || "").trim().toLowerCase();
