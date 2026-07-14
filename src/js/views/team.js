@@ -230,7 +230,7 @@ function renderTeamAccountModal() {
     <div id="team-account-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
       <section class="stock-modal team-account-modal" role="dialog" aria-modal="true" aria-labelledby="team-account-modal-title">
         <header class="stock-modal-header">
-          <div><span class="eyebrow">Team account</span><h2 id="team-account-modal-title">Staff details</h2></div>
+          <div><span class="eyebrow">Staff account</span><h2 id="team-account-modal-title">Staff details</h2></div>
           <button class="icon-button js-close-team-account" type="button" title="Close staff details" aria-label="Close staff details">${icon("x")}</button>
         </header>
         <div id="team-account-modal-content"></div>
@@ -294,8 +294,7 @@ export function renderTeam({ state }) {
     return `
       <section class="view team-view">
         <section class="panel setup-card">
-          ${panelHeader("Team access", "Only the CEO can create users or reset access")}
-          <p>Your role can view the tools assigned to you, but user management is reserved for the CEO.</p>
+          ${panelHeader("Staff access", "Only the CEO can create staff or reset access")}
         </section>
       </section>
     `;
@@ -303,9 +302,9 @@ export function renderTeam({ state }) {
 
   return `
     <section class="view team-view">
-      <div class="dashboard-layout">
+      <div class="staff-create-layout">
         <section class="panel">
-          ${panelHeader("Add team member", "Create login access with a one-time password")}
+          ${panelHeader("Add Staff", "")}
           <form id="account-form" class="form-grid" novalidate>
             <label class="field">
               <span>Full name</span>
@@ -333,7 +332,7 @@ export function renderTeam({ state }) {
               <span class="muted">They sign in once with a temporary password, then choose a new one.</span>
               ${textButton({
                 iconName: "team",
-                label: "Create member",
+                label: "Create staff",
                 className: "primary",
                 type: "submit"
               })}
@@ -342,18 +341,10 @@ export function renderTeam({ state }) {
           </form>
         </section>
 
-        <section class="panel setup-card">
-          ${panelHeader("Team access", "Each member gets their own role and password")}
-          <div class="client-id-box">
-            <span class="eyebrow">Active factory</span>
-            <strong>${escapeHtml(client.companyName)}</strong>
-          </div>
-          <p>Users only see the factory records and tools their role allows.</p>
-        </section>
       </div>
 
       <section class="panel team-layout">
-        ${panelHeader("Accounts", "Users created for this factory")}
+        ${panelHeader("Staff accounts", "")}
         ${
           accounts.length
             ? `<div class="team-member-list">${accounts.map(renderAccountListItem).join("")}</div>`

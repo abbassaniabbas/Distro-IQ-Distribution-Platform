@@ -911,22 +911,40 @@ function renderDispatchForm(state, permissions) {
 
 export function renderCeoQuickStockActions(state) {
   const permissions = currentUserPermissions(state);
-  const stockForm = renderStockProductModal(state, permissions)
-    .replace('id="stock-product-modal" class="stock-modal-backdrop" hidden', 'class="ceo-quick-form-body"')
-    .replace('class="stock-modal" role="dialog" aria-modal="true"', 'class="ceo-inline-stock-form"')
-    .replace(/<header class="stock-modal-header">[\s\S]*?<\/header>/, "");
 
   return `
     <div class="ceo-quick-actions">
-      <details class="panel ceo-quick-action">
-        <summary class="button primary">${icon("plus")}<span>Add stock</span></summary>
-        ${stockForm}
-      </details>
-      <details class="panel ceo-quick-action">
-        <summary class="button">${icon("truck")}<span>Factory dispatch</span></summary>
-        <div class="ceo-quick-form-body">${renderDispatchForm(state, permissions)}</div>
-      </details>
+      <button class="button primary compact js-open-stock-modal" type="button">${icon("plus")}<span>Add stock</span></button>
+      <button class="button compact js-open-dashboard-dispatch" type="button">${icon("truck")}<span>Factory dispatch</span></button>
     </div>
+    ${renderStockProductModal(state, permissions)}
+    ${renderDashboardDispatchModal(state, permissions)}
+  `;
+}
+
+function renderDashboardDispatchModal(state, permissions) {
+  return `
+    <div id="dashboard-dispatch-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="dashboard-dispatch-title">
+        <header class="stock-modal-header">
+          <h2 id="dashboard-dispatch-title">Factory dispatch</h2>
+          <button class="icon-button js-close-dashboard-dispatch" type="button" aria-label="Close factory dispatch">${icon("x")}</button>
+        </header>
+        ${renderDispatchForm(state, permissions)}
+      </section>
+    </div>
+  `;
+}
+
+export function renderStoreKeeperDispatchAction(state) {
+  const permissions = currentUserPermissions(state);
+
+  return `
+    <button class="button primary js-open-dashboard-dispatch" type="button">
+      ${icon("truck")}
+      <span>Record dispatch</span>
+    </button>
+    ${renderDashboardDispatchModal(state, permissions)}
   `;
 }
 
@@ -1626,6 +1644,7 @@ export function bindInventory({ root, store, signal }) {
   const stockImageFileName = qs("#stock-image-file-name", root);
   const clearStockImageButton = qs("#clear-stock-image-file", root);
   const dispatchForm = qs("#stock-dispatch-form", root);
+  const dashboardDispatchModal = qs("#dashboard-dispatch-modal", root);
   const dispatchRecipientType = dispatchForm ? qs('select[name="recipientType"]', dispatchForm) : null;
   const dispatchProductSelect = dispatchForm ? qs("[data-dispatch-product-select]", dispatchForm) : null;
   const dispatchRecipientSelect = dispatchForm ? qs("[data-dispatch-recipient-select]", dispatchForm) : null;
@@ -1639,7 +1658,7 @@ export function bindInventory({ root, store, signal }) {
   const requestedAction = routeParams.get("action");
   let stockImageDataUrl = "";
   const batchMaterialList = qs("[data-batch-material-list]", root);
-  const productionStockUpdate = qs("[data-production-stock-update]", productForm);
+  const productionStockUpdate = productForm ? qs("[data-production-stock-update]", productForm) : null;
   const rawMaterialSaleModal = qs("#raw-material-sale-modal", root);
   const rawMaterialSaleForm = qs("#raw-material-sale-form", root);
   const rawSaleProductSelect = rawMaterialSaleForm ? qs("[data-raw-sale-product]", rawMaterialSaleForm) : null;
@@ -2403,6 +2422,19 @@ export function bindInventory({ root, store, signal }) {
     openStockModal();
   }
 
+  qs(".js-open-dashboard-dispatch", root)?.addEventListener("click", () => {
+    if (!dashboardDispatchModal || !dispatchForm) return;
+    dashboardDispatchModal.hidden = false;
+    dispatchForm.elements.recipientType?.focus();
+  });
+
+  qsa(".js-close-dashboard-dispatch", root).forEach((button) => {
+    button.addEventListener("click", () => { dashboardDispatchModal.hidden = true; });
+  });
+  dashboardDispatchModal?.addEventListener("click", (event) => {
+    if (event.target === dashboardDispatchModal) dashboardDispatchModal.hidden = true;
+  });
+
   qs(".js-open-stock-modal", root)?.addEventListener("click", () => {
     resetProductForm();
     openStockModal();
@@ -2617,6 +2649,7 @@ export function bindInventory({ root, store, signal }) {
     syncExpectedDeliveryDate();
     updateDispatchRecipientOptions();
     updateDispatchProductOptions();
+    if (dashboardDispatchModal) dashboardDispatchModal.hidden = true;
   });
 
   qsa(".js-restock-product", root).forEach((button) => {

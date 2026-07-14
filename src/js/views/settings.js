@@ -87,7 +87,7 @@ function collectCompanySettings(form, logoDataUrl, client) {
     creditLimitEmailEnabled: client.creditLimitEmailEnabled === true,
     creditLimitSmsEnabled: client.creditLimitSmsEnabled === true,
     skuFormat: String(formData.get("skuFormat") || "").trim(),
-    inventoryFormat: String(formData.get("inventoryFormat") || "").trim(),
+    invoiceFormat: String(formData.get("invoiceFormat") || "").trim(),
     logoDataUrl
   };
 }
@@ -152,9 +152,9 @@ function renderCompanySettings(state, account) {
         </label>
 
         <label class="field">
-          <span>Inventory format</span>
-          <input name="inventoryFormat" value="${escapeHtml(client.inventoryFormat || "STK-{0000}")}" placeholder="STK-{0000}" ${canEdit ? "" : "disabled"}>
-          ${renderFieldError("inventoryFormat")}
+          <span>Invoice format</span>
+          <input name="invoiceFormat" value="${escapeHtml(client.invoiceFormat || "INV-{0000}")}" placeholder="INV-{0000}" ${canEdit ? "" : "disabled"}>
+          ${renderFieldError("invoiceFormat")}
         </label>
 
         <span id="company-settings-message" class="field-error span-full"></span>
@@ -426,7 +426,7 @@ export function bindSettings({ root, store }) {
 
     writeErrors(companyForm, errors);
     if (!/\{0{2,}\}/.test(values.skuFormat)) errors.skuFormat = "Use a number block such as {0000}.";
-    if (!/\{0{2,}\}/.test(values.inventoryFormat)) errors.inventoryFormat = "Use a number block such as {0000}.";
+    if (!/\{0{2,}\}/.test(values.invoiceFormat)) errors.invoiceFormat = "Use a number block such as {0000}.";
     writeErrors(companyForm, errors);
     message.textContent = "";
 
@@ -459,7 +459,7 @@ export function bindSettings({ root, store }) {
             creditLimitEmailEnabled: values.creditLimitEmailEnabled,
             creditLimitSmsEnabled: values.creditLimitSmsEnabled,
             skuFormat: values.skuFormat,
-            inventoryFormat: values.inventoryFormat
+            invoiceFormat: values.invoiceFormat
           },
           message: "Company settings updated"
         });

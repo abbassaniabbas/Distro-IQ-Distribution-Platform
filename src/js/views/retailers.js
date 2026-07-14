@@ -19,14 +19,11 @@ function renderSupermarketManager(state, permissions) {
 
   const moneySymbol = currencySymbolFor(state.client);
   const canManagePaymentTerms = permissions.canManageCustomers && isModuleEnabled(state, "credit_control");
-  const title = canManagePaymentTerms ? "Customer relationship" : "Add customer";
-  const subtitle = canManagePaymentTerms
-    ? "Add or update customer details, location, customer type, and payment terms"
-    : "Create a customer outlet for sales logging";
+  const title = "Add Customer";
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader(title, subtitle)}
+      ${panelHeader(title, "")}
       <form id="retailer-form" class="manager-form-grid" novalidate>
         <input type="hidden" name="retailerId">
         <label class="field">
@@ -383,7 +380,7 @@ export function renderRetailers({ state }) {
       ${renderSupermarketManager(state, permissions)}
       <section class="panel retailers-layout">
         <div class="toolbar">
-          ${panelHeader("Customer outlets", "Supermarkets, kiosks, wholesalers, contacts, and balances owed")}
+          ${panelHeader("Customer outlets", "")}
           <div class="toolbar-group">
             <label class="field">
               <span class="sr-only">Filter by customer rating</span>

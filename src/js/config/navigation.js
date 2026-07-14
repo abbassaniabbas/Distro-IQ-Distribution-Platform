@@ -23,7 +23,7 @@ export const NAV_ITEMS = [
   },
   {
     id: "team",
-    label: "Team",
+    label: "Staff",
     icon: "team"
   },
   {

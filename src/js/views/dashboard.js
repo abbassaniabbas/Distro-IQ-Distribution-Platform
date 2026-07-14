@@ -24,7 +24,7 @@ import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
-import { bindInventory, renderCeoQuickStockActions } from "./inventory.js";
+import { bindInventory, renderCeoQuickStockActions, renderStoreKeeperDispatchAction } from "./inventory.js";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -1075,11 +1075,10 @@ function renderCeoDashboard(state) {
       <section class="ceo-command-strip">
         <div>
           <span class="eyebrow">CEO portal</span>
-          <h2>Executive overview</h2>
+          <h2>Overview</h2>
         </div>
+        ${renderCeoQuickStockActions(state)}
       </section>
-
-      ${renderCeoQuickStockActions(state)}
 
       <div class="metric-grid ceo-minimal-metrics">
         ${renderCeoMetricCard({
@@ -1262,10 +1261,7 @@ function renderStoreKeeperDashboard(state, permissions) {
           <span class="eyebrow">Store Keeper portal</span>
           <h2>Factory stock control</h2>
         </div>
-        <a class="button primary" href="#/inventory?tab=dispatch">
-          ${icon("truck")}
-          <span>Record dispatch</span>
-        </a>
+        ${renderStoreKeeperDispatchAction(state)}
       </section>
 
       <div class="metric-grid">
@@ -2700,6 +2696,10 @@ export function bindDashboard({ root, store, signal }) {
     bindInventory({ root, store, signal });
     bindCeoDashboard({ root, store });
     return;
+  }
+
+  if (root.querySelector(".storekeeper-dashboard")) {
+    bindInventory({ root, store, signal });
   }
 
   qsa(".js-restock-product", root).forEach((button) => {

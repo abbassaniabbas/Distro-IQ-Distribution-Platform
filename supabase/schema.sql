@@ -32,7 +32,10 @@ alter table public.clients
 add column if not exists sku_format text not null default 'SKU-{0000}';
 
 alter table public.clients
-add column if not exists inventory_format text not null default 'STK-{0000}';
+add column if not exists invoice_format text not null default 'INV-{0000}';
+
+alter table public.clients
+drop column if exists inventory_format;
 
 do $$ begin
   alter table public.clients

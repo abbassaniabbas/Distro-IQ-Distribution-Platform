@@ -8,6 +8,7 @@ import { nextFormattedId } from "../src/js/services/tenant.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { renderAuth } from "../src/js/views/auth.js";
+import { renderBackendSetup } from "../src/js/views/backend-setup.js";
 import { renderActivityLog } from "../src/js/views/activity-log.js";
 import { renderDashboard } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
@@ -43,10 +44,13 @@ assert.equal(
   "untrusted user metadata must not grant a privileged role"
 );
 assert.equal(nextFormattedId("SKU-{0000}", ["SKU-0001", "SKU-0008"], "SKU"), "SKU-0009");
-assert.equal(nextFormattedId("STK-{000}", ["STK-001"], "STK"), "STK-002");
+assert.equal(nextFormattedId("INV-{000}", ["INV-001"], "INV"), "INV-002");
 
 const loginHtml = renderAuth({ routeId: "login" });
 assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 4, "login must show four role cards");
+const backendErrorHtml = renderBackendSetup({ state: { backend: { error: "Temporary connection error" } } });
+assert.match(backendErrorHtml, /data-retry-workspace="true"/);
+assert.match(backendErrorHtml, /Try again/);
 assert.doesNotMatch(loginHtml, /value="manager"/, "the removed Manager role must not appear at login");
 assert.doesNotMatch(loginHtml, /<select name="role"/, "login role selection must not use a dropdown");
 const notificationFixture = {
@@ -84,7 +88,7 @@ assert.equal(currentUserPermissions(store.getState()).canReconcileStock, true);
 assert.equal(currentUserPermissions(store.getState()).canLogSalesReturns, true);
 const managerSettings = renderSettings({ state: store.getState() });
 assert.match(managerSettings, /name="skuFormat"/);
-assert.match(managerSettings, /name="inventoryFormat"/);
+assert.match(managerSettings, /name="invoiceFormat"/);
 assert.doesNotMatch(managerSettings, /name="timezone"/);
 assert.doesNotMatch(managerSettings, /Saved delivery note preview/);
 assert.match(managerSettings, /data-open-password-modal/);
@@ -96,6 +100,9 @@ assert.doesNotMatch(managerTeam, /<option value="manager">/);
 assert.match(managerTeam, /team-member-list/);
 assert.match(managerTeam, /data-team-account-id="membership-rep"/);
 assert.match(managerTeam, /team-account-modal/);
+assert.match(managerTeam, /Add Staff/);
+assert.match(managerTeam, /Create staff/);
+assert.doesNotMatch(managerTeam, /Team access/);
 store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId: "membership-rep", active: false });
 assert.equal(store.getState().accounts.find((account) => account.id === "membership-rep").status, "disabled");
 store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId: "membership-rep", active: true });
@@ -410,6 +417,8 @@ const delayedOrdersPage = renderOrders({ state: store.getState() });
 assert.match(delayedOrdersPage, /order-delay-attention-icon/);
 assert.match(delayedOrdersPage, /Delivery attention/);
 assert.doesNotMatch(delayedOrdersPage, /Automatically detected/);
+assert.doesNotMatch(delayedOrdersPage, /Order status and credit checks for every snack order/);
+assert.doesNotMatch(delayedOrdersPage, /<span>Missed expected delivery date<\/span>|<span>Vehicle issue<\/span>/);
 assert.match(delayedOrdersPage, /data-search-suggestions="[^"]*Late Outlet/);
 assert.match(delayedOrdersPage, /Replacement van assigned|Review delay plan/);
 
@@ -464,7 +473,11 @@ authenticate("user-ceo");
 const ceoDashboard = renderDashboard({ state: store.getState() });
 assert.doesNotMatch(ceoDashboard, /Submitted sales reports/, "submitted reports must be moved out of the CEO dashboard");
 assert.match(ceoDashboard, /Chioma CEO/);
-assert.match(ceoDashboard, /ceo-quick-action/);
+assert.match(ceoDashboard, /js-open-stock-modal/);
+assert.match(ceoDashboard, /js-open-dashboard-dispatch/);
+assert.match(ceoDashboard, /id="stock-product-modal" class="stock-modal-backdrop" hidden/);
+assert.match(ceoDashboard, /id="dashboard-dispatch-modal" class="stock-modal-backdrop" hidden/);
+assert.doesNotMatch(ceoDashboard, /Executive overview/);
 assert.match(ceoDashboard, /Factory dispatch/);
 assert.equal((ceoDashboard.match(/id="manager-product-form"/g) || []).length, 1);
 assert.equal((ceoDashboard.match(/id="stock-dispatch-form"/g) || []).length, 1);
@@ -482,11 +495,20 @@ assert.match(ceoSubmittedReports, /js-view-report-details/, "CEO must be able to
 assert.match(ceoSubmittedReports, /js-review-report/, "CEO must inherit report review controls from the former Manager role");
 
 authenticate("user-store");
-assert.match(renderDashboard({ state: store.getState() }), /Tola Store/);
+const storeKeeperDashboard = renderDashboard({ state: store.getState() });
+assert.match(storeKeeperDashboard, /Tola Store/);
+assert.match(storeKeeperDashboard, /js-open-dashboard-dispatch/);
+assert.match(storeKeeperDashboard, /id="dashboard-dispatch-modal" class="stock-modal-backdrop" hidden/);
+assert.equal((storeKeeperDashboard.match(/id="stock-dispatch-form"/g) || []).length, 1);
+assert.doesNotMatch(storeKeeperDashboard, /href="#\/inventory\?tab=dispatch"/);
 authenticate("user-accountant");
 assert.match(renderDashboard({ state: store.getState() }), /Bola Accountant/);
 
 authenticate("user-manager");
+const ceoCustomersPage = renderRetailers({ state: store.getState() });
+assert.match(ceoCustomersPage, /Add Customer/);
+assert.doesNotMatch(ceoCustomersPage, /Customer relationship/);
+assert.doesNotMatch(ceoCustomersPage, /Supermarkets, kiosks, wholesalers, contacts, and balances owed/);
 const historyRetailer = { id: "RTL-HISTORY", name: "History Supermarket", channel: "Supermarket", status: "active", outstanding: 2500 };
 const historyRetailerState = {
   ...store.getState(),

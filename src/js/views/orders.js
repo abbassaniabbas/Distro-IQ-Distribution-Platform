@@ -116,7 +116,6 @@ function renderDelayMeta(order) {
   return `
     <div class="order-delay-meta">
       <strong>${formatNumber(daysLate)} day${daysLate === 1 ? "" : "s"} late</strong>
-      <span>${escapeHtml(order.delayReason || "Delivery issue under review")}</span>
     </div>
   `;
 }
@@ -309,7 +308,7 @@ export function renderOrders({ state }) {
 
       <section class="panel orders-layout">
         <div class="toolbar">
-          ${panelHeader("Sales order control", "Order status and credit checks for every snack order")}
+          ${panelHeader("Sales order control", "")}
           <div class="toolbar-group">
             <label class="field">
               <span class="sr-only">Filter by status</span>

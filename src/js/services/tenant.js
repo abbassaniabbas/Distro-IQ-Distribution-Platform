@@ -81,7 +81,7 @@ export function createClientProfile(formData) {
     currency: currency.value || DEFAULT_CURRENCY,
     currencySymbol: currency.symbol,
     skuFormat: formData.skuFormat || "SKU-{0000}",
-    inventoryFormat: formData.inventoryFormat || "STK-{0000}",
+    invoiceFormat: formData.invoiceFormat || "INV-{0000}",
     createdAt: new Date().toISOString()
   };
 }

@@ -1,7 +1,7 @@
 import { CURRENCY_OPTIONS } from "./tenant.js";
 import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
 
-const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, sku_format, inventory_format, created_at)";
+const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, sku_format, invoice_format, created_at)";
 const CLIENT_SELECT_LEGACY = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, timezone, currency, currency_symbol, created_at)";
 
 function mapClient(row) {
@@ -18,7 +18,7 @@ function mapClient(row) {
     creditLimitEmailEnabled: row.credit_limit_email_enabled === true,
     creditLimitSmsEnabled: row.credit_limit_sms_enabled === true,
     skuFormat: row.sku_format || "SKU-{0000}",
-    inventoryFormat: row.inventory_format || "STK-{0000}",
+    invoiceFormat: row.invoice_format || "INV-{0000}",
     createdAt: row.created_at
   };
 }
@@ -293,7 +293,7 @@ async function loadMembershipRows(supabase, userId) {
     return result;
   }
 
-  if (!["brand_color", "sku_format", "inventory_format"].some((field) => isSchemaCacheError(result.error, field))) {
+  if (!["brand_color", "sku_format", "invoice_format"].some((field) => isSchemaCacheError(result.error, field))) {
     return result;
   }
 
@@ -615,7 +615,7 @@ export async function updateWorkspaceSettings({ client, payload }) {
       credit_limit_email_enabled: payload.creditLimitEmailEnabled === true,
       credit_limit_sms_enabled: payload.creditLimitSmsEnabled === true,
       sku_format: payload.skuFormat || "SKU-{0000}",
-      inventory_format: payload.inventoryFormat || "STK-{0000}"
+      invoice_format: payload.invoiceFormat || "INV-{0000}"
     })
     .eq("id", client.id);
 

@@ -100,7 +100,7 @@ const routes = {
     bind: bindRetailers
   },
   team: {
-    title: "Team",
+    title: "Staff",
     render: renderTeam,
     bind: bindTeam
   },
@@ -144,6 +144,17 @@ const routes = {
     isPlatform: true
   }
 };
+
+const BACKEND_RETRY_DELAY_MS = 700;
+
+async function withBackendRetry(operation) {
+  try {
+    return await operation();
+  } catch {
+    await new Promise((resolve) => window.setTimeout(resolve, BACKEND_RETRY_DELAY_MS));
+    return operation();
+  }
+}
 
 const store = createStore();
 const navRoot = qs("#primary-nav");
@@ -649,7 +660,7 @@ async function bootstrap() {
   }
 
   try {
-    const authContext = await getAuthContext();
+    const authContext = await withBackendRetry(getAuthContext);
 
     if (authContext.session) {
       const platformOverview = await tryLoadPlatformOverview();
@@ -662,7 +673,7 @@ async function bootstrap() {
           platformOverview
         });
       } else {
-        const workspace = await loadWorkspace();
+        const workspace = await withBackendRetry(loadWorkspace);
         store.dispatch({
           type: "SET_AUTHENTICATED_WORKSPACE",
           session: authContext.session,
@@ -683,28 +694,39 @@ async function bootstrap() {
         return;
       }
 
-      if (session) {
-        const platformOverview = await tryLoadPlatformOverview();
+      try {
+        if (session) {
+          const platformOverview = await tryLoadPlatformOverview();
 
-        if (platformOverview) {
-          store.dispatch({
-            type: "SET_PLATFORM_CONTEXT",
-            session,
-            user,
-            platformOverview
-          });
+          if (platformOverview) {
+            store.dispatch({
+              type: "SET_PLATFORM_CONTEXT",
+              session,
+              user,
+              platformOverview
+            });
+          } else {
+            const workspace = await withBackendRetry(loadWorkspace);
+            store.dispatch({
+              type: "SET_AUTHENTICATED_WORKSPACE",
+              session,
+              user,
+              ...workspace
+            });
+          }
         } else {
-          const workspace = await loadWorkspace();
           store.dispatch({
-            type: "SET_AUTHENTICATED_WORKSPACE",
-            session,
-            user,
-            ...workspace
+            type: "CLEAR_AUTH_CONTEXT"
           });
         }
-      } else {
+      } catch (error) {
         store.dispatch({
-          type: "CLEAR_AUTH_CONTEXT"
+          type: "SET_BACKEND_STATUS",
+          payload: {
+            configured: true,
+            status: "error",
+            error: error.message
+          }
         });
       }
     });
