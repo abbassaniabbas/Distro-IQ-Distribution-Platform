@@ -11,15 +11,14 @@ type InvitePayload = {
   name: string;
   email: string;
   phoneNumber: string;
-  role: "sales_rep" | "store_keeper" | "accountant" | "ceo";
+  role: "sales_rep" | "store_keeper" | "accountant";
   redirectTo?: string;
 };
 
 const validRoles = new Set([
   "sales_rep",
   "store_keeper",
-  "accountant",
-  "ceo"
+  "accountant"
 ]);
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const phonePattern = /^[+0-9().\s-]+$/;

@@ -28,6 +28,12 @@ add column if not exists credit_limit_email_enabled boolean not null default fal
 alter table public.clients
 add column if not exists credit_limit_sms_enabled boolean not null default false;
 
+alter table public.clients
+add column if not exists sku_format text not null default 'SKU-{0000}';
+
+alter table public.clients
+add column if not exists inventory_format text not null default 'STK-{0000}';
+
 do $$ begin
   alter table public.clients
   add constraint clients_brand_color_hex
@@ -687,6 +693,10 @@ check (role in ('sales_rep', 'store_keeper', 'accountant', 'ceo'));
 alter table public.invites
 add constraint invites_role_check
 check (role in ('sales_rep', 'store_keeper', 'accountant', 'ceo'));
+
+create unique index if not exists memberships_one_ceo_per_client
+on public.memberships (client_id)
+where role = 'ceo';
 
 create or replace function public.is_client_member(p_client_id uuid)
 returns boolean
@@ -1899,9 +1909,12 @@ begin
 end;
 $$;
 
+drop function if exists public.update_my_membership_profile(uuid, text);
+
 create or replace function public.update_my_membership_profile(
   p_client_id uuid,
-  p_name text
+  p_name text,
+  p_phone_number text
 )
 returns public.memberships
 language plpgsql
@@ -1911,6 +1924,7 @@ as $$
 declare
   v_membership public.memberships;
   v_name text := trim(coalesce(p_name, ''));
+  v_phone_number text := trim(coalesce(p_phone_number, ''));
 begin
   if auth.uid() is null then
     raise exception 'Authentication required';
@@ -1922,8 +1936,15 @@ begin
     raise exception 'Name must be between 2 and 120 characters';
   end if;
 
+  if char_length(v_phone_number) < 7
+    or char_length(v_phone_number) > 32
+    or v_phone_number !~ '^[+0-9().[:space:]-]+$' then
+    raise exception 'Enter a valid phone number';
+  end if;
+
   update public.memberships
-  set name = v_name
+  set name = v_name,
+      phone_number = v_phone_number
   where client_id = p_client_id
     and user_id = auth.uid()
     and status = 'active'
@@ -1984,7 +2005,7 @@ $$;
 grant execute on function public.create_client_workspace(text, text, text, text, text, text) to authenticated;
 grant execute on function public.record_activity(uuid, text, text, text, text) to authenticated;
 grant execute on function public.activate_my_membership(uuid, text) to authenticated;
-grant execute on function public.update_my_membership_profile(uuid, text) to authenticated;
+grant execute on function public.update_my_membership_profile(uuid, text, text) to authenticated;
 grant execute on function public.set_membership_active_status(uuid, uuid, boolean) to authenticated;
 grant execute on function public.is_client_member(uuid) to authenticated;
 grant execute on function public.get_my_pending_workspace_identity(uuid) to authenticated;
@@ -2000,7 +2021,7 @@ grant execute on function public.get_platform_overview() to authenticated;
 grant execute on function public.get_platform_console() to authenticated;
 
 revoke all on function public.activate_my_membership(uuid, text) from public, anon;
-revoke all on function public.update_my_membership_profile(uuid, text) from public, anon;
+revoke all on function public.update_my_membership_profile(uuid, text, text) from public, anon;
 revoke all on function public.set_membership_active_status(uuid, uuid, boolean) from public, anon;
 revoke all on function public.has_pending_membership_setup(uuid) from public, anon, authenticated;
 revoke all on function public.get_my_pending_workspace_identity(uuid) from public, anon;

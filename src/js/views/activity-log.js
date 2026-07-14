@@ -11,8 +11,7 @@ import { panelHeader, table } from "../ui/components.js";
 import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
-  renderManagerReportReview,
-  renderManagerSalesOperations
+  renderManagerReportReview
 } from "./dashboard.js";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
@@ -29,7 +28,6 @@ function activityTabsForRole(state, role) {
     return [
       { id: "activity", label: "Activity log" },
       { id: "recent-orders", label: "Recent sales orders" },
-      { id: "sales-activity", label: "Consolidated sales activity" },
       ...(isModuleEnabled(state, "field_reports")
         ? [{ id: "submitted-reports", label: "Submitted sales reports" }]
         : [])
@@ -39,7 +37,6 @@ function activityTabsForRole(state, role) {
   return [
     { id: "activity", label: "Activity log" },
     { id: "recent-orders", label: "Recent sales orders" },
-    { id: "sales-activity", label: "Consolidated sales activity" },
     ...(isModuleEnabled(state, "field_reports")
       ? [{ id: "submitted-reports", label: "Submitted sales reports" }]
       : [])
@@ -68,7 +65,6 @@ function renderActivitySubnav(state, role, activeTab) {
 
 function renderActivitySection(state, role, activeTab) {
   if (activeTab === "recent-orders") return renderManagerRecentSalesOrders(state);
-  if (activeTab === "sales-activity") return renderManagerSalesOperations(state);
   if (activeTab === "submitted-reports") return renderManagerReportReview(state);
   return "";
 }
@@ -79,7 +75,7 @@ function entryDate(value) {
 }
 
 function actorKey(entry) {
-  return `${entry.actorName || "Team member"}|${entry.actorEmail || ""}`;
+  return normalized(entry.actorName || "Team member");
 }
 
 function normalized(value) {
@@ -281,18 +277,12 @@ function renderUserOptions(logs) {
   const users = new Map();
 
   logs.forEach((entry) => {
-    users.set(actorKey(entry), {
-      name: entry.actorName || "Team member",
-      email: entry.actorEmail || ""
-    });
+    users.set(actorKey(entry), entry.actorName || "Team member");
   });
 
   return [...users.entries()]
-    .sort((a, b) => a[1].name.localeCompare(b[1].name))
-    .map(([key, user]) => {
-      const label = user.email ? `${user.name} (${user.email})` : user.name;
-      return `<option value="${escapeHtml(key)}">${escapeHtml(label)}</option>`;
-    })
+    .sort((a, b) => a[1].localeCompare(b[1]))
+    .map(([key, name]) => `<option value="${escapeHtml(key)}">${escapeHtml(name)}</option>`)
     .join("");
 }
 

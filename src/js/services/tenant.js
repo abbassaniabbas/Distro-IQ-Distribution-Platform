@@ -44,6 +44,31 @@ export function createId(prefix) {
   return fallbackId(prefix);
 }
 
+export function nextFormattedId(format, existingIds = [], fallbackPrefix = "REC") {
+  const normalizedFormat = String(format || `${fallbackPrefix}-{0000}`).trim();
+  const tokenMatch = normalizedFormat.match(/\{(0{2,})\}/);
+  if (!tokenMatch) return createId(fallbackPrefix);
+
+  const token = tokenMatch[0];
+  const width = tokenMatch[1].length;
+  const [prefix = `${fallbackPrefix}-`, suffix = ""] = normalizedFormat.split(token);
+  const escapePattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const idPattern = new RegExp(`^${escapePattern(prefix)}(\\d{${width},})${escapePattern(suffix)}$`, "i");
+  const usedIds = new Set(existingIds.map((id) => String(id || "").trim().toUpperCase()));
+  let number = existingIds.reduce((highest, id) => {
+    const match = String(id || "").trim().match(idPattern);
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0) + 1;
+  let candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
+
+  while (usedIds.has(candidate.toUpperCase())) {
+    number += 1;
+    candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
+  }
+
+  return candidate.toUpperCase();
+}
+
 export function createClientProfile(formData) {
   const currency = CURRENCY_OPTIONS.find((item) => item.value === formData.currency) || CURRENCY_OPTIONS[0];
 
@@ -55,6 +80,8 @@ export function createClientProfile(formData) {
     timezone: formData.timezone || DEFAULT_TIMEZONE,
     currency: currency.value || DEFAULT_CURRENCY,
     currencySymbol: currency.symbol,
+    skuFormat: formData.skuFormat || "SKU-{0000}",
+    inventoryFormat: formData.inventoryFormat || "STK-{0000}",
     createdAt: new Date().toISOString()
   };
 }
@@ -161,8 +188,8 @@ export function validateAccountForm(values, existingAccounts) {
     errors.email = "This email is already invited for this company.";
   }
 
-  if (!values.role || !ROLE_OPTIONS.some((role) => role.value === values.role)) {
-    errors.role = "Role is required.";
+  if (!values.role || !["sales_rep", "store_keeper", "accountant"].includes(values.role)) {
+    errors.role = "Choose a staff role.";
   }
 
   return errors;

@@ -4,6 +4,7 @@ import { effectiveOrderStatus, getCustomerOrderCompletion, getReturnableCustomer
 import { buildInvoiceDocument, buildInvoicePreviewContent, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
+import { nextFormattedId } from "../src/js/services/tenant.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { renderAuth } from "../src/js/views/auth.js";
@@ -41,6 +42,8 @@ assert.equal(
   "sales_rep",
   "untrusted user metadata must not grant a privileged role"
 );
+assert.equal(nextFormattedId("SKU-{0000}", ["SKU-0001", "SKU-0008"], "SKU"), "SKU-0009");
+assert.equal(nextFormattedId("STK-{000}", ["STK-001"], "STK"), "STK-002");
 
 const loginHtml = renderAuth({ routeId: "login" });
 assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 4, "login must show four role cards");
@@ -80,12 +83,15 @@ assert.equal(currentUserPermissions(store.getState()).canAssignStock, true);
 assert.equal(currentUserPermissions(store.getState()).canReconcileStock, true);
 assert.equal(currentUserPermissions(store.getState()).canLogSalesReturns, true);
 const managerSettings = renderSettings({ state: store.getState() });
-assert.match(managerSettings, /name="creditLimitEmailEnabled" type="checkbox"/);
-assert.match(managerSettings, /name="creditLimitSmsEnabled" type="checkbox"/);
-assert.doesNotMatch(managerSettings, /name="creditLimitEmailEnabled" type="checkbox" checked/);
-assert.doesNotMatch(managerSettings, /name="creditLimitSmsEnabled" type="checkbox" checked/);
+assert.match(managerSettings, /name="skuFormat"/);
+assert.match(managerSettings, /name="inventoryFormat"/);
+assert.doesNotMatch(managerSettings, /name="timezone"/);
+assert.doesNotMatch(managerSettings, /Saved delivery note preview/);
+assert.match(managerSettings, /data-open-password-modal/);
+assert.match(managerSettings, /name="oldPassword"/);
+assert.match(managerSettings, /data-open-delete-factory/);
 const managerTeam = renderTeam({ state: store.getState() });
-assert.match(managerTeam, /<option value="ceo">/);
+assert.doesNotMatch(managerTeam, /<option value="ceo">/, "CEO must not be assignable as a staff role");
 assert.doesNotMatch(managerTeam, /<option value="manager">/);
 assert.match(managerTeam, /team-member-list/);
 assert.match(managerTeam, /data-team-account-id="membership-rep"/);
@@ -357,7 +363,7 @@ authenticate("user-store");
 globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
-assert.match(storeKeeperInventory, /name="sku" value="PRD-\d+"/, "new products must receive an editable automatic Product ID");
+assert.match(storeKeeperInventory, /name="sku" value="SKU-\d+" readonly/, "new products must receive an automatic SKU");
 
 assert.equal(effectiveOrderStatus({ status: "in_transit", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delayed");
 assert.equal(effectiveOrderStatus({ status: "delivered", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delivered");
@@ -416,8 +422,7 @@ assert.match(ledger, /js-open-assignment-details/);
 assert.match(ledger, /assignment-details-modal/);
 assert.doesNotMatch(ledger, /<th>Variance<\/th>/, "variance must not crowd the representative stock ledger table");
 assert.match(ledger, />18<\/strong>[\s\S]*Still with representative/, "the ledger must show unsold stock as stock in hand");
-assert.match(ledger, /Product ID/);
-assert.doesNotMatch(ledger, />SKU</);
+assert.match(ledger, /SKU/);
 
 const managerDashboard = renderDashboard({ state: store.getState() });
 assert.doesNotMatch(managerDashboard, /Recent sales orders/);
@@ -431,8 +436,12 @@ globalThis.window.location.hash = "#/activity-log?tab=recent-orders";
 const managerRecentOrders = renderActivityLog({ state: store.getState() });
 assert.match(managerRecentOrders, /Activity log pages/);
 assert.match(managerRecentOrders, /Recent sales orders/);
+globalThis.window.location.hash = "#/activity-log";
+const activityWithUserFilter = renderActivityLog({ state: store.getState() });
+const userFilterMarkup = activityWithUserFilter.match(/<select id="activity-user-filter">([\s\S]*?)<\/select>/)?.[1] || "";
+assert.doesNotMatch(userFilterMarkup, /@/, "activity user filter must show names without email addresses");
 globalThis.window.location.hash = "#/activity-log?tab=sales-activity";
-assert.match(renderActivityLog({ state: store.getState() }), /Consolidated sales activity/);
+assert.doesNotMatch(renderActivityLog({ state: store.getState() }), /Consolidated sales activity/);
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const managerSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(managerSubmittedReports, /Submitted sales reports/);
@@ -455,12 +464,16 @@ authenticate("user-ceo");
 const ceoDashboard = renderDashboard({ state: store.getState() });
 assert.doesNotMatch(ceoDashboard, /Submitted sales reports/, "submitted reports must be moved out of the CEO dashboard");
 assert.match(ceoDashboard, /Chioma CEO/);
-assert.match(ceoDashboard, /data-ceo-drilldown="rep"/);
-assert.match(ceoDashboard, /data-ceo-drilldown="product"/);
-assert.match(ceoDashboard, /leadership-detail-modal/);
-assert.match(ceoDashboard, /sales, stock, and credit history/);
-assert.match(ceoDashboard, /sales volume over time/);
-assert.match(ceoDashboard, /supply history and balance/);
+assert.match(ceoDashboard, /ceo-quick-action/);
+assert.match(ceoDashboard, /Factory dispatch/);
+assert.equal((ceoDashboard.match(/id="manager-product-form"/g) || []).length, 1);
+assert.equal((ceoDashboard.match(/id="stock-dispatch-form"/g) || []).length, 1);
+assert.doesNotMatch(ceoDashboard, /ceo-freshness/);
+assert.doesNotMatch(ceoDashboard, /Factory-to-cash controls/);
+assert.doesNotMatch(ceoDashboard, /Business pulse/);
+assert.doesNotMatch(ceoDashboard, /Customer ratings/);
+assert.doesNotMatch(ceoDashboard, /Leadership drilldown/);
+assert.doesNotMatch(ceoDashboard, /data-ceo-drilldown/);
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
@@ -679,6 +692,11 @@ assert.ok(
   [...browserStorage.values()].every((value) => !String(value).includes(temporaryPassword)),
   "temporary passwords must never be persisted in browser storage"
 );
+const securityAccount = store.getState().accounts.find((account) => account.email === "security-test@example.com");
+store.dispatch({ type: "DELETE_ACCOUNT", accountId: securityAccount.id });
+assert.equal(store.getState().accounts.some((account) => account.id === securityAccount.id), false, "CEO must be able to delete a staff account");
+store.dispatch({ type: "DELETE_ACCOUNT", accountId: "membership-ceo" });
+assert.equal(store.getState().accounts.some((account) => account.id === "membership-ceo"), true, "CEO accounts must be protected from staff deletion");
 
 const secondClient = { id: "client-other", companyName: "Other Factory", currencySymbol: "₦" };
 store.dispatch({

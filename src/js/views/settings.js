@@ -1,4 +1,4 @@
-import { updateCurrentUserPassword, updateCurrentUserProfile } from "../services/auth.js";
+import { signInWithPassword, updateCurrentUserPassword, updateCurrentUserProfile } from "../services/auth.js";
 import {
   deleteWorkspace,
   loadWorkspace,
@@ -16,17 +16,14 @@ import {
 import { setCurrencySettings } from "../services/formatters.js";
 import {
   CURRENCY_OPTIONS,
-  TIMEZONE_OPTIONS,
   getScopedAccounts,
   validateClientForm
 } from "../services/tenant.js";
-import { currentUserPermissions, currentUserRole, roleDescription, roleLabel } from "../services/rbac.js";
-import { isModuleEnabled } from "../services/features.js";
+import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
-import { renderDeliveryNotePreview } from "../ui/brand-preview.js";
 import { icon } from "../ui/icons.js";
-import { panelHeader, statusPill, textButton } from "../ui/components.js";
+import { panelHeader, textButton } from "../ui/components.js";
 
 function getCurrentAccount(state) {
   return getScopedAccounts(state).find((account) => account.userId === state.user?.id);
@@ -79,16 +76,18 @@ function renderLogo(client) {
   return escapeHtml(companyInitials(client?.companyName));
 }
 
-function collectCompanySettings(form, logoDataUrl) {
+function collectCompanySettings(form, logoDataUrl, client) {
   const formData = new FormData(form);
 
   return {
     companyName: formData.get("companyName") || "",
-    timezone: formData.get("timezone") || "",
+    timezone: client.timezone || "Africa/Lagos",
     currency: formData.get("currency") || "",
     brandColor: DEFAULT_BRAND_COLOR,
-    creditLimitEmailEnabled: formData.get("creditLimitEmailEnabled") === "on",
-    creditLimitSmsEnabled: formData.get("creditLimitSmsEnabled") === "on",
+    creditLimitEmailEnabled: client.creditLimitEmailEnabled === true,
+    creditLimitSmsEnabled: client.creditLimitSmsEnabled === true,
+    skuFormat: String(formData.get("skuFormat") || "").trim(),
+    inventoryFormat: String(formData.get("inventoryFormat") || "").trim(),
     logoDataUrl
   };
 }
@@ -97,7 +96,8 @@ function readProfileForm(form) {
   const formData = new FormData(form);
 
   return {
-    name: String(formData.get("name") || "").trim()
+    name: String(formData.get("name") || "").trim(),
+    phoneNumber: String(formData.get("phoneNumber") || "").trim()
   };
 }
 
@@ -106,29 +106,16 @@ function renderCompanySettings(state, account) {
   const canEdit = canEditCompanySettings(state);
   return `
     <section class="panel">
-      ${panelHeader("Factory settings", "Shared settings your team sees across the app")}
+      ${panelHeader("Factory settings", "")}
       <form id="company-settings-form" class="form-grid" novalidate>
-        <div class="span-full split settings-logo-row">
+        <div class="span-full settings-logo-row">
           <div class="logo-preview" id="settings-logo-preview" aria-label="Factory logo preview">${renderLogo(client)}</div>
-          <div class="client-id-box">
-            <span class="eyebrow">Active factory</span>
-            <strong>${escapeHtml(client.companyName)}</strong>
-            <span class="muted">Logo, timezone, and currency apply for the whole team.</span>
-          </div>
         </div>
 
-        <label class="field span-full">
+        <label class="field">
           <span>Factory name</span>
           <input name="companyName" value="${escapeHtml(client.companyName)}" ${canEdit ? "" : "disabled"}>
           ${renderFieldError("companyName")}
-        </label>
-
-        <label class="field">
-          <span>Timezone</span>
-          <select name="timezone" ${canEdit ? "" : "disabled"}>
-            ${renderSelectOptions(TIMEZONE_OPTIONS, client.timezone)}
-          </select>
-          ${renderFieldError("timezone")}
         </label>
 
         <label class="field">
@@ -158,21 +145,20 @@ function renderCompanySettings(state, account) {
           ${renderFieldError("logo")}
         </div>
 
-        <fieldset class="field span-full settings-notification-controls">
-          <legend>Credit-limit notifications</legend>
-          <label class="settings-switch">
-            <span><strong>Email</strong><small>Send the representative an email when their limit changes</small></span>
-            <input name="creditLimitEmailEnabled" type="checkbox" ${client.creditLimitEmailEnabled ? "checked" : ""} ${canEdit ? "" : "disabled"}>
-          </label>
-          <label class="settings-switch">
-            <span><strong>SMS</strong><small>Send the representative a text message when their limit changes</small></span>
-            <input name="creditLimitSmsEnabled" type="checkbox" ${client.creditLimitSmsEnabled ? "checked" : ""} ${canEdit ? "" : "disabled"}>
-          </label>
-        </fieldset>
+        <label class="field">
+          <span>SKU format</span>
+          <input name="skuFormat" value="${escapeHtml(client.skuFormat || "SKU-{0000}")}" placeholder="SKU-{0000}" ${canEdit ? "" : "disabled"}>
+          ${renderFieldError("skuFormat")}
+        </label>
+
+        <label class="field">
+          <span>Inventory format</span>
+          <input name="inventoryFormat" value="${escapeHtml(client.inventoryFormat || "STK-{0000}")}" placeholder="STK-{0000}" ${canEdit ? "" : "disabled"}>
+          ${renderFieldError("inventoryFormat")}
+        </label>
 
         <span id="company-settings-message" class="field-error span-full"></span>
-        <div class="span-full split">
-          <span class="muted">${canEdit ? "Saved changes apply for everyone in this factory." : "Only the CEO can change factory-wide settings."}</span>
+        <div class="span-full manager-form-actions">
           ${textButton({
             iconName: "settings",
             label: "Save factory",
@@ -182,12 +168,6 @@ function renderCompanySettings(state, account) {
           })}
         </div>
       </form>
-      ${isModuleEnabled(state, "delivery_notes") ? `
-        <div class="saved-preview-block">
-          ${panelHeader("Saved delivery note preview", "Branding applied to a sample document")}
-          ${renderDeliveryNotePreview({ ...client, brandColor: DEFAULT_BRAND_COLOR })}
-        </div>
-      ` : ""}
     </section>
   `;
 }
@@ -196,41 +176,42 @@ function renderFactoryDeletion(state) {
   if (!canDeleteFactoryAccount(state)) return "";
 
   return `
-    <section class="panel danger-panel">
-      ${panelHeader("Delete factory account", "CEO-only action")}
-      <form id="delete-factory-form" class="form-grid" novalidate>
-        <div class="span-full client-id-box danger-box">
-          <span class="eyebrow">Permanent deletion</span>
-          <strong>${escapeHtml(state.client.companyName)}</strong>
-          <span class="muted">This removes the factory workspace and its local records from this app.</span>
-        </div>
+    <button class="button warning" type="button" data-open-delete-factory>${icon("x")}<span>Delete factory</span></button>
+    <div id="delete-factory-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="delete-factory-title">
+        <header class="stock-modal-header">
+          <h2 id="delete-factory-title">Delete factory permanently</h2>
+          <button class="icon-button" type="button" data-close-delete-factory aria-label="Close">${icon("x")}</button>
+        </header>
+        <form id="delete-factory-form" class="form-grid" novalidate>
         <label class="field span-full">
-          <span>Type the factory name to confirm</span>
+          <span>Enter ${escapeHtml(state.client.companyName)} to confirm</span>
           <input name="confirmCompanyName" autocomplete="off" placeholder="${escapeHtml(state.client.companyName)}">
           ${renderFieldError("confirmCompanyName")}
         </label>
         <span id="delete-factory-message" class="field-error span-full"></span>
-        <div class="span-full split">
-          <span class="muted">Only the CEO can perform this action.</span>
+        <div class="span-full manager-form-actions">
           ${textButton({
             iconName: "x",
-            label: "Delete factory",
+            label: "Delete permanently",
             className: "warning",
             type: "submit"
           })}
         </div>
-      </form>
-    </section>
+        </form>
+      </section>
+    </div>
   `;
 }
 
 function renderProfileSettings(state, account) {
   const name = account?.name || state.user?.user_metadata?.full_name || "";
   const email = account?.email || state.user?.email || "";
+  const phoneNumber = account?.phoneNumber || "";
 
   return `
     <section class="panel">
-      ${panelHeader("My profile", "Personal details for your signed-in account")}
+      ${panelHeader("My profile", "")}
       <form id="profile-settings-form" class="form-grid" novalidate>
         <label class="field">
           <span>Full name</span>
@@ -240,34 +221,45 @@ function renderProfileSettings(state, account) {
         <label class="field">
           <span>Email</span>
           <input value="${escapeHtml(email)}" disabled>
-          <span class="muted">Contact an administrator if this email needs to change.</span>
         </label>
-        <div class="span-full client-id-box">
-          <span class="eyebrow">Role</span>
-          <strong>${escapeHtml(roleLabel(account?.role))}</strong>
-          ${statusPill(account?.status || "active")}
-          <span class="muted">${escapeHtml(roleDescription(account?.role))}</span>
-        </div>
+        <label class="field">
+          <span>Phone number</span>
+          <input name="phoneNumber" type="tel" value="${escapeHtml(phoneNumber)}" autocomplete="tel">
+          ${renderFieldError("phoneNumber")}
+        </label>
+        <label class="field"><span>Role</span><input value="${escapeHtml(roleLabel(account?.role))}" disabled></label>
         <span id="profile-settings-message" class="field-error span-full"></span>
-        <div class="span-full split">
-          <span class="muted">Your name appears across this factory workspace.</span>
+        <div class="span-full manager-form-actions">
           ${textButton({
             iconName: "userCheck",
             label: "Save profile",
             className: "primary",
             type: "submit"
           })}
+          <button class="button" type="button" data-open-password-modal>${icon("shield")}<span>Update password</span></button>
         </div>
       </form>
+      <div id="password-settings-modal" class="stock-modal-backdrop" hidden>
+        <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="password-settings-title">
+          <header class="stock-modal-header">
+            <h2 id="password-settings-title">Update password</h2>
+            <button class="icon-button" type="button" data-close-password-modal aria-label="Close">${icon("x")}</button>
+          </header>
+          ${renderPasswordSettings()}
+        </section>
+      </div>
     </section>
   `;
 }
 
 function renderPasswordSettings() {
   return `
-    <section class="panel">
-      ${panelHeader("Password", "Update the password for your signed-in account")}
       <form id="password-settings-form" class="form-grid" novalidate>
+        <label class="field span-full">
+          <span>Old password</span>
+          <input name="oldPassword" type="password" autocomplete="current-password">
+          ${renderFieldError("oldPassword")}
+        </label>
         <label class="field">
           <span>New password</span>
           <input name="newPassword" type="password" autocomplete="new-password">
@@ -279,8 +271,7 @@ function renderPasswordSettings() {
           ${renderFieldError("confirmPassword")}
         </label>
         <span id="password-settings-message" class="field-error span-full"></span>
-        <div class="span-full split">
-          <span class="muted">Use at least 8 characters.</span>
+        <div class="span-full manager-form-actions">
           ${textButton({
             iconName: "shield",
             label: "Update password",
@@ -289,7 +280,6 @@ function renderPasswordSettings() {
           })}
         </div>
       </form>
-    </section>
   `;
 }
 
@@ -314,7 +304,6 @@ export function renderSettings({ state }) {
         ${showFactorySettings ? renderCompanySettings(state, account) : ""}
         <div class="settings-side">
           ${renderProfileSettings(state, account)}
-          ${renderPasswordSettings()}
           ${renderFactoryDeletion(state)}
         </div>
       </div>
@@ -406,16 +395,38 @@ export function bindSettings({ root, store }) {
   const profileForm = qs("#profile-settings-form", root);
   const passwordForm = qs("#password-settings-form", root);
   const deleteFactoryForm = qs("#delete-factory-form", root);
+  const passwordModal = qs("#password-settings-modal", root);
+  const deleteFactoryModal = qs("#delete-factory-modal", root);
   const logoUpload = companyForm ? bindCompanyLogoUpload({ root, form: companyForm, state }) : null;
+
+  qs("[data-open-password-modal]", root)?.addEventListener("click", () => {
+    passwordModal.hidden = false;
+    passwordForm?.elements.oldPassword?.focus();
+  });
+  qs("[data-close-password-modal]", root)?.addEventListener("click", () => { passwordModal.hidden = true; });
+  passwordModal?.addEventListener("click", (event) => {
+    if (event.target === passwordModal) passwordModal.hidden = true;
+  });
+  qs("[data-open-delete-factory]", root)?.addEventListener("click", () => {
+    deleteFactoryModal.hidden = false;
+    deleteFactoryForm?.elements.confirmCompanyName?.focus();
+  });
+  qs("[data-close-delete-factory]", root)?.addEventListener("click", () => { deleteFactoryModal.hidden = true; });
+  deleteFactoryModal?.addEventListener("click", (event) => {
+    if (event.target === deleteFactoryModal) deleteFactoryModal.hidden = true;
+  });
 
   companyForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const currentState = store.getState();
-    const values = collectCompanySettings(companyForm, logoUpload.getLogoDataUrl());
+    const values = collectCompanySettings(companyForm, logoUpload.getLogoDataUrl(), currentState.client);
     const errors = validateClientForm(values);
     const message = qs("#company-settings-message", companyForm);
     const submitButton = qs('button[type="submit"]', companyForm);
 
+    writeErrors(companyForm, errors);
+    if (!/\{0{2,}\}/.test(values.skuFormat)) errors.skuFormat = "Use a number block such as {0000}.";
+    if (!/\{0{2,}\}/.test(values.inventoryFormat)) errors.inventoryFormat = "Use a number block such as {0000}.";
     writeErrors(companyForm, errors);
     message.textContent = "";
 
@@ -446,7 +457,9 @@ export function bindSettings({ root, store }) {
             currencySymbol: currency.symbol,
             brandColor: values.brandColor,
             creditLimitEmailEnabled: values.creditLimitEmailEnabled,
-            creditLimitSmsEnabled: values.creditLimitSmsEnabled
+            creditLimitSmsEnabled: values.creditLimitSmsEnabled,
+            skuFormat: values.skuFormat,
+            inventoryFormat: values.inventoryFormat
           },
           message: "Company settings updated"
         });
@@ -476,6 +489,10 @@ export function bindSettings({ root, store }) {
       });
       return;
     }
+    if (!/^[+0-9().\s-]{7,32}$/.test(values.phoneNumber)) {
+      writeErrors(profileForm, { phoneNumber: "Enter a valid phone number." });
+      return;
+    }
 
     submitButton.disabled = true;
 
@@ -486,7 +503,8 @@ export function bindSettings({ root, store }) {
         });
         const workspace = await updateMyMembershipProfile({
           clientId: currentState.client.id,
-          name: values.name
+          name: values.name,
+          phoneNumber: values.phoneNumber
         });
         store.dispatch({
           type: "SET_WORKSPACE",
@@ -497,6 +515,7 @@ export function bindSettings({ root, store }) {
         store.dispatch({
           type: "UPDATE_MY_PROFILE",
           name: values.name,
+          phoneNumber: values.phoneNumber,
           message: "Profile updated"
         });
       }
@@ -510,6 +529,7 @@ export function bindSettings({ root, store }) {
   passwordForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(passwordForm);
+    const oldPassword = String(formData.get("oldPassword") || "");
     const newPassword = String(formData.get("newPassword") || "");
     const confirmPassword = String(formData.get("confirmPassword") || "");
     const message = qs("#password-settings-message", passwordForm);
@@ -518,6 +538,10 @@ export function bindSettings({ root, store }) {
     writeErrors(passwordForm, {});
     message.textContent = "";
 
+    if (!oldPassword) {
+      writeErrors(passwordForm, { oldPassword: "Old password is required." });
+      return;
+    }
     if (newPassword.length < 8) {
       writeErrors(passwordForm, {
         newPassword: "Password must be at least 8 characters."
@@ -535,6 +559,7 @@ export function bindSettings({ root, store }) {
     submitButton.disabled = true;
 
     try {
+      await signInWithPassword({ email: store.getState().user?.email || "", password: oldPassword });
       await updateCurrentUserPassword(newPassword);
       if (isBackendConfigured() && store.getState().client?.id) {
         await recordActivity({
@@ -552,6 +577,7 @@ export function bindSettings({ root, store }) {
         });
       }
       passwordForm.reset();
+      passwordModal.hidden = true;
       message.className = "muted span-full";
       message.textContent = "Password updated.";
     } catch (error) {

@@ -6,9 +6,9 @@ import {
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
 } from "../services/calculations.js";
-import { currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
+import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
-import { createAccountInvite, createClientProfile, createId } from "../services/tenant.js";
+import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js";
 
 function clone(value) {
   if (typeof structuredClone === "function") {
@@ -278,6 +278,15 @@ function canManageOrderFlow(state) {
   return currentUserRole(state) === "ceo";
 }
 
+function nextInventoryId(state, reservedIds = []) {
+  const ids = [
+    ...(state.stockTransactions || []).map((item) => item.id),
+    ...(state.stockAssignments || []).map((item) => item.id),
+    ...reservedIds
+  ];
+  return nextFormattedId(state.client?.inventoryFormat || "STK-{0000}", ids, "STK");
+}
+
 function automaticallyDelayOrders(state, writeActivity = true) {
   const referenceDate = todayISO();
   let updatedCount = 0;
@@ -402,7 +411,7 @@ function productChangeDetails(previousProduct, nextProduct) {
   if (!previousProduct) return [];
 
   const trackedFields = [
-    ["id", "Product ID"],
+    ["id", "SKU"],
     ["name", "product name"],
     ["stockCategory", "stock type"],
     ["stock", "stock"],
@@ -932,7 +941,8 @@ function reducer(currentState, action) {
           account.userId === state.user?.id
             ? {
                 ...account,
-                name: action.name
+                name: action.name,
+                phoneNumber: String(action.phoneNumber || account.phoneNumber || "")
               }
             : account
         )
@@ -940,7 +950,7 @@ function reducer(currentState, action) {
     }
 
     case "CREATE_ACCOUNT": {
-      if (!state.client?.id) return state;
+      if (!state.client?.id || !["sales_rep", "store_keeper", "accountant"].includes(action.payload?.role)) return state;
       const { account, invite } = createAccountInvite({
         client: state.client,
         ...action.payload
@@ -973,6 +983,25 @@ function reducer(currentState, action) {
         recordLabel: account.email,
         summary: `${action.active ? "Activated" : "Deactivated"} ${account.name}`
       });
+      return state;
+    }
+
+    case "DELETE_ACCOUNT": {
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
+      const account = state.accounts.find((item) => item.id === action.accountId && item.clientId === state.client.id);
+      if (!account || account.userId === state.user?.id || normalizeRole(account.role) === "ceo") return state;
+
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "deleted",
+        recordType: "account",
+        recordLabel: account.email,
+        summary: `Deleted staff account for ${account.name}`
+      });
+      state.accounts = state.accounts.filter((item) => item.id !== account.id);
+      state.invites = state.invites.filter((invite) => (
+        invite.membershipId !== account.id && String(invite.to || invite.email || "").toLowerCase() !== String(account.email || "").toLowerCase()
+      ));
       return state;
     }
 
@@ -1310,9 +1339,12 @@ function reducer(currentState, action) {
         recordedBy,
         createdAt: new Date().toISOString()
       }, ...(state.productionBatches || [])];
-      state.stockTransactions = [
-        ...recordedMaterials.map((material) => ({
-          id: createId("TXN"),
+      const productionInventoryIds = [];
+      const productionTransactions = recordedMaterials.map((material) => {
+        const id = nextInventoryId(state, productionInventoryIds);
+        productionInventoryIds.push(id);
+        return {
+          id,
           clientId: state.client?.id || "",
           type: "production usage",
           productId: material.productId,
@@ -1331,9 +1363,13 @@ function reducer(currentState, action) {
           finishedProductId: finishedProduct.id,
           finishedProductName: finishedProduct.name,
           purpose
-        })),
+        };
+      });
+      const outputTransactionId = nextInventoryId(state, productionInventoryIds);
+      state.stockTransactions = [
+        ...productionTransactions,
         {
-          id: createId("TXN"),
+          id: outputTransactionId,
           clientId: state.client?.id || "",
           type: "production output",
           productId: finishedProduct.id,
@@ -1406,7 +1442,7 @@ function reducer(currentState, action) {
       }
 
       const recordedBy = currentActorName(state);
-      const transactionId = createId("TXN");
+      const transactionId = nextInventoryId(state);
       const orderId = createQuickSaleOrder(state, {
         transactionId,
         product,
@@ -1486,7 +1522,7 @@ function reducer(currentState, action) {
 
       product.stock = Number(product.stock || 0) + quantity;
       product.updatedAt = todayISO();
-      const transactionId = createId("TXN");
+      const transactionId = nextInventoryId(state);
       state.stockTransactions = [{
         id: transactionId,
         type: "return to factory",
@@ -1605,7 +1641,7 @@ function reducer(currentState, action) {
         product.updatedAt = todayISO();
       }
 
-      const transactionId = createId("TXN");
+      const transactionId = nextInventoryId(state);
       const orderId = transactionType === "sale"
         ? createQuickSaleOrder(state, {
             transactionId,
@@ -1863,7 +1899,7 @@ function reducer(currentState, action) {
       const staffName = String(action.staffName || currentActorName(state)).trim();
       const dispatchDate = dateOnly(action.dispatchDate) || todayISO();
       const expectedDeliveryAt = dateOnly(action.expectedDeliveryAt) || dispatchDate;
-      const transactionId = createId("TXN");
+      const transactionId = nextInventoryId(state);
       const representativeAccount = isRepresentativeDispatch
         ? (state.accounts || []).find((account) => (
             normalized(account.name) === normalized(recipientName) &&
@@ -1899,7 +1935,7 @@ function reducer(currentState, action) {
       if (isRepresentativeDispatch) {
         state.stockAssignments = [
           {
-            id: createId("ASN"),
+            id: nextInventoryId(state, [transactionId]),
             routeId: routeId || destination || "Factory dispatch",
             repName: recipientName,
             repUserId: representativeAccount?.userId || "",
@@ -2263,7 +2299,7 @@ function reducer(currentState, action) {
         product.updatedAt = todayISO();
         state.stockTransactions = [
           {
-            id: createId("TXN"),
+            id: nextInventoryId(state),
             type: "internal movement",
             productId: product.id,
             productName: product.name,
@@ -2307,7 +2343,7 @@ function reducer(currentState, action) {
         product.updatedAt = todayISO();
         state.stockTransactions = [
           {
-            id: createId("TXN"),
+            id: nextInventoryId(state),
             type: "write off",
             productId: product.id,
             productName: product.name,

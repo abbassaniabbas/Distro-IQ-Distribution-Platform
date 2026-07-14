@@ -24,6 +24,7 @@ import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { bindInventory, renderCeoQuickStockActions } from "./inventory.js";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -278,7 +279,7 @@ function buildCeoFreshness(state) {
   };
 }
 
-function renderCeoMetricCard({ label, value, meta, iconName, freshness }) {
+function renderCeoMetricCard({ label, value, meta, iconName }) {
   return `
     <article class="metric-card ceo-metric-card">
       <header>
@@ -288,10 +289,6 @@ function renderCeoMetricCard({ label, value, meta, iconName, freshness }) {
       <div>
         <div class="metric-value">${escapeHtml(value)}</div>
         <div class="metric-meta">${escapeHtml(meta)}</div>
-        <div class="ceo-freshness">
-          ${statusPill(freshness.status)}
-          <span>${escapeHtml(freshness.text)}</span>
-        </div>
       </div>
     </article>
   `;
@@ -1065,16 +1062,10 @@ function renderCeoDrilldownTables(productRows, repRows, supermarketRows) {
 function renderCeoDashboard(state) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
-  const freshness = buildCeoFreshness(state);
   const productRows = buildCeoProductPerformance(state);
-  const repRows = buildCeoRepRows(state);
-  const supermarketRows = buildCeoSupermarketRows(state);
   const riskRows = buildCeoRiskRows(state);
   const trend = buildCeoSalesTrend(state);
   const riskyAccountCount = riskRows.filter((row) => row.status !== "credit_clear").length;
-  const topProduct = [...productRows].sort((a, b) => b.salesValue - a.salesValue)[0];
-  const lowStockProduct = getLowStockProducts(state.products || [])[0];
-  const riskyAccount = riskRows.find((row) => row.status !== "credit_clear") || riskRows[0];
   const latestReport = [...(state.salesReports || [])]
     .sort((a, b) => toTimestamp(b.submittedAt || b.reportDate) - toTimestamp(a.submittedAt || a.reportDate))[0];
 
@@ -1086,76 +1077,48 @@ function renderCeoDashboard(state) {
           <span class="eyebrow">CEO portal</span>
           <h2>Executive overview</h2>
         </div>
-        <a class="button primary" href="#/inventory?action=add-stock">
-          ${icon("plus")}
-          <span>Add stock</span>
-        </a>
       </section>
+
+      ${renderCeoQuickStockActions(state)}
 
       <div class="metric-grid ceo-minimal-metrics">
         ${renderCeoMetricCard({
           label: "Sales",
           value: formatCurrency(metrics.orderRevenue),
           meta: "Total order value",
-          iconName: "orders",
-          freshness: freshness.sales
+          iconName: "orders"
         })}
         ${renderCeoMetricCard({
           label: "Stock",
           value: formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits),
           meta: "Factory plus representative custody",
-          iconName: "package",
-          freshness: freshness.stock
+          iconName: "package"
         })}
         ${renderCeoMetricCard({
           label: "Credit",
           value: formatCurrency(vision.creditBalanceTotal),
           meta: `${formatNumber(riskyAccountCount)} risky account${riskyAccountCount === 1 ? "" : "s"}`,
-          iconName: "wallet",
-          freshness: freshness.credit
+          iconName: "wallet"
         })}
         ${renderCeoMetricCard({
           label: "Reports",
           value: formatNumber(state.salesReports?.length || 0),
           meta: latestReport ? `Latest: ${latestReport.repName}` : "No submitted reports yet",
-          iconName: "dashboard",
-          freshness: freshness.reports
+          iconName: "dashboard"
         })}
       </div>
 
-      ${renderManagerOperationsLayout(state, currentUserPermissions(state), vision)}
-
-      <div class="dashboard-layout ceo-dashboard-layout">
+      <div class="ceo-dashboard-layout">
         <section class="panel ceo-chart-panel">
           ${panelHeader("Sales trend", "Last 7 days")}
           ${renderCeoSalesChart(trend)}
         </section>
-
-        <section class="panel ceo-pulse-panel">
-          ${panelHeader("Business pulse", "What needs leadership attention")}
-          ${renderCeoPulseRows({ topProduct, lowStockProduct, riskyAccount, latestReport })}
-        </section>
       </div>
 
-      <div class="ceo-mini-grid">
-        <section class="panel">
-          ${panelHeader("Stock split", "Where finished stock currently sits")}
-          ${renderCeoStockSplit(vision, productRows)}
-        </section>
-
-        <section class="panel">
-          ${panelHeader("Product focus", "Best seller and slow mover")}
-          ${renderCeoProductFocus(productRows)}
-        </section>
-
-        <section class="panel">
-          ${panelHeader("Customer ratings", "Automatically based on orders, payments, and balance owed")}
-          ${renderCeoCustomerRatings(supermarketRows)}
-        </section>
-      </div>
-      ${renderCeoFilterPanel(state, productRows, repRows, supermarketRows)}
-      ${renderCeoDrilldownTables(productRows, repRows, supermarketRows)}
-      ${renderLeadershipDetailModal()}
+      <section class="panel">
+        ${panelHeader("Stock split", "Where finished stock currently sits")}
+        ${renderCeoStockSplit(vision, productRows)}
+      </section>
     </section>
   `;
 }
@@ -2725,7 +2688,7 @@ export function bindManagerActivitySections({ root, store }) {
   });
 }
 
-export function bindDashboard({ root, store }) {
+export function bindDashboard({ root, store, signal }) {
   bindSubmittedReportDetails({ root, store });
 
   if (root.querySelector(".sales-rep-portal")) {
@@ -2734,6 +2697,7 @@ export function bindDashboard({ root, store }) {
   }
 
   if (root.querySelector(".ceo-dashboard")) {
+    bindInventory({ root, store, signal });
     bindCeoDashboard({ root, store });
     return;
   }

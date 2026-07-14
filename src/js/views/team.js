@@ -3,10 +3,10 @@ import {
   getScopedAccounts,
   validateAccountForm
 } from "../services/tenant.js";
-import { inviteAccount, setMembershipActiveStatus } from "../services/backend.js";
+import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { formatDate } from "../services/formatters.js";
-import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js";
+import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -14,7 +14,10 @@ import { icon } from "../ui/icons.js";
 let activeLoginDetailsModal = null;
 
 function renderRoleOptions() {
-  return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
+  return ROLE_OPTIONS
+    .filter((role) => role.value !== "ceo")
+    .map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`)
+    .join("");
 }
 
 function renderFieldError(name, errors = {}) {
@@ -239,6 +242,7 @@ function renderTeamAccountModal() {
 function renderTeamAccountDetails(account, state) {
   const isActive = accountIsActive(account);
   const isCurrentAccount = account.userId === state.user?.id;
+  const canDeleteAccount = !isCurrentAccount && normalizeRole(account.role) !== "ceo";
 
   return `
     <div class="team-account-summary">
@@ -257,6 +261,11 @@ function renderTeamAccountDetails(account, state) {
         <button class="button ${isActive ? "" : "primary"} js-set-team-account-status" type="button" data-account-id="${escapeHtml(account.id)}" data-account-active="${isActive ? "false" : "true"}" ${isCurrentAccount ? "disabled" : ""}>
           ${icon(isActive ? "x" : "check")}<span>${isActive ? "Make inactive" : "Make active"}</span>
         </button>
+        ${canDeleteAccount ? `
+          <button class="button warning js-delete-team-account" type="button" data-account-id="${escapeHtml(account.id)}" data-account-name="${escapeHtml(account.name)}">
+            ${icon("x")}<span>Delete account</span>
+          </button>
+        ` : ""}
         ${isCurrentAccount ? '<span class="muted">You cannot deactivate the account you are currently using.</span>' : ""}
         <span class="field-error" data-team-account-message aria-live="polite"></span>
       </div>
@@ -382,6 +391,35 @@ export function bindTeam({ root, store, signal }) {
     }
     if (event.target === accountModal || event.target.closest?.(".js-close-team-account")) {
       closeAccountModal();
+      return;
+    }
+    const deleteButton = event.target.closest?.(".js-delete-team-account");
+    if (deleteButton) {
+      if (deleteButton.disabled) return;
+      const state = store.getState();
+      const accountId = deleteButton.dataset.accountId;
+      const accountName = deleteButton.dataset.accountName || "this staff member";
+      const confirmed = typeof window.confirm !== "function" || window.confirm(
+        `Delete ${accountName}'s account permanently? They will lose access and this action cannot be undone.`
+      );
+      if (!confirmed) return;
+
+      const message = qs("[data-team-account-message]", accountModal);
+      deleteButton.disabled = true;
+      if (message) message.textContent = "Deleting account...";
+
+      try {
+        if (isBackendConfigured()) {
+          const workspace = await deleteMembershipAccount({ clientId: state.client.id, membershipId: accountId });
+          store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Staff account deleted" });
+        } else {
+          store.dispatch({ type: "DELETE_ACCOUNT", accountId, message: "Staff account deleted" });
+        }
+        closeAccountModal();
+      } catch (error) {
+        if (message) message.textContent = error.message;
+        deleteButton.disabled = false;
+      }
       return;
     }
     const statusButton = event.target.closest?.(".js-set-team-account-status");

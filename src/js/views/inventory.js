@@ -280,18 +280,24 @@ function duplicateProductSku(state, sku, productId = "") {
   ));
 }
 
-function nextAutomaticProductId(products = []) {
+function nextAutomaticProductId(products = [], format = "SKU-{0000}") {
+  const tokenMatch = String(format || "").match(/\{(0{2,})\}/);
+  const token = tokenMatch?.[0] || "{0000}";
+  const width = tokenMatch?.[1].length || 4;
+  const [prefix = "SKU-", suffix = ""] = String(format || "SKU-{0000}").split(token);
+  const escapePattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const idPattern = new RegExp(`^${escapePattern(prefix)}(\\d{${width},})${escapePattern(suffix)}$`, "i");
   const usedIds = new Set(products.map((product) => String(product.id || "").trim().toUpperCase()));
   const highestNumber = products.reduce((highest, product) => {
-    const match = String(product.id || "").trim().match(/^PRD-(\d+)$/i);
+    const match = String(product.id || "").trim().match(idPattern);
     return match ? Math.max(highest, Number(match[1])) : highest;
-  }, 1000);
+  }, 0);
   let number = highestNumber + 1;
-  let candidate = `PRD-${number}`;
+  let candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
 
-  while (usedIds.has(candidate)) {
+  while (usedIds.has(candidate.toUpperCase())) {
     number += 1;
-    candidate = `PRD-${number}`;
+    candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
   }
 
   return candidate;
@@ -334,8 +340,8 @@ function renderStockProductModal(state, permissions) {
           <input name="name" placeholder="Plantain Chips 50g" required>
         </label>
         <label class="field">
-          <span>Product ID</span>
-          <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products))}" placeholder="Created automatically" required>
+          <span>SKU</span>
+          <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products, state.client?.skuFormat))}" readonly required>
         </label>
         <label class="field">
           <span>Category</span>
@@ -900,6 +906,27 @@ function renderDispatchForm(state, permissions) {
         <span id="stock-dispatch-message" class="field-error span-full"></span>
       </form>
     </section>
+  `;
+}
+
+export function renderCeoQuickStockActions(state) {
+  const permissions = currentUserPermissions(state);
+  const stockForm = renderStockProductModal(state, permissions)
+    .replace('id="stock-product-modal" class="stock-modal-backdrop" hidden', 'class="ceo-quick-form-body"')
+    .replace('class="stock-modal" role="dialog" aria-modal="true"', 'class="ceo-inline-stock-form"')
+    .replace(/<header class="stock-modal-header">[\s\S]*?<\/header>/, "");
+
+  return `
+    <div class="ceo-quick-actions">
+      <details class="panel ceo-quick-action">
+        <summary class="button primary">${icon("plus")}<span>Add stock</span></summary>
+        ${stockForm}
+      </details>
+      <details class="panel ceo-quick-action">
+        <summary class="button">${icon("truck")}<span>Factory dispatch</span></summary>
+        <div class="ceo-quick-form-body">${renderDispatchForm(state, permissions)}</div>
+      </details>
+    </div>
   `;
 }
 
@@ -2107,7 +2134,7 @@ export function bindInventory({ root, store, signal }) {
 
     productForm.reset();
     productForm.elements.productId.value = "";
-    productForm.elements.sku.value = nextAutomaticProductId(store.getState().products);
+    productForm.elements.sku.value = nextAutomaticProductId(store.getState().products, store.getState().client?.skuFormat);
     resetProductionStockFields();
     updateProductionStockVisibility();
     stockImageDataUrl = "";
@@ -2208,7 +2235,7 @@ export function bindInventory({ root, store, signal }) {
     const productId = String(existingProductId || sku).trim();
     const requiredFields = [
       ["name", "product name"],
-      ["sku", "Product ID"],
+      ["sku", "SKU"],
       ["stockCategory", "category"],
       ["unit", "unit"],
       ["stock", "factory stock"],
@@ -2261,7 +2288,7 @@ export function bindInventory({ root, store, signal }) {
     }
 
     if (duplicateProductSku(store.getState(), sku, existingProductId)) {
-      if (productMessage) productMessage.textContent = "A product with this Product ID already exists. Use a different Product ID.";
+      if (productMessage) productMessage.textContent = "A product with this SKU already exists.";
       return;
     }
 
