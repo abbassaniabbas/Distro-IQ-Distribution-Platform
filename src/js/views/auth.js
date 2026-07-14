@@ -87,7 +87,6 @@ function renderAuthTab({ href, label, active }) {
 function renderLoginRoleSelector() {
   const roleIcons = {
     sales_rep: "retailers",
-    manager: "dashboard",
     store_keeper: "inventory",
     accountant: "finance",
     ceo: "building"

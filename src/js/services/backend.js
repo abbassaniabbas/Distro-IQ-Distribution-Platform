@@ -113,7 +113,7 @@ function mapCreditLimit(row, accountByMembershipId = new Map()) {
     discountPercent: Number(row.discount_percent || 0),
     paymentPeriodDays: Number(row.payment_period_days ?? 14),
     latePenaltyPercent: Number(row.late_penalty_percent || 0),
-    changedBy: row.changed_by_name || "Manager",
+    changedBy: row.changed_by_name || "CEO",
     changedAt: row.changed_at
   };
 }
@@ -130,7 +130,7 @@ function mapCreditLimitHistory(row) {
     discountPercent: Number(row.discount_percent || 0),
     paymentPeriodDays: Number(row.payment_period_days ?? 14),
     latePenaltyPercent: Number(row.late_penalty_percent || 0),
-    changedBy: row.changed_by_name || "Manager",
+    changedBy: row.changed_by_name || "CEO",
     reason: "Credit review",
     changedAt: row.changed_at
   };
@@ -231,7 +231,7 @@ function friendlyEdgeFunctionMessage(message, fallback = "The request could not 
   }
 
   if (lower.includes("only managers can invite users") || lower.includes("only ceos and managers can invite users")) {
-    return "Only an active CEO or Manager can add team members for this company.";
+    return "Only the active CEO can add team members for this company.";
   }
 
   if (lower.includes("supabase function environment")) {

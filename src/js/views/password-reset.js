@@ -36,7 +36,7 @@ function renderSupabaseReset({ state }) {
     return `
       <section class="view">
         <section class="panel setup-card">
-          ${panelHeader("Sign in first", "Use the temporary password from your manager")}
+          ${panelHeader("Sign in first", "Use the temporary password from your CEO")}
           <p>After signing in, you will set your own password here.</p>
           <a class="button primary" href="#/login">Back to sign in</a>
         </section>
@@ -89,7 +89,7 @@ function renderLocalReset({ state }) {
           ${panelHeader("Setup request not recognized", "This account does not match the active company")}
           <div class="client-id-box">
             <span class="eyebrow">Try again</span>
-            <strong>Ask a manager for a new temporary password</strong>
+            <strong>Ask the CEO for a new temporary password</strong>
           </div>
           <a class="button primary" href="#/team">Back to team</a>
         </section>

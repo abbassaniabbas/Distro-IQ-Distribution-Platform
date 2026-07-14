@@ -14,7 +14,7 @@ import { ROLE_OPTIONS, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 
-const INITIAL_ACCOUNT_ROLES = ["ceo", "manager", "accountant", "store_keeper", "sales_rep"];
+const INITIAL_ACCOUNT_ROLES = ["ceo", "accountant", "store_keeper", "sales_rep"];
 const PLATFORM_REFRESH_MS = 60000;
 let platformRefreshTimer = 0;
 const FEATURE_MODULES = [
@@ -373,7 +373,7 @@ function renderUserManagementPanel(data) {
           </label>
           <label class="field">
             <span>Role</span>
-            <select name="role">${roleOptions("manager")}</select>
+            <select name="role">${roleOptions("ceo")}</select>
           </label>
           <label class="field span-full">
             <span>Audit note</span>

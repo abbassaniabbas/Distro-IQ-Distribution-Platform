@@ -7,11 +7,6 @@ export const ROLE_OPTIONS = [
     description: "Own assigned stock, sales, returns, credit balance, and reports"
   },
   {
-    value: "manager",
-    label: "Manager",
-    description: "Products, representative stock assignment, reconciliation, credit limits, supermarkets, and reports"
-  },
-  {
     value: "store_keeper",
     label: "Store Keeper",
     description: "Raw materials, finished products, equipment, stock movement, and dispatch"
@@ -24,17 +19,18 @@ export const ROLE_OPTIONS = [
   {
     value: "ceo",
     label: "CEO",
-    description: "Company-wide dashboard, stock oversight, team invitations, and report oversight"
+    description: "Full company leadership, sales operations, stock oversight, credit control, team access, and report review"
   }
 ];
 
 const LEGACY_ROLE_MAP = {
-  owner: "manager",
-  admin: "manager",
+  manager: "ceo",
+  owner: "ceo",
+  admin: "ceo",
   operations: "store_keeper",
   finance: "accountant",
   viewer: "ceo",
-  super_admin: "manager"
+  super_admin: "ceo"
 };
 
 const ROLE_PERMISSIONS = {
@@ -57,26 +53,6 @@ const ROLE_PERMISSIONS = {
     canManageUsers: false,
     canConfigureFactory: false,
     canAuditRecords: false
-  },
-  manager: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
-    canViewCompanyWide: true,
-    canLogSalesReturns: true,
-    canManageProducts: true,
-    canAddStock: true,
-    canAssignStock: true,
-    canReconcileStock: true,
-    canSetCreditLimits: true,
-    canAddCustomers: true,
-    canManageCustomers: true,
-    canReviewReports: true,
-    canManageStockMovements: false,
-    canDispatchStock: false,
-    canViewFinancialReports: true,
-    canExportReports: true,
-    canManageUsers: true,
-    canConfigureFactory: true,
-    canAuditRecords: true
   },
   store_keeper: {
     nav: ["dashboard", "inventory", "activity-log", "settings"],
@@ -121,11 +97,11 @@ const ROLE_PERMISSIONS = {
   ceo: {
     nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
-    canLogSalesReturns: false,
+    canLogSalesReturns: true,
     canManageProducts: true,
     canAddStock: true,
-    canAssignStock: false,
-    canReconcileStock: false,
+    canAssignStock: true,
+    canReconcileStock: true,
     canSetCreditLimits: true,
     canAddCustomers: true,
     canManageCustomers: true,

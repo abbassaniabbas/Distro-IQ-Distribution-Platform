@@ -11,18 +11,16 @@ type InvitePayload = {
   name: string;
   email: string;
   phoneNumber: string;
-  role: "sales_rep" | "manager" | "store_keeper" | "accountant" | "ceo";
+  role: "sales_rep" | "store_keeper" | "accountant" | "ceo";
   redirectTo?: string;
 };
 
 const validRoles = new Set([
   "sales_rep",
-  "manager",
   "store_keeper",
   "accountant",
   "ceo"
 ]);
-const managerAssignableRoles = new Set(["sales_rep", "store_keeper", "accountant"]);
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const phonePattern = /^[+0-9().\s-]+$/;
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -293,13 +291,9 @@ Deno.serve(async (req) => {
     !callerMembership ||
     callerMembership.status !== "active" ||
     callerMembership.password_reset_required ||
-    !["ceo", "manager"].includes(callerMembership.role)
+    callerMembership.role !== "ceo"
   ) {
-    return jsonResponse({ error: "Only CEOs and Managers can invite users" }, 403);
-  }
-
-  if (callerMembership.role === "manager" && !managerAssignableRoles.has(role)) {
-    return jsonResponse({ error: "Only a CEO can create CEO or Manager access" }, 403);
+    return jsonResponse({ error: "Only the CEO can invite users" }, 403);
   }
 
   const { data: existingMembership, error: existingMembershipError } = await adminClient

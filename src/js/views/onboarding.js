@@ -83,12 +83,12 @@ export function renderOnboarding({ state }) {
           ${panelHeader("Create factory workspace", "Set the details your team will see in DistroIQ")}
           <div class="logo-preview" id="logo-preview" aria-label="Factory logo preview">${renderLogo(null)}</div>
           <p>
-            Add your factory details once, then invite managers, store keepers, and sales representatives into one connected system.
+            Add your factory details once, then invite store keepers, accountants, and sales representatives into one connected system.
           </p>
           <div class="client-id-box">
             <span class="eyebrow">Factory workspace</span>
             <strong>You start as CEO</strong>
-            <span class="muted">After setup, invite Managers, Sales Representatives, Store Keepers, and Accountants.</span>
+            <span class="muted">After setup, invite Sales Representatives, Store Keepers, and Accountants.</span>
           </div>
         </section>
 
@@ -299,7 +299,7 @@ export function renderOnboardingConfirmation({ state }) {
           <div class="client-id-box">
             <span class="eyebrow">Next step</span>
             <strong>Invite your team</strong>
-            <span class="muted">As CEO, add Managers, Sales Representatives, Store Keepers, and Accountants when you are ready.</span>
+            <span class="muted">As CEO, add Sales Representatives, Store Keepers, and Accountants when you are ready.</span>
           </div>
         </section>
 

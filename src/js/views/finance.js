@@ -383,7 +383,7 @@ function renderCreditHistoryRows(state, accountType) {
           `${formatNumber(entry.paymentPeriodDays ?? 14)} days`,
           `${formatTermPercent(entry.latePenaltyPercent)} penalty`
         ].join(" - "))}</td>
-        <td>${escapeHtml(entry.reason || "Manager adjustment")}</td>
+        <td>${escapeHtml(entry.reason || "CEO adjustment")}</td>
         <td>
           ${escapeHtml(entry.changedBy)}
           <div class="muted">${formatDateTime(entry.changedAt)}</div>

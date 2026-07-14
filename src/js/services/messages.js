@@ -1,4 +1,4 @@
-import { roleLabel } from "./rbac.js";
+import { normalizeRole, roleLabel } from "./rbac.js";
 
 export function normalized(value) {
   return String(value || "").trim().toLowerCase();
@@ -67,7 +67,7 @@ export function getUnreadMessageCount(state) {
 export function canSendToAllStaff(state) {
   const account = accountForCurrentUser(state);
 
-  return ["manager", "ceo"].includes(normalized(account?.role));
+  return normalizeRole(normalized(account?.role)) === "ceo";
 }
 
 export function messageRecipients(state) {

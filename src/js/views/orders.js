@@ -174,13 +174,13 @@ function renderDelayDetails(order, canManageOrderFlow) {
           <button class="button primary" type="submit">Save delay plan</button>
         </div>
         <span id="order-delay-message" class="field-error span-full" role="status"></span>
-      ` : '<p class="muted span-full">Only the CEO or a Manager can change delayed-order details.</p>'}
+      ` : '<p class="muted span-full">Only the CEO can change delayed-order details.</p>'}
     </form>
   `;
 }
 
 function renderOrderRows(orders, state, permissions) {
-  const canManageOrderFlow = ["manager", "ceo"].includes(currentUserRole(state));
+  const canManageOrderFlow = currentUserRole(state) === "ceo";
 
   return orders.map((order, index) => {
     const creditGuard = getCreditGuardForOrder(order, state);
@@ -361,7 +361,7 @@ export function bindOrders({ root, store, signal }) {
   function openDelayModal(orderId) {
     const state = store.getState();
     const order = getOrdersWithTotals(state).find((item) => item.id === orderId);
-    const canManageOrderFlow = ["manager", "ceo"].includes(currentUserRole(state));
+    const canManageOrderFlow = currentUserRole(state) === "ceo";
 
     if (!order || !delayModal || !delayContent) return;
 

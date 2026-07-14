@@ -28,6 +28,8 @@ function activityTabsForRole(state, role) {
   if (role === "ceo") {
     return [
       { id: "activity", label: "Activity log" },
+      { id: "recent-orders", label: "Recent sales orders" },
+      { id: "sales-activity", label: "Consolidated sales activity" },
       ...(isModuleEnabled(state, "field_reports")
         ? [{ id: "submitted-reports", label: "Submitted sales reports" }]
         : [])
@@ -67,7 +69,7 @@ function renderActivitySubnav(state, role, activeTab) {
 function renderActivitySection(state, role, activeTab) {
   if (activeTab === "recent-orders") return renderManagerRecentSalesOrders(state);
   if (activeTab === "sales-activity") return renderManagerSalesOperations(state);
-  if (activeTab === "submitted-reports") return renderManagerReportReview(state, { readOnly: role === "ceo" });
+  if (activeTab === "submitted-reports") return renderManagerReportReview(state);
   return "";
 }
 
@@ -154,7 +156,7 @@ function repRecentActivityRows(state) {
       action: "report",
       actionLabel: "Report submitted",
       title: report.tripLabel || "Daily report",
-      customerName: "Manager review",
+      customerName: "CEO review",
       amount: formatCurrency(report.salesAmount),
       details: `${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned`,
       when: report.submittedAt || report.reportDate,
@@ -358,7 +360,7 @@ export function renderActivityLog({ state }) {
     return renderSalesRepRecentActivity(state);
   }
 
-  const hasActivitySubnav = role === "manager" || role === "ceo";
+  const hasActivitySubnav = role === "ceo";
   const activeTab = hasActivitySubnav ? activeActivityTab(state, role) : DEFAULT_ACTIVITY_TAB;
   const activitySubnav = hasActivitySubnav ? renderActivitySubnav(state, role, activeTab) : "";
 

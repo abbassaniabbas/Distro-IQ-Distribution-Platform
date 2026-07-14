@@ -43,7 +43,8 @@ assert.equal(
 );
 
 const loginHtml = renderAuth({ routeId: "login" });
-assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 5, "login must show five role cards");
+assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 4, "login must show four role cards");
+assert.doesNotMatch(loginHtml, /value="manager"/, "the removed Manager role must not appear at login");
 assert.doesNotMatch(loginHtml, /<select name="role"/, "login role selection must not use a dropdown");
 const notificationFixture = {
   client,
@@ -74,13 +75,17 @@ function authenticate(userId) {
 }
 
 authenticate("user-manager");
+assert.equal(currentUserRole(store.getState()), "ceo", "legacy Manager memberships must be absorbed into CEO access");
+assert.equal(currentUserPermissions(store.getState()).canAssignStock, true);
+assert.equal(currentUserPermissions(store.getState()).canReconcileStock, true);
+assert.equal(currentUserPermissions(store.getState()).canLogSalesReturns, true);
 const managerSettings = renderSettings({ state: store.getState() });
 assert.match(managerSettings, /name="creditLimitEmailEnabled" type="checkbox"/);
 assert.match(managerSettings, /name="creditLimitSmsEnabled" type="checkbox"/);
 assert.doesNotMatch(managerSettings, /name="creditLimitEmailEnabled" type="checkbox" checked/);
 assert.doesNotMatch(managerSettings, /name="creditLimitSmsEnabled" type="checkbox" checked/);
 const managerTeam = renderTeam({ state: store.getState() });
-assert.doesNotMatch(managerTeam, /<option value="ceo">/);
+assert.match(managerTeam, /<option value="ceo">/);
 assert.doesNotMatch(managerTeam, /<option value="manager">/);
 assert.match(managerTeam, /team-member-list/);
 assert.match(managerTeam, /data-team-account-id="membership-rep"/);
@@ -390,7 +395,7 @@ store.dispatch({
   type: "UPDATE_ORDER_DELAY_DETAILS",
   orderId: "ORD-AUTO-DELAY",
   reason: "Vehicle issue",
-  revisedExpectedDeliveryAt: "2026-07-13",
+  revisedExpectedDeliveryAt: "2026-07-15",
   note: "Replacement van assigned"
 });
 assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delayReason, "Vehicle issue");
@@ -461,7 +466,7 @@ const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
 assert.match(ceoSubmittedReports, /Submitted sales reports/);
 assert.match(ceoSubmittedReports, /js-view-report-details/, "CEO must be able to open the detailed report view");
-assert.doesNotMatch(ceoSubmittedReports, /js-review-report/, "CEO report access must remain read-only");
+assert.match(ceoSubmittedReports, /js-review-report/, "CEO must inherit report review controls from the former Manager role");
 
 authenticate("user-store");
 assert.match(renderDashboard({ state: store.getState() }), /Tola Store/);

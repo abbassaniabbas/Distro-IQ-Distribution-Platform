@@ -461,7 +461,7 @@ create table if not exists public.credit_limits (
   balance_amount numeric(14, 2) not null default 0 check (balance_amount >= 0),
   previous_limit_amount numeric(14, 2) not null default 0 check (previous_limit_amount >= 0),
   changed_by_user_id uuid references auth.users(id) on delete set null,
-  changed_by_name text not null default 'Manager',
+  changed_by_name text not null default 'CEO',
   changed_at timestamptz not null default now(),
   created_at timestamptz not null default now()
 );
@@ -487,7 +487,7 @@ create table if not exists public.credit_limit_history (
   payment_period_days integer not null default 14,
   late_penalty_percent numeric(6, 2) not null default 0,
   changed_by_user_id uuid references auth.users(id) on delete set null,
-  changed_by_name text not null default 'Manager',
+  changed_by_name text not null default 'CEO',
   changed_at timestamptz not null default now()
 );
 
@@ -543,7 +543,7 @@ begin
     new.payment_period_days,
     new.late_penalty_percent,
     v_actor_user_id,
-    coalesce(v_actor_name, new.changed_by_name, 'Manager'),
+    coalesce(v_actor_name, new.changed_by_name, 'CEO'),
     coalesce(new.changed_at, now())
   );
 
@@ -646,59 +646,47 @@ alter table public.platform_health_events enable row level security;
 alter table public.memberships drop constraint if exists memberships_role_check;
 alter table public.invites drop constraint if exists invites_role_check;
 
-alter table public.memberships alter column role drop default;
-alter table public.invites alter column role drop default;
-
-alter table public.memberships
-alter column role type text
-using role::text;
-
-alter table public.invites
-alter column role type text
-using role::text;
-
 update public.memberships
 set role = case role
-  when 'owner' then 'manager'
-  when 'admin' then 'manager'
+  when 'manager' then 'ceo'
+  when 'owner' then 'ceo'
+  when 'admin' then 'ceo'
   when 'operations' then 'store_keeper'
   when 'finance' then 'accountant'
   when 'viewer' then 'ceo'
-  when 'super_admin' then 'manager'
+  when 'super_admin' then 'ceo'
   else role
 end
-where role in ('owner', 'admin', 'operations', 'finance', 'viewer', 'super_admin');
+where role in ('manager', 'owner', 'admin', 'operations', 'finance', 'viewer', 'super_admin');
 
 update public.invites
 set role = case role
-  when 'owner' then 'manager'
-  when 'admin' then 'manager'
+  when 'manager' then 'ceo'
+  when 'owner' then 'ceo'
+  when 'admin' then 'ceo'
   when 'operations' then 'store_keeper'
   when 'finance' then 'accountant'
   when 'viewer' then 'ceo'
-  when 'super_admin' then 'manager'
+  when 'super_admin' then 'ceo'
   else role
 end
-where role in ('owner', 'admin', 'operations', 'finance', 'viewer', 'super_admin');
+where role in ('manager', 'owner', 'admin', 'operations', 'finance', 'viewer', 'super_admin');
 
 update public.memberships
 set role = 'sales_rep'
-where role not in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo');
+where role not in ('sales_rep', 'store_keeper', 'accountant', 'ceo');
 
 update public.invites
 set role = 'sales_rep'
-where role not in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo');
-
-alter table public.memberships alter column role set default 'sales_rep';
-alter table public.invites alter column role set default 'sales_rep';
+where role not in ('sales_rep', 'store_keeper', 'accountant', 'ceo');
 
 alter table public.memberships
 add constraint memberships_role_check
-check (role in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'accountant', 'ceo'));
 
 alter table public.invites
 add constraint invites_role_check
-check (role in ('sales_rep', 'manager', 'store_keeper', 'accountant', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'accountant', 'ceo'));
 
 create or replace function public.is_client_member(p_client_id uuid)
 returns boolean
@@ -773,7 +761,7 @@ as $$
       and user_id = auth.uid()
       and status = 'active'
       and not password_reset_required
-      and role in ('ceo', 'manager')
+      and role = 'ceo'
   );
 $$;
 
@@ -846,8 +834,8 @@ begin
     raise exception 'Authentication required';
   end if;
 
-  if not public.has_client_role(p_client_id, array['ceo', 'manager', 'store_keeper']) then
-    raise exception 'CEO, manager, or store keeper access required';
+  if not public.has_client_role(p_client_id, array['ceo', 'store_keeper']) then
+    raise exception 'CEO or store keeper access required';
   end if;
 
   if p_client_id is null or not exists (
@@ -998,7 +986,7 @@ begin
     and membership.user_id = auth.uid()
     and membership.status = 'active'
     and not membership.password_reset_required
-    and membership.role in ('ceo', 'manager', 'store_keeper')
+    and membership.role in ('ceo', 'store_keeper')
   order by membership.created_at desc
   limit 1;
 
@@ -1254,8 +1242,8 @@ begin
   end if;
 
   if v_audience = 'all_staff' then
-    if v_sender.role not in ('manager', 'ceo') then
-      raise exception 'Only managers and CEOs can message all staff';
+    if v_sender.role <> 'ceo' then
+      raise exception 'Only the CEO can message all staff';
     end if;
 
     insert into public.workspace_messages (
@@ -1967,8 +1955,8 @@ begin
     raise exception 'Authentication required';
   end if;
 
-  if not public.has_client_role(p_client_id, array['ceo', 'manager']) then
-    raise exception 'CEO or Manager access required';
+  if not public.has_client_role(p_client_id, array['ceo']) then
+    raise exception 'CEO access required';
   end if;
 
   select * into v_membership
@@ -2193,7 +2181,7 @@ for select
 to authenticated
 using (
   public.is_platform_admin()
-  or public.has_client_role(client_id, array['ceo', 'manager'])
+  or public.has_client_role(client_id, array['ceo'])
   or (
     public.has_client_role(client_id, array['accountant'])
     and record_type in ('sale', 'invoice', 'credit_limit', 'report')
@@ -2296,8 +2284,8 @@ create policy "stock_categories_write_by_stock_roles"
 on public.stock_categories
 for all
 to authenticated
-using (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']))
-with check (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']));
+using (public.has_client_role(client_id, array['ceo', 'store_keeper']))
+with check (public.has_client_role(client_id, array['ceo', 'store_keeper']));
 
 drop policy if exists "stock_products_select_by_client" on public.stock_products;
 create policy "stock_products_select_by_client"
@@ -2311,9 +2299,9 @@ create policy "stock_products_write_by_stock_roles"
 on public.stock_products
 for all
 to authenticated
-using (public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper']))
+using (public.has_client_role(client_id, array['ceo', 'store_keeper']))
 with check (
-  public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper'])
+  public.has_client_role(client_id, array['ceo', 'store_keeper'])
   and (
     category_id is null
     or exists (
@@ -2337,9 +2325,9 @@ create policy "stock_assignments_write_by_stock_roles"
 on public.stock_assignments
 for all
 to authenticated
-using (public.has_client_role(client_id, array['manager', 'store_keeper']))
+using (public.has_client_role(client_id, array['ceo', 'store_keeper']))
 with check (
-  public.has_client_role(client_id, array['manager', 'store_keeper'])
+  public.has_client_role(client_id, array['ceo', 'store_keeper'])
   and exists (
     select 1
     from public.stock_products assigned_product
@@ -2386,7 +2374,7 @@ on public.stock_transactions
 for select
 to authenticated
 using (
-  public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper', 'accountant'])
+  public.has_client_role(client_id, array['ceo', 'store_keeper', 'accountant'])
   or (
     public.has_client_role(client_id, array['sales_rep'])
     and (
@@ -2415,7 +2403,7 @@ to authenticated
 with check (
   (
     (
-      public.has_client_role(client_id, array['ceo', 'manager', 'store_keeper'])
+      public.has_client_role(client_id, array['ceo', 'store_keeper'])
       and transaction_type not in ('production_consumption', 'production_output')
     )
     or (
@@ -2477,9 +2465,9 @@ create policy "credit_limits_write_by_manager_roles"
 on public.credit_limits
 for all
 to authenticated
-using (public.has_client_role(client_id, array['manager', 'accountant', 'ceo']))
+using (public.has_client_role(client_id, array['accountant', 'ceo']))
 with check (
-  public.has_client_role(client_id, array['manager', 'accountant', 'ceo'])
+  public.has_client_role(client_id, array['accountant', 'ceo'])
   and (
     membership_id is null
     or exists (

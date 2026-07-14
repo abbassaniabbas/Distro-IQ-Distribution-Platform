@@ -275,7 +275,7 @@ function getPersistableState(state) {
 }
 
 function canManageOrderFlow(state) {
-  return ["ceo", "manager"].includes(currentUserRole(state));
+  return currentUserRole(state) === "ceo";
 }
 
 function automaticallyDelayOrders(state, writeActivity = true) {
@@ -350,7 +350,7 @@ function categoryNameForStockCategory(stockCategory) {
 }
 
 function currentActorLabel(state) {
-  return getCurrentActor(state).name || "Manager";
+  return getCurrentActor(state).name || "CEO";
 }
 
 function currentWorkspaceAccount(state) {
@@ -961,7 +961,7 @@ function reducer(currentState, action) {
     }
 
     case "SET_ACCOUNT_STATUS": {
-      if (!state.client?.id || !["ceo", "manager"].includes(currentUserRole(state))) return state;
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
       const account = state.accounts.find((item) => item.id === action.accountId && item.clientId === state.client.id);
       if (!account || account.userId === state.user?.id) return state;
 
@@ -1005,7 +1005,7 @@ function reducer(currentState, action) {
       const body = String(action.body || "").trim();
       const sender = currentWorkspaceAccount(state);
       const actor = getCurrentActor(state);
-      const canSendToAllStaff = ["manager", "ceo"].includes(String(sender?.role || "").toLowerCase());
+      const canSendToAllStaff = currentUserRole(state) === "ceo";
       const shouldSendToAllStaff = Boolean(action.sendToAllStaff) || recipientAccountId === "__all_staff__";
       const recipients = shouldSendToAllStaff && canSendToAllStaff
         ? (state.accounts || []).filter((account) => (
@@ -1233,7 +1233,7 @@ function reducer(currentState, action) {
     }
 
     case "RECORD_PRODUCTION_USAGE": {
-      if (!["ceo", "manager", "store_keeper"].includes(currentUserRole(state))) return state;
+      if (!["ceo", "store_keeper"].includes(currentUserRole(state))) return state;
 
       const materials = Array.isArray(action.materials) ? action.materials : [];
       const materialIds = materials.map((material) => String(material.productId || "").trim()).filter(Boolean);
@@ -1364,7 +1364,7 @@ function reducer(currentState, action) {
     }
 
     case "RECORD_RAW_MATERIAL_SALE": {
-      if (!["ceo", "manager", "store_keeper"].includes(currentUserRole(state))) return state;
+      if (!["ceo", "store_keeper"].includes(currentUserRole(state))) return state;
 
       const product = state.products.find((item) => item.id === action.productId);
       const quantity = Number(action.quantity || 0);
@@ -1849,7 +1849,7 @@ function reducer(currentState, action) {
     }
 
     case "RECORD_STOCK_DISPATCH": {
-      if (!["manager", "store_keeper"].includes(currentUserRole(state))) return state;
+      if (!["ceo", "store_keeper"].includes(currentUserRole(state))) return state;
 
       const product = state.products.find((item) => item.id === action.productId);
       const quantity = Number(action.quantity || 0);
@@ -1986,7 +1986,7 @@ function reducer(currentState, action) {
       if (assignment && Math.abs(stockAssignmentVariance(assignment)) > 0.0001) {
         assignment.status = "variance";
         assignment.varianceFlagged = true;
-        assignment.varianceNote = String(action.note || "Manager requested explanation").trim();
+        assignment.varianceNote = String(action.note || "CEO requested explanation").trim();
         assignment.flaggedAt = new Date().toISOString();
         appendActivityLog(state, {
           clientId: state.client?.id,
@@ -2049,7 +2049,7 @@ function reducer(currentState, action) {
           paymentPeriodDays,
           latePenaltyPercent,
           changedBy,
-          reason: String(action.reason || "Manager adjustment").trim(),
+          reason: String(action.reason || "CEO adjustment").trim(),
           changedAt
         },
         ...(state.creditLimitHistory || [])
@@ -2226,7 +2226,7 @@ function reducer(currentState, action) {
       if (report) {
         report.status = "reviewed";
         report.reviewedAt = new Date().toISOString();
-        report.reviewNote = String(action.note || "Reviewed by manager").trim();
+        report.reviewNote = String(action.note || "Reviewed by CEO").trim();
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "completed",
@@ -2475,7 +2475,7 @@ function reducer(currentState, action) {
     }
 
     case "TOGGLE_RETAILER_STATUS": {
-      if (!state.client?.id || !["ceo", "manager"].includes(currentUserRole(state))) return state;
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
       const retailer = state.retailers.find((item) => item.id === action.retailerId);
       if (!retailer) return state;
       retailer.status = retailer.status === "inactive" ? "active" : "inactive";

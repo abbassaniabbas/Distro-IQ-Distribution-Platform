@@ -13,10 +13,9 @@ The frontend files are local to this computer. Supabase is used for authenticati
 | Role | Access model |
 | --- | --- |
 | Sales Representative | Sees their own assigned stock and sales work, logs sales/returns, views own credit balance, and submits reports. |
-| Manager | Manages products, assigns stock to representatives, reconciles stock, sets credit limits, manages supermarkets/customers, and reviews reports. |
+| CEO | Leads the company with full access to products, representative stock, reconciliation, credit limits, customers, users, reports, and the company-wide dashboard. |
 | Store Keeper | Manages raw materials, finished products, equipment, stock movements, and stock dispatch. |
 | Accountant | Read-only sales reports, credit balances, revenue/profit summaries, and exports. |
-| CEO | First company account; can invite team members and view the company-wide dashboard across sales, stock, representatives, supermarkets/customers, and reports. |
 | Super Admin | Full platform control: creates factories/companies, manages users, resets access, configures modules, and audits records. |
 
 ## Run

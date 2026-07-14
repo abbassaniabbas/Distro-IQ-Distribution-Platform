@@ -12,14 +12,9 @@ import { panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 
 let activeLoginDetailsModal = null;
-const MANAGER_ASSIGNABLE_ROLES = new Set(["sales_rep", "store_keeper", "accountant"]);
 
-function renderRoleOptions(state) {
-  const roles = currentUserRole(state) === "manager"
-    ? ROLE_OPTIONS.filter((role) => MANAGER_ASSIGNABLE_ROLES.has(role.value))
-    : ROLE_OPTIONS;
-
-  return roles.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
+function renderRoleOptions() {
+  return ROLE_OPTIONS.map((role) => `<option value="${escapeHtml(role.value)}">${escapeHtml(role.label)}</option>`).join("");
 }
 
 function renderFieldError(name, errors = {}) {
@@ -290,8 +285,8 @@ export function renderTeam({ state }) {
     return `
       <section class="view team-view">
         <section class="panel setup-card">
-          ${panelHeader("Team access", "Only CEOs and Managers can create users or reset access")}
-          <p>Your role can view the tools assigned to you, but user management is reserved for CEOs and Managers.</p>
+          ${panelHeader("Team access", "Only the CEO can create users or reset access")}
+          <p>Your role can view the tools assigned to you, but user management is reserved for the CEO.</p>
         </section>
       </section>
     `;

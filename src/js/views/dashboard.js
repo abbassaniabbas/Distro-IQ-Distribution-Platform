@@ -67,7 +67,6 @@ function dashboardIdentity(state, role = currentUserRole(state)) {
   const companyName = state.client?.companyName || "DistroIQ workspace";
   const roleLabels = {
     ceo: "CEO",
-    manager: "Manager",
     store_keeper: "Store Keeper",
     accountant: "Accountant",
     sales_rep: "Sales Representative"
@@ -966,7 +965,7 @@ function renderRepresentativeHistory(state, repName) {
     )}</section>
     <section class="leadership-history-section"><h4>Credit history</h4>${table(
       ["Changed", "Previous", "New limit", "Changed by", "Reason"],
-      creditHistory.map((entry) => `<tr><td>${formatDateTime(entry.changedAt)}</td><td>${formatCurrency(entry.previousLimit)}</td><td>${formatCurrency(entry.nextLimit)}</td><td>${escapeHtml(entry.changedBy || "Manager")}</td><td>${escapeHtml(entry.reason || "Credit terms updated")}</td></tr>`),
+      creditHistory.map((entry) => `<tr><td>${formatDateTime(entry.changedAt)}</td><td>${formatCurrency(entry.previousLimit)}</td><td>${formatCurrency(entry.nextLimit)}</td><td>${escapeHtml(entry.changedBy || "CEO")}</td><td>${escapeHtml(entry.reason || "Credit terms updated")}</td></tr>`),
       "No credit-limit history recorded"
     )}</section>
   `;
@@ -1123,6 +1122,8 @@ function renderCeoDashboard(state) {
           freshness: freshness.reports
         })}
       </div>
+
+      ${renderManagerOperationsLayout(state, currentUserPermissions(state), vision)}
 
       <div class="dashboard-layout ceo-dashboard-layout">
         <section class="panel ceo-chart-panel">
@@ -2600,7 +2601,6 @@ export function renderDashboard({ state }) {
   const vision = calculateVisionMetrics(state);
   const permissions = currentUserPermissions(state);
   const role = currentUserRole(state);
-  const isManagerPortal = role === "manager";
 
   if (state.session && state.client?.id && role === "ceo") {
     return renderCeoDashboard(state);
@@ -2643,28 +2643,24 @@ export function renderDashboard({ state }) {
           iconName: "wallet"
         })}
       </div>
-      ${isManagerPortal
-        ? renderManagerOperationsLayout(state, permissions, vision)
-        : `
-          <div class="dashboard-layout">
-            <section class="panel">
-              ${panelHeader("Territory sales", "Snack order value by sales territory")}
-              <div class="bar-list">${renderRegionalSummary(state)}</div>
-            </section>
+      <div class="dashboard-layout">
+        <section class="panel">
+          ${panelHeader("Territory sales", "Snack order value by sales territory")}
+          <div class="bar-list">${renderRegionalSummary(state)}</div>
+        </section>
 
-            <section class="panel">
-              ${panelHeader("Attention queue", "Items that need action today")}
-              ${renderAlerts(state, permissions)}
-            </section>
-          </div>
+        <section class="panel">
+          ${panelHeader("Attention queue", "Items that need action today")}
+          ${renderAlerts(state, permissions)}
+        </section>
+      </div>
 
-          <section class="panel">
-            ${panelHeader("Factory-to-cash controls", "Produced stock, representative custody, credit exposure, and payment visibility")}
-            <div class="bar-list">${renderFactoryCashControls(vision)}</div>
-          </section>
-        `}
+      <section class="panel">
+        ${panelHeader("Factory-to-cash controls", "Produced stock, representative custody, credit exposure, and payment visibility")}
+        <div class="bar-list">${renderFactoryCashControls(vision)}</div>
+      </section>
 
-      ${isManagerPortal ? "" : renderManagerRecentSalesOrders(state)}
+      ${renderManagerRecentSalesOrders(state)}
     </section>
   `;
 }
@@ -2722,7 +2718,7 @@ export function bindManagerActivitySections({ root, store }) {
       store.dispatch({
         type: "FLAG_SALES_REPORT",
         reportId: button.dataset.reportId,
-        note: "Manager query raised",
+        note: "CEO query raised",
         message: "Report flagged"
       });
     });
@@ -2785,7 +2781,7 @@ export function bindDashboard({ root, store }) {
       store.dispatch({
         type: "FLAG_SALES_REPORT",
         reportId: button.dataset.reportId,
-        note: "Manager query raised",
+        note: "CEO query raised",
         message: "Report flagged"
       });
     });

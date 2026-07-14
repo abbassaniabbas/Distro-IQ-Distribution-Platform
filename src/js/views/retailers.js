@@ -481,7 +481,7 @@ export function bindRetailers({ root, store }) {
     if (message) message.textContent = "";
 
     if (isRepCustomerAdd && String(formData.get("retailerId") || "").trim()) {
-      if (message) message.textContent = "Sales representatives can add new customers, but existing customer changes go to a manager.";
+      if (message) message.textContent = "Sales representatives can add new customers, but existing customer changes go to the CEO.";
       return;
     }
 
