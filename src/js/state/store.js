@@ -2474,6 +2474,22 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "TOGGLE_RETAILER_STATUS": {
+      if (!state.client?.id || !["ceo", "manager"].includes(currentUserRole(state))) return state;
+      const retailer = state.retailers.find((item) => item.id === action.retailerId);
+      if (!retailer) return state;
+      retailer.status = retailer.status === "inactive" ? "active" : "inactive";
+      retailer.updatedAt = todayISO();
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: retailer.status === "inactive" ? "deactivated" : "reactivated",
+        recordType: "retailer",
+        recordLabel: retailer.name,
+        summary: `${retailer.status === "inactive" ? "Deactivated" : "Activated"} customer outlet ${retailer.name}`
+      });
+      return state;
+    }
+
     case "MARK_INVOICE_PAID": {
       const invoice = state.invoices.find((item) => item.id === action.invoiceId);
       if (invoice) {

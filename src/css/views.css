@@ -2653,6 +2653,16 @@
   justify-items: end;
 }
 
+.retailer-list-item.is-inactive {
+  opacity: 0.68;
+}
+
+.retailer-inactive-label {
+  width: max-content;
+  color: var(--danger) !important;
+  font-weight: 850 !important;
+}
+
 .customer-details-modal {
   width: min(100%, 760px);
 }
@@ -2660,6 +2670,111 @@
 .customer-details-content {
   display: grid;
   gap: 18px;
+}
+
+.customer-supply-history,
+.leadership-history-section {
+  display: grid;
+  gap: 10px;
+}
+
+.customer-supply-history h4,
+.leadership-history-section h4 {
+  margin: 0;
+}
+
+.leadership-detail-modal {
+  width: min(100%, 1040px);
+}
+
+.leadership-detail-content {
+  display: grid;
+  gap: 18px;
+}
+
+.leadership-detail-heading,
+.leadership-detail-heading > div {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.leadership-detail-heading > div {
+  display: grid;
+  gap: 3px;
+}
+
+.leadership-detail-heading h3,
+.leadership-detail-heading p {
+  margin: 0;
+}
+
+.leadership-detail-heading p {
+  color: var(--muted);
+}
+
+.leadership-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.leadership-summary-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.leadership-summary-grid span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+
+.ceo-history-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.ceo-drilldown-row {
+  cursor: pointer;
+}
+
+.ceo-drilldown-row:hover,
+.ceo-drilldown-row:focus-visible {
+  background: var(--mint-soft);
+  outline: none;
+}
+
+.product-volume-chart {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.product-volume-chart > div:not(.empty-state) {
+  display: grid;
+  grid-template-columns: 100px minmax(120px, 1fr) 60px;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 760px) {
+  .leadership-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .product-volume-chart > div:not(.empty-state) {
+    grid-template-columns: 80px minmax(90px, 1fr) 44px;
+  }
 }
 
 .report-details-modal {

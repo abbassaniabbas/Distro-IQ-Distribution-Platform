@@ -545,6 +545,10 @@ function renderCeoProductRows(productRows) {
     .sort((a, b) => b.salesValue - a.salesValue)
     .map((row) => `
       <tr
+        class="ceo-drilldown-row"
+        tabindex="0"
+        role="button"
+        data-ceo-drilldown="product"
         data-ceo-row
         data-ceo-kind="product"
         data-ceo-product="${escapeHtml(row.id)}"
@@ -585,6 +589,10 @@ function renderCeoStockRows(productRows) {
 
       return `
         <tr
+          class="ceo-drilldown-row"
+          tabindex="0"
+          role="button"
+          data-ceo-drilldown="product"
           data-ceo-row
           data-ceo-kind="product"
           data-ceo-product="${escapeHtml(row.id)}"
@@ -618,6 +626,10 @@ function renderCeoRepRows(repRows) {
 
       return `
         <tr
+          class="ceo-drilldown-row"
+          tabindex="0"
+          role="button"
+          data-ceo-drilldown="rep"
           data-ceo-row
           data-ceo-kind="rep"
           data-ceo-rep="${escapeHtml(row.repName)}"
@@ -668,6 +680,10 @@ function renderCeoSupermarketRows(supermarketRows) {
 
       return `
         <tr
+          class="ceo-drilldown-row"
+          tabindex="0"
+          role="button"
+          data-ceo-drilldown="supermarket"
           data-ceo-row
           data-ceo-kind="supermarket"
           data-ceo-supermarket="${escapeHtml(row.retailer.id)}"
@@ -898,11 +914,161 @@ function renderCeoCustomerRatings(supermarketRows) {
   `;
 }
 
+function renderLeadershipDetailModal() {
+  return `
+    <div id="leadership-detail-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal leadership-detail-modal" role="dialog" aria-modal="true" aria-labelledby="leadership-detail-title">
+        <header class="stock-modal-header">
+          <div><span class="eyebrow">Leadership history</span><h2 id="leadership-detail-title">Details</h2></div>
+          ${iconButton({ iconName: "x", label: "Close history", className: "js-close-leadership-detail" })}
+        </header>
+        <div id="leadership-detail-content" class="leadership-detail-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function matchingRepTransactions(state, repName) {
+  return (state.stockTransactions || []).filter((transaction) => (
+    normalized(transaction.repName || transaction.recordedBy) === normalized(repName)
+  ));
+}
+
+function renderRepresentativeHistory(state, repName) {
+  const assignments = (state.stockAssignments || [])
+    .filter((assignment) => normalized(assignment.repName) === normalized(repName))
+    .sort((a, b) => String(b.assignedAt || b.assignedDate || "").localeCompare(String(a.assignedAt || a.assignedDate || "")));
+  const sales = matchingRepTransactions(state, repName)
+    .filter((transaction) => normalized(transaction.type) === "sale")
+    .sort((a, b) => String(b.createdAt || b.date || "").localeCompare(String(a.createdAt || a.date || "")));
+  const creditLimit = getCreditLimitForParty(state.creditLimits || [], repName);
+  const creditHistory = (state.creditLimitHistory || [])
+    .filter((entry) => normalized(entry.partyName) === normalized(repName))
+    .sort((a, b) => String(b.changedAt || "").localeCompare(String(a.changedAt || "")));
+
+  return `
+    <div class="leadership-detail-heading"><div><span class="eyebrow">Sales representative</span><h3>${escapeHtml(repName)}</h3></div>${statusPill(creditLimit?.balance >= creditLimit?.limit && creditLimit?.limit ? "credit_hold" : "active")}</div>
+    <div class="leadership-summary-grid">
+      <div><span>Total sales</span><strong>${formatCurrency(sales.reduce((total, sale) => total + Number(sale.amount || 0), 0))}</strong></div>
+      <div><span>Units sold</span><strong>${formatNumber(sales.reduce((total, sale) => total + Number(sale.quantity || 0), 0))}</strong></div>
+      <div><span>Stock in hand</span><strong>${formatNumber(assignments.reduce((total, assignment) => total + assignmentOutstanding(assignment), 0))}</strong></div>
+      <div><span>Credit balance</span><strong>${formatCurrency(creditLimit?.balance || 0)} / ${formatCurrency(creditLimit?.limit || 0)}</strong></div>
+    </div>
+    <section class="leadership-history-section"><h4>Sales history</h4>${table(
+      ["Date", "Customer", "Product", "Quantity", "Payment", "Amount"],
+      sales.map((sale) => `<tr><td>${formatDate(sale.date)}</td><td>${escapeHtml(sale.partyName || sale.customerName || "Customer")}</td><td>${escapeHtml(sale.productName || sale.productId)}</td><td>${formatNumber(sale.quantity)}</td><td>${escapeHtml(statusText(sale.paymentType || "cash"))}</td><td>${formatCurrency(sale.amount)}</td></tr>`),
+      "No sales recorded for this representative"
+    )}</section>
+    <section class="leadership-history-section"><h4>Stock history</h4>${table(
+      ["Assigned", "Product", "Quantity", "Sold", "Returned", "In hand"],
+      assignments.map((assignment) => `<tr><td>${formatDate(assignment.assignedDate || assignment.assignedAt)}</td><td>${escapeHtml(assignment.productName || state.products.find((product) => product.id === assignment.productId)?.name || assignment.productId)}</td><td>${formatNumber(assignment.assigned)}</td><td>${formatNumber(assignment.sold)}</td><td>${formatNumber(assignment.returned)}</td><td>${formatNumber(assignmentOutstanding(assignment))}</td></tr>`),
+      "No stock assignments recorded"
+    )}</section>
+    <section class="leadership-history-section"><h4>Credit history</h4>${table(
+      ["Changed", "Previous", "New limit", "Changed by", "Reason"],
+      creditHistory.map((entry) => `<tr><td>${formatDateTime(entry.changedAt)}</td><td>${formatCurrency(entry.previousLimit)}</td><td>${formatCurrency(entry.nextLimit)}</td><td>${escapeHtml(entry.changedBy || "Manager")}</td><td>${escapeHtml(entry.reason || "Credit terms updated")}</td></tr>`),
+      "No credit-limit history recorded"
+    )}</section>
+  `;
+}
+
+function productSalesTimeline(state, productId) {
+  const totals = new Map();
+  const add = (date, quantity, amount) => {
+    const key = dateKey(date);
+    if (!key) return;
+    const row = totals.get(key) || { date: key, quantity: 0, amount: 0, orders: 0 };
+    row.quantity += Number(quantity || 0);
+    row.amount += Number(amount || 0);
+    row.orders += 1;
+    totals.set(key, row);
+  };
+  const linkedTransactionIds = new Set();
+  (state.orders || []).forEach((order) => {
+    if (order.transactionId) linkedTransactionIds.add(order.transactionId);
+    (order.items || []).filter((item) => item.productId === productId).forEach((item) => {
+      add(order.createdAt || order.orderDate || order.dueAt, item.quantity, Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0));
+    });
+  });
+  (state.stockTransactions || [])
+    .filter((transaction) => transaction.productId === productId && normalized(transaction.type) === "sale" && !linkedTransactionIds.has(transaction.id))
+    .forEach((transaction) => add(transaction.createdAt || transaction.date, transaction.quantity, transaction.amount));
+  return [...totals.values()].sort((a, b) => b.date.localeCompare(a.date));
+}
+
+function renderProductSalesHistory(state, productId) {
+  const product = (state.products || []).find((item) => item.id === productId);
+  const timeline = productSalesTimeline(state, productId);
+  const maxQuantity = Math.max(...timeline.map((row) => row.quantity), 1);
+  return `
+    <div class="leadership-detail-heading"><div><span class="eyebrow">Product sales volume</span><h3>${escapeHtml(product?.name || productId)}</h3><p>${escapeHtml(productId)}</p></div></div>
+    <div class="leadership-summary-grid">
+      <div><span>Total volume</span><strong>${formatNumber(timeline.reduce((total, row) => total + row.quantity, 0))} ${escapeHtml(product?.unit || "units")}</strong></div>
+      <div><span>Sales value</span><strong>${formatCurrency(timeline.reduce((total, row) => total + row.amount, 0))}</strong></div>
+      <div><span>Sales days</span><strong>${formatNumber(timeline.length)}</strong></div>
+      <div><span>Current stock</span><strong>${formatNumber(product?.stock || 0)} ${escapeHtml(product?.unit || "units")}</strong></div>
+    </div>
+    <div class="product-volume-chart">
+      ${timeline.length ? timeline.slice(0, 14).reverse().map((row) => `<div><span>${escapeHtml(formatDate(row.date))}</span><div class="progress-track"><div class="progress-fill" style="width:${(row.quantity / maxQuantity) * 100}%"></div></div><strong>${formatNumber(row.quantity)}</strong></div>`).join("") : '<div class="empty-state">No sales volume recorded yet</div>'}
+    </div>
+    <section class="leadership-history-section"><h4>Sales volume over time</h4>${table(
+      ["Date", "Volume", "Sales value", "Records"],
+      timeline.map((row) => `<tr><td>${formatDate(row.date)}</td><td>${formatNumber(row.quantity)} ${escapeHtml(product?.unit || "units")}</td><td>${formatCurrency(row.amount)}</td><td>${formatNumber(row.orders)}</td></tr>`),
+      "No product sales recorded"
+    )}</section>
+  `;
+}
+
+function supermarketSupplyRows(state, retailer) {
+  const productMap = getProductMap(state.products || []);
+  return (state.orders || [])
+    .filter((order) => order.retailerId === retailer.id || order.customerId === retailer.id || normalized(order.customerName) === normalized(retailer.name))
+    .sort((a, b) => String(b.createdAt || b.dueAt || "").localeCompare(String(a.createdAt || a.dueAt || "")))
+    .map((order) => ({
+      order,
+      products: (order.items || []).map((item) => `${formatNumber(item.quantity)} ${productMap.get(item.productId)?.name || item.productName || "item"}`).join(", "),
+      value: salesValueFromOrder(order, productMap)
+    }));
+}
+
+function renderSupermarketHistory(state, retailerId) {
+  const retailer = (state.retailers || []).find((item) => item.id === retailerId);
+  if (!retailer) return '<div class="empty-state">Supermarket not found</div>';
+  const supplies = supermarketSupplyRows(state, retailer);
+  const credit = getCreditLimitForParty(state.creditLimits || [], retailer.name);
+  const balance = Number(credit?.balance ?? retailer.outstanding ?? 0);
+  return `
+    <div class="leadership-detail-heading"><div><span class="eyebrow">Supermarket supply</span><h3>${escapeHtml(retailer.name)}</h3><p>${escapeHtml([retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</p></div>${statusPill(retailer.status === "inactive" ? "inactive" : "active")}</div>
+    <div class="leadership-summary-grid">
+      <div><span>Balance owed</span><strong>${formatCurrency(balance)}</strong></div>
+      <div><span>Credit limit</span><strong>${credit?.limit ? formatCurrency(credit.limit) : "Not set"}</strong></div>
+      <div><span>Supplies</span><strong>${formatNumber(supplies.length)}</strong></div>
+      <div><span>Supply value</span><strong>${formatCurrency(supplies.reduce((total, row) => total + row.value, 0))}</strong></div>
+    </div>
+    <section class="leadership-history-section"><h4>Supply history</h4>${table(
+      ["Date", "Reference", "Products supplied", "Value", "Status"],
+      supplies.map(({ order, products, value }) => `<tr><td>${formatDate(order.createdAt || order.dueAt)}</td><td><strong>${escapeHtml(order.id)}</strong></td><td>${escapeHtml(products || "No product details")}</td><td>${formatCurrency(value)}</td><td>${statusPill(order.status || "recorded")}</td></tr>`),
+      "No supplies recorded for this supermarket"
+    )}</section>
+  `;
+}
+
+function renderCeoDrilldownTables(productRows, repRows, supermarketRows) {
+  return `
+    <div class="ceo-history-grid">
+      <section class="panel">${panelHeader("Representatives", "Select a representative for sales, stock, and credit history")}${table(["Representative", "Stock", "Sell-through", "Credit"], [renderCeoRepRows(repRows)], "No representatives available")}</section>
+      <section class="panel">${panelHeader("Products", "Select a product to view sales volume over time")}${table(["Product", "Sales", "Returns", "Performance"], [renderCeoProductRows(productRows)], "No products available")}</section>
+      <section class="panel">${panelHeader("Supermarkets", "Select a supermarket for supply history and balance")}${table(["Supermarket", "Orders", "Balance", "Status"], [renderCeoSupermarketRows(supermarketRows)], "No supermarkets available")}</section>
+    </div>
+  `;
+}
+
 function renderCeoDashboard(state) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
   const freshness = buildCeoFreshness(state);
   const productRows = buildCeoProductPerformance(state);
+  const repRows = buildCeoRepRows(state);
   const supermarketRows = buildCeoSupermarketRows(state);
   const riskRows = buildCeoRiskRows(state);
   const trend = buildCeoSalesTrend(state);
@@ -986,6 +1152,9 @@ function renderCeoDashboard(state) {
           ${renderCeoCustomerRatings(supermarketRows)}
         </section>
       </div>
+      ${renderCeoFilterPanel(state, productRows, repRows, supermarketRows)}
+      ${renderCeoDrilldownTables(productRows, repRows, supermarketRows)}
+      ${renderLeadershipDetailModal()}
     </section>
   `;
 }
@@ -1917,7 +2086,7 @@ function renderRepReturnCustomerField() {
 }
 
 function renderRepQuickLog(state, assignments) {
-  const customers = state.retailers || [];
+  const customers = (state.retailers || []).filter((customer) => customer.status !== "inactive");
 
   return `
     <section class="panel rep-action-panel">
@@ -2474,8 +2643,6 @@ export function renderDashboard({ state }) {
           iconName: "wallet"
         })}
       </div>
-      ${isManagerPortal ? renderManagerControlPanel(state, vision) : ""}
-
       ${isManagerPortal
         ? renderManagerOperationsLayout(state, permissions, vision)
         : `
@@ -2571,7 +2738,7 @@ export function bindDashboard({ root, store }) {
   }
 
   if (root.querySelector(".ceo-dashboard")) {
-    bindCeoDashboard({ root });
+    bindCeoDashboard({ root, store });
     return;
   }
 
@@ -2656,9 +2823,53 @@ function bindSubmittedReportDetails({ root, store }) {
   });
 }
 
-function bindCeoDashboard({ root }) {
+function bindCeoDashboard({ root, store }) {
   const filterControls = qsa("[data-ceo-filter]", root);
   const resetButton = qs("[data-ceo-filter-reset]", root);
+  const detailModal = qs("#leadership-detail-modal", root);
+  const detailContent = qs("#leadership-detail-content", root);
+  const detailTitle = qs("#leadership-detail-title", root);
+
+  function closeDetailModal() {
+    if (detailModal) detailModal.hidden = true;
+  }
+
+  function openDetailRow(row) {
+    if (!row || !detailModal || !detailContent) return;
+    const state = store.getState();
+    const kind = row.dataset.ceoDrilldown;
+    if (kind === "rep") {
+      detailContent.innerHTML = renderRepresentativeHistory(state, row.dataset.ceoRep);
+      if (detailTitle) detailTitle.textContent = "Representative history";
+    } else if (kind === "product") {
+      detailContent.innerHTML = renderProductSalesHistory(state, row.dataset.ceoProduct);
+      if (detailTitle) detailTitle.textContent = "Product sales volume";
+    } else if (kind === "supermarket") {
+      detailContent.innerHTML = renderSupermarketHistory(state, row.dataset.ceoSupermarket);
+      if (detailTitle) detailTitle.textContent = "Supermarket history";
+    } else {
+      return;
+    }
+    detailModal.hidden = false;
+    detailModal.focus();
+  }
+
+  qsa("[data-ceo-drilldown]", root).forEach((row) => {
+    row.addEventListener("click", () => openDetailRow(row));
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openDetailRow(row);
+      }
+    });
+  });
+
+  detailModal?.addEventListener("click", (event) => {
+    if (event.target === detailModal || event.target.closest(".js-close-leadership-detail")) closeDetailModal();
+  });
+  detailModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeDetailModal();
+  });
 
   function selectedFilter(name) {
     return qs(`[data-ceo-filter="${name}"]`, root)?.value || "";

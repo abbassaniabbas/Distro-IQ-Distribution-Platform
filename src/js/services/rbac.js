@@ -236,6 +236,7 @@ export function scopeStateForCurrentRole(state) {
     const assignedRepUserId = String(retailer.assignedRepUserId || "");
     return customerIds.has(retailer.id) || assignedRepUserId === userId || !assignedRepUserId;
   });
+  const visibleCustomerNames = new Set(retailers.map((retailer) => String(retailer.name || "").trim().toLowerCase()).filter(Boolean));
 
   return {
     ...state,
@@ -256,7 +257,11 @@ export function scopeStateForCurrentRole(state) {
     }),
     creditLimits: (state.creditLimits || []).filter((limit) => {
       const partyName = String(limit.partyName || "").trim().toLowerCase();
-      return limit.repUserId === userId || (actorName && partyName === actorName);
+      return limit.repUserId === userId || (actorName && partyName === actorName) || visibleCustomerNames.has(partyName);
+    }),
+    creditLimitHistory: (state.creditLimitHistory || []).filter((entry) => {
+      const partyName = String(entry.partyName || "").trim().toLowerCase();
+      return (actorName && partyName === actorName) || visibleCustomerNames.has(partyName);
     }),
     salesReports: (state.salesReports || []).filter((report) => {
       const repName = String(report.repName || "").trim().toLowerCase();

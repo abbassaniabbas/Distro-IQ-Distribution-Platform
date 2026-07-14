@@ -5,7 +5,7 @@ import {
   getCustomerRating
 } from "../services/calculations.js";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
-import { accountForUser, currentUserPermissions } from "../services/rbac.js";
+import { accountForUser, currentUserPermissions, scopeStateForCurrentRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
@@ -115,7 +115,7 @@ function customerCreditSummary(retailer, state) {
   const limit = Number(creditLimit?.limit || 0);
   const creditUsage = limit > 0 ? (balance / limit) * 100 : 0;
   const creditStatus = limit <= 0
-    ? balance > 0 ? "credit_hold" : "no_limit"
+    ? balance > 0 ? "credit_hold" : "credit_clear"
     : creditUsage >= 100
       ? "credit_hold"
       : creditUsage >= 85
@@ -152,7 +152,7 @@ function renderRetailerListItem(retailer, state) {
 
   return `
     <article
-      class="retailer-list-item"
+      class="retailer-list-item${retailer.status === "inactive" ? " is-inactive" : ""}"
       data-rating="${escapeHtml(rating.status)}"
       data-search-index="${escapeHtml(searchIndex)}"
     >
@@ -161,6 +161,7 @@ function renderRetailerListItem(retailer, state) {
           <span class="eyebrow">${escapeHtml(retailer.id)}</span>
           <strong>${escapeHtml(retailer.name)}</strong>
           <small>${escapeHtml([retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</small>
+          ${retailer.status === "inactive" ? '<small class="retailer-inactive-label">Inactive</small>' : ""}
         </span>
         <span>
           <span class="muted">Type</span>
@@ -186,6 +187,67 @@ function renderRetailerListItem(retailer, state) {
   `;
 }
 
+function customerSupplyHistory(retailer, state) {
+  const normalizedName = String(retailer.name || "").trim().toLowerCase();
+  const productMap = new Map((state.products || []).map((product) => [product.id, product]));
+  const orders = (state.orders || [])
+    .filter((order) => (
+      order.retailerId === retailer.id ||
+      order.customerId === retailer.id ||
+      String(order.customerName || order.partyName || "").trim().toLowerCase() === normalizedName
+    ))
+    .map((order) => {
+      const items = order.items || [];
+      return {
+        id: order.id,
+        date: order.createdAt || order.orderDate || order.dueAt,
+        items: items.map((item) => `${formatNumber(item.quantity)} ${productMap.get(item.productId)?.name || item.productName || "item"}`).join(", "),
+        amount: items.reduce((total, item) => total + Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? productMap.get(item.productId)?.unitPrice ?? 0), 0),
+        status: order.status || "recorded"
+      };
+    });
+  const linkedTransactionIds = new Set((state.orders || []).map((order) => order.transactionId).filter(Boolean));
+  const directSales = (state.stockTransactions || [])
+    .filter((transaction) => !linkedTransactionIds.has(transaction.id))
+    .filter((transaction) => ["sale", "supply"].includes(String(transaction.type || "").toLowerCase()))
+    .filter((transaction) => (
+      transaction.customerId === retailer.id ||
+      String(transaction.partyName || transaction.customerName || "").trim().toLowerCase() === normalizedName
+    ))
+    .map((transaction) => ({
+      id: transaction.id,
+      date: transaction.createdAt || transaction.date,
+      items: `${formatNumber(transaction.quantity)} ${transaction.productName || productMap.get(transaction.productId)?.name || "item"}`,
+      amount: Number(transaction.amount || 0),
+      status: "supplied"
+    }));
+
+  return [...orders, ...directSales].sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")));
+}
+
+function renderCustomerSupplyHistory(retailer, state) {
+  const supplies = customerSupplyHistory(retailer, state);
+  return `
+    <section class="customer-supply-history">
+      <div><span class="eyebrow">Supply history</span><h4>Products supplied to this outlet</h4></div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Date</th><th>Reference</th><th>Products</th><th>Value</th><th>Status</th></tr></thead>
+          <tbody>${supplies.length ? supplies.map((supply) => `
+            <tr>
+              <td>${formatDate(String(supply.date || "").slice(0, 10))}</td>
+              <td><strong>${escapeHtml(supply.id)}</strong></td>
+              <td>${escapeHtml(supply.items || "No product details")}</td>
+              <td>${formatCurrency(supply.amount)}</td>
+              <td>${statusPill(supply.status)}</td>
+            </tr>
+          `).join("") : '<tr><td colspan="5">No supply history recorded yet</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+  `;
+}
+
 function detailItem(label, value) {
   return `
     <div class="split">
@@ -195,7 +257,7 @@ function detailItem(label, value) {
   `;
 }
 
-function renderCustomerDetails(retailer, state, permissions) {
+export function renderCustomerDetails(retailer, state, permissions) {
   const { creditLimit, balance, limit, creditUsage, creditStatus } = customerCreditSummary(retailer, state);
   const orderCompletion = getCustomerOrderCompletion(retailer, state);
   const rating = getCustomerRating(retailer, state);
@@ -207,12 +269,12 @@ function renderCustomerDetails(retailer, state, permissions) {
     ? formatPercent(creditUsage)
     : balance > 0
       ? "Credit hold"
-      : "No limit set";
+      : "Credit clear";
   const creditUsageDescription = limit > 0
     ? `${formatCurrency(balance)} of ${formatCurrency(limit)} used.`
     : balance > 0
       ? `${formatCurrency(balance)} is outstanding without an approved credit limit.`
-      : "Set a credit limit to begin tracking usage.";
+      : "No outstanding credit balance. The credit limit is not set.";
 
   return `
     <div class="customer-detail-summary">
@@ -265,12 +327,22 @@ function renderCustomerDetails(retailer, state, permissions) {
       </section>
     </div>
 
+    ${renderCustomerSupplyHistory(retailer, state)}
+
     <footer class="customer-detail-actions">
       ${permissions.canManageCustomers
         ? textButton({
             iconName: "settings",
             label: "Edit customer",
             className: "primary js-modal-edit-retailer",
+            data: { "retailer-id": retailer.id }
+          })
+        : ""}
+      ${permissions.canManageCustomers
+        ? textButton({
+            iconName: retailer.status === "inactive" ? "check" : "x",
+            label: retailer.status === "inactive" ? "Activate customer" : "Deactivate customer",
+            className: "js-toggle-retailer-status",
             data: { "retailer-id": retailer.id }
           })
         : ""}
@@ -349,9 +421,10 @@ export function bindRetailers({ root, store }) {
   }
 
   function openCustomerModal(retailerId) {
-    const state = store.getState();
+    const fullState = store.getState();
+    const state = scopeStateForCurrentRole(fullState);
     const retailer = (state.retailers || []).find((item) => item.id === retailerId);
-    const permissions = currentUserPermissions(state);
+    const permissions = currentUserPermissions(fullState);
 
     if (!customerModal || !customerModalContent || !retailer) return;
 
@@ -362,6 +435,13 @@ export function bindRetailers({ root, store }) {
     qs(".js-modal-edit-retailer", customerModal)?.addEventListener("click", () => {
       closeCustomerModal();
       fillRetailerForm(retailer.id);
+    });
+    qs(".js-toggle-retailer-status", customerModal)?.addEventListener("click", () => {
+      store.dispatch({
+        type: "TOGGLE_RETAILER_STATUS",
+        retailerId: retailer.id,
+        message: retailer.status === "inactive" ? "Customer activated" : "Customer deactivated"
+      });
     });
   }
 

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { effectiveOrderStatus, getCustomerOrderCompletion, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
 import { buildInvoiceDocument, buildInvoicePreviewContent, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
-import { currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
+import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { renderAuth } from "../src/js/views/auth.js";
@@ -13,6 +13,7 @@ import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
 import { renderOrders } from "../src/js/views/orders.js";
+import { renderCustomerDetails, renderRetailers } from "../src/js/views/retailers.js";
 import { renderSettings } from "../src/js/views/settings.js";
 import { buildLoginDetailsEmail } from "../src/js/views/team.js";
 import { renderTeam } from "../src/js/views/team.js";
@@ -417,6 +418,7 @@ const managerDashboard = renderDashboard({ state: store.getState() });
 assert.doesNotMatch(managerDashboard, /Recent sales orders/);
 assert.doesNotMatch(managerDashboard, /Consolidated sales activity/);
 assert.doesNotMatch(managerDashboard, /Submitted sales reports/);
+assert.doesNotMatch(managerDashboard, /Manager controls/);
 assert.match(managerDashboard, /Musa Manager/);
 assert.match(managerDashboard, /Test Factory/);
 
@@ -448,6 +450,12 @@ authenticate("user-ceo");
 const ceoDashboard = renderDashboard({ state: store.getState() });
 assert.doesNotMatch(ceoDashboard, /Submitted sales reports/, "submitted reports must be moved out of the CEO dashboard");
 assert.match(ceoDashboard, /Chioma CEO/);
+assert.match(ceoDashboard, /data-ceo-drilldown="rep"/);
+assert.match(ceoDashboard, /data-ceo-drilldown="product"/);
+assert.match(ceoDashboard, /leadership-detail-modal/);
+assert.match(ceoDashboard, /sales, stock, and credit history/);
+assert.match(ceoDashboard, /sales volume over time/);
+assert.match(ceoDashboard, /supply history and balance/);
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
@@ -461,6 +469,37 @@ authenticate("user-accountant");
 assert.match(renderDashboard({ state: store.getState() }), /Bola Accountant/);
 
 authenticate("user-manager");
+const historyRetailer = { id: "RTL-HISTORY", name: "History Supermarket", channel: "Supermarket", status: "active", outstanding: 2500 };
+const historyRetailerState = {
+  ...store.getState(),
+  retailers: [historyRetailer],
+  orders: [{ id: "ORD-HISTORY", retailerId: "RTL-HISTORY", status: "delivered", createdAt: "2026-07-12", items: [{ productId: "SKU-CHIPS", quantity: 4, unitPrice: 500 }] }]
+};
+const customerHistoryView = renderCustomerDetails(historyRetailer, historyRetailerState, currentUserPermissions(historyRetailerState));
+assert.match(customerHistoryView, /Supply history/);
+assert.match(customerHistoryView, /Deactivate customer/);
+assert.match(customerHistoryView, /Products supplied to this outlet/);
+const clearCustomerView = renderCustomerDetails({ ...historyRetailer, outstanding: 0 }, { ...historyRetailerState, creditLimits: [] }, currentUserPermissions(historyRetailerState));
+assert.match(clearCustomerView, /Credit clear/);
+assert.doesNotMatch(clearCustomerView, /No limit set/);
+const repCustomerState = {
+  ...historyRetailerState,
+  session: { user: { id: "user-rep" } },
+  user: { id: "user-rep", email: "amina@example.com" },
+  accounts,
+  creditLimits: [{ id: "CRD-HISTORY", partyType: "Customer", partyName: historyRetailer.name, limit: 10000, balance: 9000 }]
+};
+const scopedRepCustomerState = scopeStateForCurrentRole(repCustomerState);
+const repCustomerRow = renderRetailers({ state: scopedRepCustomerState });
+const repCustomerModal = renderCustomerDetails(historyRetailer, scopedRepCustomerState, currentUserPermissions(scopedRepCustomerState));
+assert.match(repCustomerRow, /Credit Watch/);
+assert.match(repCustomerModal, /Credit Watch/);
+assert.match(repCustomerRow, /High risk/);
+assert.match(repCustomerModal, /High Risk/);
+store.getState().retailers.push({ ...historyRetailer });
+store.dispatch({ type: "TOGGLE_RETAILER_STATUS", retailerId: historyRetailer.id });
+assert.equal(store.getState().retailers.find((retailer) => retailer.id === historyRetailer.id).status, "inactive");
+store.getState().retailers = store.getState().retailers.filter((retailer) => retailer.id !== historyRetailer.id);
 store.getState().creditLimits = Array.from({ length: 12 }, (_, index) => ({
   id: `CRD-${index + 1}`,
   partyType: index === 0 ? "Sales Representative" : "Customer",

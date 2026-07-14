@@ -769,6 +769,7 @@ function dispatchRecipientOptions(state, recipientType) {
   if (normalizedType.includes("supermarket")) {
     return [
       ...(state.retailers || [])
+        .filter((retailer) => retailer.status !== "inactive")
         .slice()
         .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
         .map((retailer) => ({
@@ -1479,7 +1480,7 @@ function renderProductionTraceabilityDetails(product, state) {
 
 function renderRawMaterialCustomerOptions(state) {
   const customers = (state.retailers || [])
-    .filter((customer) => customer.id && customer.name)
+    .filter((customer) => customer.id && customer.name && customer.status !== "inactive")
     .slice()
     .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
 
