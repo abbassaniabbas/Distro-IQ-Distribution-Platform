@@ -252,29 +252,44 @@ export function downloadInvoice(invoice, state) {
   URL.revokeObjectURL(url);
 }
 
-export function openInvoiceQuickView(invoice, state) {
-  document.querySelector("#invoice-quick-view")?.remove();
+export function buildInvoiceQuickViewMarkup(invoice, state, options = {}) {
+  const downloadLabel = options.downloadLabel || "Download invoice";
+  const downloadIconName = options.downloadIconName || "download";
 
-  const backdrop = document.createElement("div");
-  backdrop.id = "invoice-quick-view";
-  backdrop.className = "stock-modal-backdrop invoice-preview-backdrop";
-  backdrop.tabIndex = -1;
-  backdrop.innerHTML = `
+  return `
     <section class="stock-modal invoice-preview-modal" role="dialog" aria-modal="true" aria-labelledby="invoice-preview-title">
       <header class="stock-modal-header">
         <div>
           <span class="eyebrow">Invoice quick view</span>
           <h2 id="invoice-preview-title">${escapeHtml(invoice.id)}</h2>
         </div>
-        <button class="icon-button js-close-invoice-preview" type="button" title="Close invoice" aria-label="Close invoice">
-          ${icon("x")}
-        </button>
+        <div class="invoice-preview-actions">
+          <button class="icon-button js-download-invoice-preview" type="button" title="${escapeHtml(downloadLabel)}" aria-label="${escapeHtml(downloadLabel)}">
+            ${icon(downloadIconName)}
+          </button>
+          <button class="icon-button js-print-invoice-preview" type="button" title="Print invoice" aria-label="Print invoice">
+            ${icon("print")}
+          </button>
+          <button class="icon-button js-close-invoice-preview" type="button" title="Close invoice" aria-label="Close invoice">
+            ${icon("x")}
+          </button>
+        </div>
       </header>
       <div class="invoice-preview-body">
         ${buildInvoicePreviewContent(invoice, state)}
       </div>
     </section>
   `;
+}
+
+export function openInvoiceQuickView(invoice, state, options = {}) {
+  document.querySelector("#invoice-quick-view")?.remove();
+
+  const backdrop = document.createElement("div");
+  backdrop.id = "invoice-quick-view";
+  backdrop.className = "stock-modal-backdrop invoice-preview-backdrop";
+  backdrop.tabIndex = -1;
+  backdrop.innerHTML = buildInvoiceQuickViewMarkup(invoice, state, options);
 
   document.body.appendChild(backdrop);
 
@@ -288,6 +303,8 @@ export function openInvoiceQuickView(invoice, state) {
   }
 
   backdrop.querySelector(".js-close-invoice-preview")?.addEventListener("click", closePreview);
+  backdrop.querySelector(".js-download-invoice-preview")?.addEventListener("click", () => downloadInvoice(invoice, state));
+  backdrop.querySelector(".js-print-invoice-preview")?.addEventListener("click", () => printInvoice(invoice, state));
   backdrop.addEventListener("click", (event) => {
     if (event.target === backdrop) closePreview();
   });

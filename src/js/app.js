@@ -6,6 +6,7 @@ import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/fe
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
+import { restoreProductImages } from "./services/product-images.js";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
 import {
@@ -636,7 +637,12 @@ window.setInterval(refreshWorkspaceFeatureModules, FEATURE_MODULE_REFRESH_MS);
 
 function refreshDelayedOrderStatuses() {
   const state = store.getState();
-  if (!state.session || !state.client?.id || state.platformAdmin) return;
+  if (
+    !state.session ||
+    !state.client?.id ||
+    state.platformAdmin ||
+    document.documentElement.dataset.filePickerActive === "true"
+  ) return;
   store.dispatch({ type: "AUTO_UPDATE_DELAYED_ORDERS" });
 }
 
@@ -644,6 +650,18 @@ window.setInterval(refreshDelayedOrderStatuses, DELAY_STATUS_REFRESH_MS);
 window.addEventListener("focus", refreshDelayedOrderStatuses);
 
 replaceIconPlaceholders(document);
+
+async function hydrateWorkspaceProductImages() {
+  const state = store.getState();
+  if (!state.client?.id || !(state.products || []).length) return;
+
+  try {
+    const images = await restoreProductImages(state.client.id, state.products);
+    if (images.length) store.dispatch({ type: "HYDRATE_PRODUCT_IMAGES", images });
+  } catch (error) {
+    console.warn("Stock pictures could not be restored:", error.message);
+  }
+}
 
 async function bootstrap() {
   store.dispatch({
@@ -680,6 +698,7 @@ async function bootstrap() {
           user: authContext.user,
           ...workspace
         });
+        await hydrateWorkspaceProductImages();
       }
     } else {
       store.dispatch({
@@ -713,6 +732,7 @@ async function bootstrap() {
               user,
               ...workspace
             });
+            await hydrateWorkspaceProductImages();
           }
         } else {
           store.dispatch({

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 
 import { effectiveOrderStatus, getCustomerOrderCompletion, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
-import { buildInvoiceDocument, buildInvoicePreviewContent, getInvoiceRecords } from "../src/js/services/invoices.js";
+import { getNigeriaLgas, NIGERIA_STATES_AND_LGAS, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../src/js/data/nigeria-locations.js";
+import { buildInvoiceDocument, buildInvoicePreviewContent, buildInvoiceQuickViewMarkup, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { nextFormattedId } from "../src/js/services/tenant.js";
@@ -139,6 +140,34 @@ store.dispatch({
   status: "active"
 });
 
+const persistentImageData = "data:image/png;base64,RELOAD_SAFE_STOCK_IMAGE";
+store.dispatch({
+  type: "UPSERT_PRODUCT",
+  productId: "SKU-IMAGE-PERSIST",
+  sku: "SKU-IMAGE-PERSIST",
+  name: "Image Persistence Test",
+  stockCategory: "finished_products",
+  unit: "pack",
+  stock: 1,
+  reorderPoint: 1,
+  unitCost: 1,
+  unitPrice: 1,
+  status: "active",
+  imageUrl: persistentImageData,
+  imageStorageKey: `${client.id}:SKU-IMAGE-PERSIST`
+});
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, persistentImageData, "stock image must remain available in memory after saving");
+assert.ok(
+  [...browserStorage.values()].every((value) => !String(value).includes(persistentImageData)),
+  "large stock image data must be kept outside the main browser state document"
+);
+store.dispatch({
+  type: "HYDRATE_PRODUCT_IMAGES",
+  images: [{ productId: "SKU-IMAGE-PERSIST", imageUrl: persistentImageData, imageStorageKey: `${client.id}:SKU-IMAGE-PERSIST` }]
+});
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, persistentImageData, "saved stock images must restore after workspace hydration");
+store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-IMAGE-PERSIST"] });
+
 store.dispatch({
   type: "RECORD_STOCK_DISPATCH",
   productId: "RAW-OIL",
@@ -190,6 +219,10 @@ assert.match(productionUsage, /stock-health-row/);
 assert.match(productionUsage, /production-stock-update/);
 assert.match(productionUsage, /Sell raw material/);
 assert.match(productionUsage, /js-sell-raw-material/);
+assert.match(productionUsage, /js-select-all-stock/);
+assert.match(productionUsage, /js-select-stock/);
+assert.match(productionUsage, /js-delete-product/);
+assert.match(productionUsage, /js-delete-selected-stock/);
 
 store.dispatch({
   type: "RECORD_RAW_MATERIAL_SALE",
@@ -297,6 +330,28 @@ const representativeInvoices = renderInvoices({ state: scopeStateForCurrentRole(
 assert.match(representativeInvoices, /My invoices/);
 assert.match(representativeInvoices, /js-download-invoice/);
 assert.match(representativeInvoices, /js-print-invoice/);
+const sharedCustomerInvoiceState = {
+  ...state,
+  accounts: [
+    ...accounts,
+    { id: "membership-rep-two", clientId: client.id, userId: "user-rep-two", name: "Binta Rep", email: "binta@example.com", role: "sales_rep", status: "active" }
+  ],
+  invoices: [
+    { id: "INV-OWN", retailerId: "RTL-SHARED", repUserId: "user-rep", repName: "Amina Rep" },
+    { id: "INV-OTHER", retailerId: "RTL-SHARED", repUserId: "user-rep-two", repName: "Binta Rep" },
+    { id: "INV-LEGACY-OWN", retailerId: "RTL-SHARED", repName: "Amina Rep" },
+    { id: "INV-LEGACY-OTHER", retailerId: "RTL-SHARED", repName: "Binta Rep" }
+  ],
+  orders: [
+    ...(state.orders || []),
+    { id: "ORD-SHARED", retailerId: "RTL-SHARED", repUserId: "user-rep", repName: "Amina Rep", items: [] }
+  ]
+};
+assert.deepEqual(
+  scopeStateForCurrentRole(sharedCustomerInvoiceState).invoices.map((invoice) => invoice.id),
+  ["INV-OWN", "INV-LEGACY-OWN"],
+  "a representative must never see another representative's invoice, even for a shared customer"
+);
 
 const returnableCustomers = getReturnableCustomerChoices(state, {
   productId: "SKU-CHIPS",
@@ -342,6 +397,11 @@ const repDashboard = renderDashboard({ state: scopeStateForCurrentRole(state) })
 assert.match(repDashboard, /Walk-in customer/, "walk-in sale must appear in the current daily report");
 assert.match(repDashboard, /Plantain Chips/);
 assert.match(repDashboard, /rep-factory-return-form/, "representatives must be able to return stock in hand to the factory");
+assert.match(repDashboard, /rep-product-family-grid/, "representative catalogue must group products into families");
+assert.match(repDashboard, /js-toggle-rep-product-types/, "representatives must be able to open product types");
+assert.match(repDashboard, /js-open-rep-product-sizes/, "representatives must be able to open product sizes");
+assert.match(repDashboard, /id="rep-product-size-modal"/, "product sizes must open in a catalogue modal");
+assert.match(repDashboard, /js-select-rep-product-size/, "each catalogue size must be selectable");
 
 store.dispatch({
   type: "SUBMIT_REP_REPORT",
@@ -376,14 +436,16 @@ globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
 assert.match(storeKeeperInventory, /name="sku" value="SKU-\d+" readonly/, "new products must receive an automatic SKU");
+assert.match(storeKeeperInventory, /field stock-sku-field/, "SKU field must have its own spacing hook");
 assert.match(storeKeeperInventory, /name="productType"/);
-assert.match(storeKeeperInventory, /data-add-product-size/);
-assert.match(storeKeeperInventory, /data-additional-size-template/);
-assert.match(storeKeeperInventory, /name="variantSku"/);
-assert.match(storeKeeperInventory, /name="variantStockCategory"/);
-assert.match(storeKeeperInventory, /name="variantReorderPoint"/);
-assert.match(storeKeeperInventory, /name="variantUnitCost"/);
-assert.match(storeKeeperInventory, /name="variantUnitPrice"/);
+assert.match(storeKeeperInventory, /name="sizeValue" type="number"/);
+assert.match(storeKeeperInventory, /name="sizeUnit" aria-label="Product size unit"/);
+assert.match(storeKeeperInventory, /name="sizeUnitOther"[^>]+hidden/);
+assert.equal((storeKeeperInventory.match(/<select name="sizeUnit"[\s\S]*?<\/select>/)?.[0].match(/<option /g) || []).length, 5, "product-size unit dropdown must not exceed five options");
+assert.match(storeKeeperInventory, /data-affiliated-product-progress/);
+assert.match(storeKeeperInventory, /js-add-affiliated-product/);
+assert.match(storeKeeperInventory, /Product added successfully/);
+assert.doesNotMatch(storeKeeperInventory, /name="variantSku"/);
 assert.match(storeKeeperInventory, /<th>Product type<\/th>/);
 assert.match(storeKeeperInventory, /<th>Size<\/th>/);
 
@@ -515,6 +577,13 @@ assert.match(storeKeeperDashboard, /Tola Store/);
 assert.match(storeKeeperDashboard, /js-open-dashboard-dispatch/);
 assert.match(storeKeeperDashboard, /id="dashboard-dispatch-modal" class="stock-modal-backdrop" hidden/);
 assert.equal((storeKeeperDashboard.match(/id="stock-dispatch-form"/g) || []).length, 1);
+assert.match(storeKeeperDashboard, /name="paymentType"/);
+assert.match(storeKeeperDashboard, /value="cash">Cash paid on dispatch/);
+assert.match(storeKeeperDashboard, /value="credit">Credit/);
+assert.match(storeKeeperDashboard, /name="dispatchProductId"/);
+assert.match(storeKeeperDashboard, /name="dispatchQuantity"/);
+assert.match(storeKeeperDashboard, /data-dispatch-item-template/);
+assert.match(storeKeeperDashboard, /js-add-dispatch-item/);
 assert.doesNotMatch(storeKeeperDashboard, /href="#\/inventory\?tab=dispatch"/);
 authenticate("user-accountant");
 assert.match(renderDashboard({ state: store.getState() }), /Bola Accountant/);
@@ -524,6 +593,18 @@ const ceoCustomersPage = renderRetailers({ state: store.getState() });
 assert.match(ceoCustomersPage, /Add Customer/);
 assert.doesNotMatch(ceoCustomersPage, /Customer relationship/);
 assert.doesNotMatch(ceoCustomersPage, /Supermarkets, kiosks, wholesalers, contacts, and balances owed/);
+assert.equal(NIGERIA_STATE_NAMES.length, 37, "customer state list must contain all 36 states and FCT");
+assert.equal(NIGERIA_STATE_NAMES[0], "Kaduna", "Kaduna must appear first in the customer state list");
+assert.equal(NIGERIA_STATES_AND_LGAS.reduce((total, entry) => total + entry.lgas.length, 0), 774, "Nigeria location data must contain all 774 LGAs");
+assert.deepEqual(getNigeriaLgas("Kaduna").slice(0, 2), ["Birnin Gwari", "Chikun"]);
+assert.equal(normalizeNigeriaStateName("FCT"), "Federal Capital Territory (FCT)");
+const customerStateSelect = ceoCustomersPage.match(/<select name="stateName" required>([\s\S]*?)<\/select>/)?.[1] || "";
+assert.equal((customerStateSelect.match(/<option /g) || []).length, 37, "Add Customer must show all Nigerian states and FCT");
+assert.match(customerStateSelect, /^\s*<option value="Kaduna">Kaduna<\/option>/, "Kaduna must be the initially selected state");
+assert.match(ceoCustomersPage, /<select name="lga" required>/);
+assert.match(ceoCustomersPage, /<option value="Zaria">Zaria<\/option>/);
+assert.match(ceoCustomersPage, /<input name="address"[^>]+required>/);
+assert.doesNotMatch(ceoCustomersPage, /City or town|name="city"/);
 const historyRetailer = { id: "RTL-HISTORY", name: "History Supermarket", channel: "Supermarket", status: "active", outstanding: 2500 };
 const historyRetailerState = {
   ...store.getState(),
@@ -778,17 +859,25 @@ store.dispatch({ type: "APPROVE_RECORD_CORRECTION", requestId: dispatchCorrectio
 assert.equal(store.getState().correctionRequests.find((request) => request.id === dispatchCorrectionRequest.id).status, "approved");
 assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionDispatch.id).quantity, Number(correctionDispatch.quantity) - 1);
 assert.equal(store.getState().products.find((product) => product.id === "SKU-CHIPS").stock, correctionStockBefore + 1);
+assert.equal(
+  store.getState().invoices.find((invoice) => invoice.id === correctionDispatch.invoiceId).amount,
+  (Number(correctionDispatch.quantity) - 1) * Number(correctionDispatch.unitPrice),
+  "approved dispatch corrections must update the linked invoice"
+);
 if (Number.isFinite(correctionAssignmentBefore)) {
   assert.equal(store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id).assigned, correctionAssignmentBefore - 1);
 }
 const productSizeDashboard = renderDashboard({ state: store.getState() });
+assert.ok(productSizeDashboard.indexOf("Sales trend") < productSizeDashboard.indexOf(">Products<"), "CEO Sales trend must appear above Products");
 assert.match(productSizeDashboard, /id="ceo-product-size-modal"/);
 assert.match(productSizeDashboard, /js-open-product-size-modal/);
 assert.match(productSizeDashboard, /data-size-sku="SKU-CHIPS"/);
 assert.match(productSizeDashboard, /Available in factory/);
 assert.match(productSizeDashboard, /Dispatched today/);
-assert.match(productSizeDashboard, /This month/);
-assert.match(productSizeDashboard, /This year/);
+assert.match(productSizeDashboard, /Stock with sales reps/);
+assert.match(productSizeDashboard, /data-size-rep-stock=/);
+assert.doesNotMatch(productSizeDashboard, /This month/);
+assert.doesNotMatch(productSizeDashboard, /This year/);
 
 authenticate("user-rep");
 const correctionSaleAssignment = store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id);
@@ -823,6 +912,27 @@ assert.equal(store.getState().correctionRequests.find((request) => request.id ==
 assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionSale.id).quantity, 2);
 assert.equal(store.getState().invoices.find((invoice) => invoice.transactionId === correctionSale.id).items[0].quantity, 2);
 
+store.dispatch({
+  type: "UPSERT_PRODUCT",
+  productId: "SKU-DELETE-TEST",
+  sku: "SKU-DELETE-TEST",
+  name: "Delete Test Stock",
+  stockCategory: "finished_products",
+  unit: "pack",
+  stock: 5,
+  reorderPoint: 1,
+  unitCost: 100,
+  unitPrice: 150,
+  status: "active"
+});
+authenticate("user-store");
+store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-DELETE-TEST"] });
+assert.ok(store.getState().products.some((product) => product.id === "SKU-DELETE-TEST"), "Store Keeper must not delete stock records");
+authenticate("user-ceo");
+store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-DELETE-TEST"] });
+assert.ok(!store.getState().products.some((product) => product.id === "SKU-DELETE-TEST"), "CEO must be able to delete selected stock records");
+assert.ok(store.getState().activityLogs.some((entry) => entry.summary === "Deleted stock record for Delete Test Stock"));
+
 const secondClient = { id: "client-other", companyName: "Other Factory", currencySymbol: "₦" };
 store.dispatch({
   type: "SET_AUTHENTICATED_WORKSPACE",
@@ -838,6 +948,116 @@ store.dispatch({
 assert.equal(store.getState().products.length, 0, "a different company must not inherit the previous company's browser records");
 authenticate("user-manager");
 assert.ok(store.getState().products.some((product) => product.id === "SKU-CHIPS"), "returning to a company restores only that company's records");
+
+const multiDispatchStore = createStore();
+const multiDispatchClient = { id: "client-multi-dispatch", companyName: "Multi Dispatch Factory", currencySymbol: "₦" };
+const multiDispatchAccounts = [
+  { id: "multi-ceo", clientId: multiDispatchClient.id, userId: "multi-ceo-user", name: "Multi CEO", email: "multi-ceo@example.com", role: "ceo", status: "active" },
+  { id: "multi-rep", clientId: multiDispatchClient.id, userId: "multi-rep-user", name: "Multi Rep", email: "multi-rep@example.com", role: "sales_rep", status: "active" }
+];
+multiDispatchStore.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: "multi-ceo-user" } },
+  user: { id: "multi-ceo-user", email: "multi-ceo@example.com" },
+  client: multiDispatchClient,
+  accounts: multiDispatchAccounts,
+  invites: [],
+  featureModules: [],
+  messages: [],
+  activityLogs: []
+});
+[
+  { productId: "MULTI-A", name: "Plantain Chips 50g", stock: 20, unitPrice: 500 },
+  { productId: "MULTI-B", name: "Kuli Kuli 100g", stock: 15, unitPrice: 800 }
+].forEach((product) => multiDispatchStore.dispatch({
+  type: "UPSERT_PRODUCT",
+  sku: product.productId,
+  stockCategory: "finished_products",
+  unit: "pack",
+  reorderPoint: 2,
+  unitCost: 200,
+  status: "active",
+  ...product
+}));
+multiDispatchStore.dispatch({
+  type: "UPSERT_REP_CREDIT_LIMIT",
+  repName: "Multi Rep",
+  repUserId: "multi-rep-user",
+  limit: 100000,
+  paymentPeriodDays: 7
+});
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  items: [
+    { productId: "MULTI-A", quantity: 3 },
+    { productId: "MULTI-B", quantity: 2 }
+  ],
+  recipientType: "Sales Representative",
+  recipientName: "Multi Rep",
+  destination: "Van 12",
+  paymentType: "credit",
+  dispatchDate: "2026-07-15",
+  expectedDeliveryAt: "2026-07-16",
+  staffName: "Multi CEO"
+});
+const multiDispatchState = multiDispatchStore.getState();
+assert.equal(multiDispatchState.products.find((product) => product.id === "MULTI-A").stock, 17);
+assert.equal(multiDispatchState.products.find((product) => product.id === "MULTI-B").stock, 13);
+assert.equal(multiDispatchState.stockAssignments.length, 2, "each selected product must create a representative assignment");
+assert.equal(multiDispatchState.stockTransactions.filter((transaction) => transaction.dispatchId).length, 2, "one dispatch transaction must be recorded per product");
+assert.equal(multiDispatchState.orders[0].items.length, 2, "factory dispatch order must contain every selected product");
+assert.equal(multiDispatchState.invoices[0].items.length, 2, "factory dispatch invoice must contain every selected product");
+assert.equal(multiDispatchState.invoices[0].amount, 3100);
+assert.equal(multiDispatchState.invoices[0].paymentType, "credit");
+assert.equal(multiDispatchState.invoices[0].status, "open");
+assert.equal(multiDispatchState.creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 3100);
+const multiDispatchInvoicePreview = buildInvoicePreviewContent(multiDispatchState.invoices[0], multiDispatchState);
+assert.match(multiDispatchInvoicePreview, /Plantain Chips 50g/);
+assert.match(multiDispatchInvoicePreview, /Kuli Kuli 100g/);
+assert.match(multiDispatchInvoicePreview, /Credit/);
+const multiDispatchQuickView = buildInvoiceQuickViewMarkup(multiDispatchState.invoices[0], multiDispatchState);
+assert.match(multiDispatchQuickView, /js-download-invoice-preview/);
+assert.match(multiDispatchQuickView, /aria-label="Download invoice"/);
+assert.match(multiDispatchQuickView, /js-print-invoice-preview/);
+assert.match(multiDispatchQuickView, /aria-label="Print invoice"/);
+const quickSaleInvoiceView = buildInvoiceQuickViewMarkup(multiDispatchState.invoices[0], multiDispatchState, {
+  downloadLabel: "Save invoice",
+  downloadIconName: "save"
+});
+assert.match(quickSaleInvoiceView, /aria-label="Save invoice"/);
+assert.match(quickSaleInvoiceView, /js-print-invoice-preview/);
+multiDispatchStore.dispatch({ type: "MARK_INVOICE_PAID", invoiceId: multiDispatchState.invoices[0].id });
+assert.equal(multiDispatchStore.getState().invoices[0].status, "paid");
+assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0);
+const invoiceCountBeforeRejectedDispatch = multiDispatchStore.getState().invoices.length;
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  items: [{ productId: "MULTI-A", quantity: 1 }, { productId: "MULTI-B", quantity: 999 }],
+  recipientType: "Sales Representative",
+  recipientName: "Multi Rep",
+  destination: "Van 12",
+  paymentType: "cash",
+  dispatchDate: "2026-07-15",
+  expectedDeliveryAt: "2026-07-16",
+  staffName: "Multi CEO"
+});
+assert.equal(multiDispatchStore.getState().products.find((product) => product.id === "MULTI-A").stock, 17, "invalid multi-product dispatch must not partially deduct stock");
+assert.equal(multiDispatchStore.getState().invoices.length, invoiceCountBeforeRejectedDispatch, "invalid multi-product dispatch must not create an invoice");
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  items: [{ productId: "MULTI-A", quantity: 1 }, { productId: "MULTI-B", quantity: 1 }],
+  recipientType: "Sales Representative",
+  recipientName: "Multi Rep",
+  destination: "Van 12",
+  paymentType: "cash",
+  dispatchDate: "2026-07-15",
+  expectedDeliveryAt: "2026-07-16",
+  staffName: "Multi CEO"
+});
+assert.equal(multiDispatchStore.getState().invoices[0].paymentType, "cash");
+assert.equal(multiDispatchStore.getState().invoices[0].status, "paid");
+assert.equal(multiDispatchStore.getState().invoices[0].amount, 1300);
+assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0, "cash dispatch must not increase representative credit");
 
 const onboardingStore = createStore();
 onboardingStore.dispatch({

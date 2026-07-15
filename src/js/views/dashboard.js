@@ -21,6 +21,7 @@ import {
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
+import { openInvoiceQuickView } from "../services/invoices.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -665,7 +666,7 @@ function renderCeoSupermarketRows(supermarketRows) {
     .sort((a, b) => b.balance - a.balance)
     .map((row) => {
       const customerState = row.retailer.stateName || row.retailer.region || "";
-      const customerLocation = [row.retailer.city, customerState].filter(Boolean).join(" - ");
+      const customerLocation = [row.retailer.lga || row.retailer.city, customerState].filter(Boolean).join(" - ");
       const searchIndex = [
         row.retailer.name,
         customerState,
@@ -1034,7 +1035,7 @@ function renderSupermarketHistory(state, retailerId) {
   const credit = getCreditLimitForParty(state.creditLimits || [], retailer.name);
   const balance = Number(credit?.balance ?? retailer.outstanding ?? 0);
   return `
-    <div class="leadership-detail-heading"><div><span class="eyebrow">Supermarket supply</span><h3>${escapeHtml(retailer.name)}</h3><p>${escapeHtml([retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</p></div>${statusPill(retailer.status === "inactive" ? "inactive" : "active")}</div>
+    <div class="leadership-detail-heading"><div><span class="eyebrow">Supermarket supply</span><h3>${escapeHtml(retailer.name)}</h3><p>${escapeHtml([retailer.lga || retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</p></div>${statusPill(retailer.status === "inactive" ? "inactive" : "active")}</div>
     <div class="leadership-summary-grid">
       <div><span>Balance owed</span><strong>${formatCurrency(balance)}</strong></div>
       <div><span>Credit limit</span><strong>${credit?.limit ? formatCurrency(credit.limit) : "Not set"}</strong></div>
@@ -1106,7 +1107,7 @@ function renderDailyStockMovementTable(state) {
         <td><strong>${escapeHtml(product.name)}</strong><div class="muted">${escapeHtml(productSizeLabel(product))}</div></td>
         <td>${formatNumber(added)}</td>
         <td>${formatNumber(dispatched)}</td>
-        <td>${formatNumber(product.stock || 0)} ${escapeHtml(product.unit || "units")}</td>
+        <td>${formatNumber(product.stock || 0)}</td>
         <td>
           ${statusPill(Number(product.stock || 0) <= 0 ? "sold_out" : "in_stock")}
           ${product.soldOutAt ? `<div class="muted">Saved ${formatDate(product.soldOutAt)}</div>` : ""}
@@ -1117,24 +1118,20 @@ function renderDailyStockMovementTable(state) {
   );
 }
 
-function productDispatchPeriods(state, productId) {
+function productDispatchToday(state, productId) {
   const today = todayISO();
-  const month = today.slice(0, 7);
-  const year = today.slice(0, 4);
-  const dispatches = (state.stockTransactions || []).filter((transaction) => (
+  return (state.stockTransactions || []).filter((transaction) => (
     transaction.productId === productId &&
+    String(transaction.date || "") === today &&
     transaction.movementDirection === "out" &&
     ["supply", "internal movement"].includes(normalized(transaction.type))
-  ));
-  const totalFor = (prefix) => dispatches
-    .filter((transaction) => String(transaction.date || "").startsWith(prefix))
-    .reduce((total, transaction) => total + Number(transaction.quantity || 0), 0);
+  )).reduce((total, transaction) => total + Number(transaction.quantity || 0), 0);
+}
 
-  return {
-    today: totalFor(today),
-    month: totalFor(month),
-    year: totalFor(year)
-  };
+function productStockWithSalesReps(state, productId) {
+  return (state.stockAssignments || [])
+    .filter((assignment) => assignment.productId === productId)
+    .reduce((total, assignment) => total + assignmentOutstanding(assignment), 0);
 }
 
 function renderCeoSizePicture(product) {
@@ -1186,7 +1183,8 @@ function renderCeoProductStock(state) {
         </header>
         <div class="ceo-size-picture-grid">
           ${rows.map(({ product }) => {
-            const periods = productDispatchPeriods(state, product.id);
+            const dispatchedToday = productDispatchToday(state, product.id);
+            const stockWithSalesReps = productStockWithSalesReps(state, product.id);
             return `
               <button
                 class="ceo-size-picture-card js-select-product-size"
@@ -1197,10 +1195,8 @@ function renderCeoProductStock(state) {
                 data-size-label="${escapeHtml(productSizeLabel(product))}"
                 data-size-sku="${escapeHtml(product.id)}"
                 data-size-available="${escapeHtml(product.stock || 0)}"
-                data-size-unit="${escapeHtml(product.unit || "units")}"
-                data-size-dispatch-day="${escapeHtml(periods.today)}"
-                data-size-dispatch-month="${escapeHtml(periods.month)}"
-                data-size-dispatch-year="${escapeHtml(periods.year)}"
+                data-size-dispatch-day="${escapeHtml(dispatchedToday)}"
+                data-size-rep-stock="${escapeHtml(stockWithSalesReps)}"
                 hidden
               >
                 <span class="ceo-size-picture">${renderCeoSizePicture(product)}</span>
@@ -1216,10 +1212,9 @@ function renderCeoProductStock(state) {
             <small data-size-detail-sku>SKU</small>
           </div>
           <div class="selected-size-stock-metrics">
-            <div><span>Available in factory</span><strong data-size-detail-available>0</strong><small data-size-detail-unit>units</small></div>
+            <div><span>Available in factory</span><strong data-size-detail-available>0</strong></div>
             <div><span>Dispatched today</span><strong data-size-detail-day>0</strong></div>
-            <div><span>This month</span><strong data-size-detail-month>0</strong></div>
-            <div><span>This year</span><strong data-size-detail-year>0</strong></div>
+            <div><span>Stock with sales reps</span><strong data-size-detail-rep-stock>0</strong></div>
           </div>
         </article>
       </section>
@@ -1304,6 +1299,13 @@ function renderCeoDashboard(state) {
 
       ${renderCorrectionApprovals(state)}
 
+      <div class="ceo-dashboard-layout">
+        <section class="panel ceo-chart-panel">
+          ${panelHeader("Sales trend", "Last 7 days")}
+          ${renderCeoSalesChart(trend)}
+        </section>
+      </div>
+
       <section class="panel ceo-product-stock-panel">
         ${panelHeader("Products", "Select chips, kuli kuli, or another product to view its sizes and affiliated stock")}
         ${renderCeoProductStock(state)}
@@ -1313,13 +1315,6 @@ function renderCeoDashboard(state) {
         ${panelHeader("Today's factory stock", "Added stock and dispatched products are recorded against each product")}
         ${renderDailyStockMovementTable(state)}
       </section>
-
-      <div class="ceo-dashboard-layout">
-        <section class="panel ceo-chart-panel">
-          ${panelHeader("Sales trend", "Last 7 days")}
-          ${renderCeoSalesChart(trend)}
-        </section>
-      </div>
 
       <section class="panel">
         ${panelHeader("Stock split", "Where finished stock currently sits")}
@@ -2183,18 +2178,79 @@ function renderRepProductCatalogue(products) {
     return '<div class="empty-state">No visible products yet</div>';
   }
 
+  const families = new Map();
+  catalogue.forEach((product) => {
+    const family = productFamilyLabel(product);
+    const familyProducts = families.get(family) || [];
+    familyProducts.push(product);
+    families.set(family, familyProducts);
+  });
+
   return `
-    <div class="rep-catalogue-grid">
-      ${catalogue.map((product) => `
-        <article class="rep-catalogue-card" data-search-index="${escapeHtml(`${product.name} ${product.category}`.toLowerCase())}">
-          <div class="product-media">${renderRepProductImage(product)}</div>
+    <div class="ceo-product-family-grid rep-product-family-grid">
+      ${[...families.entries()].map(([family, familyProducts]) => {
+        const types = [...new Set(familyProducts.map((product) => productTypeLabel(product)))].sort();
+        return `
+          <article class="ceo-product-family-card rep-product-family-card" data-search-index="${escapeHtml(`${family} ${types.join(" ")}`.toLowerCase())}">
+            <button class="ceo-product-family-trigger js-toggle-rep-product-types" type="button" data-rep-product-family="${escapeHtml(family)}" aria-expanded="false">
+              <span class="eyebrow">Product</span>
+              <strong>${escapeHtml(family)}</strong>
+              <span>${formatNumber(types.length)} type${types.length === 1 ? "" : "s"} · ${formatNumber(familyProducts.length)} size${familyProducts.length === 1 ? "" : "s"}</span>
+            </button>
+            <div class="ceo-product-type-dropdown" data-rep-product-type-dropdown="${escapeHtml(family)}" hidden>
+              ${types.map((type) => `
+                <button class="js-open-rep-product-sizes" type="button" data-rep-product-family="${escapeHtml(family)}" data-rep-product-type="${escapeHtml(type)}">
+                  <span>${escapeHtml(type)}</span>${icon("arrowRight")}
+                </button>
+              `).join("")}
+            </div>
+          </article>
+        `;
+      }).join("")}
+    </div>
+    <div id="rep-product-size-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal ceo-product-size-modal rep-product-size-modal" role="dialog" aria-modal="true" aria-labelledby="rep-product-size-title">
+        <header class="stock-modal-header">
           <div>
-            <span class="eyebrow">${escapeHtml(product.id)}</span>
-            <strong>${escapeHtml(product.name)}</strong>
-            <span>${escapeHtml(product.category)} - ${formatCurrency(product.unitPrice || 0)} / ${escapeHtml(repProductUnit(product))}</span>
+            <span class="eyebrow">Product catalogue</span>
+            <h2 id="rep-product-size-title">Product sizes</h2>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close product sizes", className: "js-close-rep-product-sizes" })}
+        </header>
+        <div class="ceo-size-picture-grid rep-size-picture-grid">
+          ${catalogue.map((product) => `
+            <button
+              class="ceo-size-picture-card js-select-rep-product-size"
+              type="button"
+              data-rep-size-family="${escapeHtml(productFamilyLabel(product))}"
+              data-rep-size-type="${escapeHtml(productTypeLabel(product))}"
+              data-rep-size-name="${escapeHtml(product.name)}"
+              data-rep-size-label="${escapeHtml(productSizeLabel(product))}"
+              data-rep-size-sku="${escapeHtml(product.id)}"
+              data-rep-size-price="${escapeHtml(product.unitPrice || 0)}"
+              data-rep-size-unit="${escapeHtml(repProductUnit(product))}"
+              hidden
+            >
+              <span class="ceo-size-picture">${renderRepProductImage(product)}</span>
+              <span>
+                <strong>${escapeHtml(productSizeLabel(product))}</strong>
+                <small>${formatCurrency(product.unitPrice || 0)} · ${escapeHtml(product.id)}</small>
+              </span>
+            </button>
+          `).join("")}
+        </div>
+        <article class="selected-size-stock-card rep-selected-product-detail" data-rep-selected-size-detail hidden aria-live="polite">
+          <div>
+            <span class="eyebrow" data-rep-size-detail-type>Product type</span>
+            <strong data-rep-size-detail-name>Product size</strong>
+            <small data-rep-size-detail-sku>SKU</small>
+          </div>
+          <div class="selected-size-stock-metrics rep-catalogue-size-metrics">
+            <div><span>Selling price</span><strong data-rep-size-detail-price>${formatCurrency(0)}</strong></div>
+            <div><span>Unit</span><strong data-rep-size-detail-unit>Unit</strong></div>
           </div>
         </article>
-      `).join("")}
+      </section>
     </div>
   `;
 }
@@ -3080,10 +3136,8 @@ function bindCeoDashboard({ root, store }) {
       setText("[data-size-detail-name]", button.dataset.sizeName || "Product size");
       setText("[data-size-detail-sku]", button.dataset.sizeSku || "SKU");
       setText("[data-size-detail-available]", formatNumber(button.dataset.sizeAvailable || 0));
-      setText("[data-size-detail-unit]", button.dataset.sizeUnit || "units");
       setText("[data-size-detail-day]", formatNumber(button.dataset.sizeDispatchDay || 0));
-      setText("[data-size-detail-month]", formatNumber(button.dataset.sizeDispatchMonth || 0));
-      setText("[data-size-detail-year]", formatNumber(button.dataset.sizeDispatchYear || 0));
+      setText("[data-size-detail-rep-stock]", formatNumber(button.dataset.sizeRepStock || 0));
       selectedSizeDetail.hidden = false;
     });
   });
@@ -3216,6 +3270,63 @@ function bindSalesRepDashboard({ root, store }) {
   const correctionModal = qs("#record-correction-modal", root);
   const correctionForm = qs("#record-correction-form", root);
   const correctionMessage = qs("#record-correction-message", root);
+  const productSizeModal = qs("#rep-product-size-modal", root);
+  const productSizeTitle = qs("#rep-product-size-title", root);
+  const selectedProductDetail = qs("[data-rep-selected-size-detail]", root);
+
+  function closeRepProductSizes() {
+    if (productSizeModal) productSizeModal.hidden = true;
+  }
+
+  qsa(".js-toggle-rep-product-types", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const family = button.dataset.repProductFamily || "";
+      const dropdown = qsa("[data-rep-product-type-dropdown]", root)
+        .find((item) => item.dataset.repProductTypeDropdown === family);
+      const willOpen = Boolean(dropdown?.hidden);
+      qsa("[data-rep-product-type-dropdown]", root).forEach((item) => { item.hidden = true; });
+      qsa(".js-toggle-rep-product-types", root).forEach((item) => item.setAttribute("aria-expanded", "false"));
+      if (dropdown && willOpen) {
+        dropdown.hidden = false;
+        button.setAttribute("aria-expanded", "true");
+      }
+    });
+  });
+
+  qsa(".js-open-rep-product-sizes", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!productSizeModal) return;
+      const family = button.dataset.repProductFamily || "";
+      const type = button.dataset.repProductType || "";
+      qsa("[data-rep-size-family]", productSizeModal).forEach((card) => {
+        card.hidden = card.dataset.repSizeFamily !== family || card.dataset.repSizeType !== type;
+      });
+      if (productSizeTitle) productSizeTitle.textContent = `${family} · ${type}`;
+      if (selectedProductDetail) selectedProductDetail.hidden = true;
+      productSizeModal.hidden = false;
+    });
+  });
+
+  qsa(".js-select-rep-product-size", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!selectedProductDetail) return;
+      const setText = (selector, value) => {
+        const target = qs(selector, selectedProductDetail);
+        if (target) target.textContent = value;
+      };
+      setText("[data-rep-size-detail-type]", `${button.dataset.repSizeType} · ${button.dataset.repSizeLabel}`);
+      setText("[data-rep-size-detail-name]", button.dataset.repSizeName || "Product size");
+      setText("[data-rep-size-detail-sku]", button.dataset.repSizeSku || "SKU");
+      setText("[data-rep-size-detail-price]", formatCurrency(button.dataset.repSizePrice || 0));
+      setText("[data-rep-size-detail-unit]", button.dataset.repSizeUnit || "Unit");
+      selectedProductDetail.hidden = false;
+    });
+  });
+
+  qsa(".js-close-rep-product-sizes", root).forEach((button) => button.addEventListener("click", closeRepProductSizes));
+  productSizeModal?.addEventListener("click", (event) => {
+    if (event.target === productSizeModal) closeRepProductSizes();
+  });
 
   qsa(".js-open-rep-record-correction", root).forEach((button) => {
     button.addEventListener("click", () => {
@@ -3427,6 +3538,7 @@ function bindSalesRepDashboard({ root, store }) {
     }
 
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+    const invoiceIdsBeforeSave = new Set((state.invoices || []).map((invoice) => invoice.id));
     store.dispatch({
       type: "LOG_REP_TRANSACTION",
       assignmentIds: selectedAssignments.map((assignment) => assignment.id),
@@ -3444,6 +3556,17 @@ function bindSalesRepDashboard({ root, store }) {
       offline: transactionType === "sale" && offline,
       message: transactionType === "return" ? "Customer return saved" : offline ? "Sale saved offline" : "Sale saved"
     });
+
+    if (transactionType === "sale") {
+      const recordedState = store.getState();
+      const invoice = (recordedState.invoices || []).find((item) => !invoiceIdsBeforeSave.has(item.id));
+      if (invoice) {
+        openInvoiceQuickView(invoice, recordedState, {
+          downloadLabel: "Save invoice",
+          downloadIconName: "save"
+        });
+      }
+    }
   }
 
   saleForm?.addEventListener("submit", (event) => {

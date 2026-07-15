@@ -265,6 +265,12 @@ function ensureStateShape(value) {
 function getPersistableState(state) {
   return {
     ...state,
+    products: (state.products || []).map((product) => ({
+      ...product,
+      imageUrl: product.imageStorageKey && String(product.imageUrl || "").startsWith("data:image/")
+        ? ""
+        : product.imageUrl || ""
+    })),
     accounts: (state.accounts || []).map(({ temporaryPassword: _temporaryPassword, ...account }) => account),
     invites: (state.invites || []).map(({ temporaryPassword: _temporaryPassword, ...invite }) => invite),
     backend: clone(seedData.backend),
@@ -640,35 +646,56 @@ function findRetailerByName(state, name) {
 }
 
 function createDispatchSalesOrder(state, {
-  transactionId,
-  product,
-  quantity,
+  dispatchId,
+  transactionIds,
+  items,
   recipientName,
   recipientType,
   destination,
   dispatchDate,
   expectedDeliveryAt,
+  paymentType,
   staffName,
   repUserId = ""
 }) {
   const customer = findRetailerByName(state, recipientName);
   const dispatchesToRepresentative = String(recipientType || "").toLowerCase().includes("representative");
   const orderId = createId("ORD");
+  const invoiceId = nextInvoiceId(state);
+  const isCredit = String(paymentType || "").toLowerCase().includes("credit");
+  const creditLimit = (state.creditLimits || []).find((limit) => (
+    normalized(limit.partyName) === normalized(customer?.name || recipientName)
+  ));
+  const dueDate = new Date(`${dispatchDate}T12:00:00`);
+  dueDate.setDate(dueDate.getDate() + Number(creditLimit?.paymentPeriodDays ?? 14));
+  const dueAt = isCredit ? dueDate.toISOString().slice(0, 10) : dispatchDate;
+  const amount = items.reduce((total, item) => total + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0);
+  const invoiceItems = items.map((item) => ({
+    productId: item.product.id,
+    productName: item.product.name,
+    quantity: item.quantity,
+    unitPrice: Number(item.unitPrice || 0),
+    unitCost: Number(item.product.unitCost || 0)
+  }));
 
   state.orders = [
     {
       id: orderId,
       clientId: state.client?.id || "",
       source: "factory_dispatch",
-      transactionId,
+      dispatchId,
+      transactionId: transactionIds[0] || "",
+      transactionIds,
+      invoiceId,
       retailerId: customer?.id || "",
       customerName: customer?.name || recipientName || "Customer",
       customerType: customer?.channel || recipientType || "Customer",
       region: customer?.stateName || customer?.region || destination || "Direct dispatch",
       priority: "Normal",
       status: "in_transit",
-      paymentType: "pending",
-      paymentStatus: "pending",
+      paymentType,
+      paymentStatus: isCredit ? "open" : "paid",
+      creditApplied: isCredit,
       dueAt: expectedDeliveryAt || dispatchDate,
       expectedDeliveryAt: expectedDeliveryAt || dispatchDate,
       originalExpectedDeliveryAt: expectedDeliveryAt || dispatchDate,
@@ -676,20 +703,38 @@ function createDispatchSalesOrder(state, {
       updatedAt: dispatchDate,
       repName: dispatchesToRepresentative ? recipientName : staffName,
       repUserId: dispatchesToRepresentative ? repUserId : state.user?.id || "",
-      items: [
-        {
-          productId: product.id,
-          productName: product.name,
-          quantity,
-          unitPrice: Number(product.unitPrice || 0),
-          unitCost: Number(product.unitCost || 0)
-        }
-      ]
+      items: invoiceItems
     },
     ...(state.orders || [])
   ];
 
-  return orderId;
+  state.invoices = [
+    {
+      id: invoiceId,
+      clientId: state.client?.id || "",
+      orderId,
+      dispatchId,
+      transactionId: transactionIds[0] || "",
+      transactionIds,
+      retailerId: customer?.id || "",
+      customerName: customer?.name || recipientName || "Customer",
+      customerAddress: customer?.address || destination || "",
+      customerPhone: customer?.contactPhone || "",
+      issuedAt: dispatchDate,
+      dueAt,
+      amount,
+      status: isCredit ? "open" : "paid",
+      paymentType,
+      repName: dispatchesToRepresentative ? recipientName : staffName,
+      repUserId: dispatchesToRepresentative ? repUserId : state.user?.id || "",
+      items: invoiceItems
+    },
+    ...(state.invoices || [])
+  ];
+
+  if (isCredit) updateCreditBalance(state, customer?.name || recipientName, amount);
+
+  return { orderId, invoiceId };
 }
 
 function workspaceBaseState(currentState, clientId) {
@@ -1840,6 +1885,8 @@ function reducer(currentState, action) {
         productFamily: String(action.productFamily ?? existingProduct?.productFamily ?? "").trim(),
         productType: String(action.productType ?? existingProduct?.productType ?? "").trim(),
         size: String(action.size ?? existingProduct?.size ?? "").trim(),
+        sizeValue: String(action.sizeValue ?? existingProduct?.sizeValue ?? "").trim(),
+        sizeUnit: String(action.sizeUnit ?? existingProduct?.sizeUnit ?? "").trim(),
         category: categoryNameForStockCategory(stockCategory),
         stockCategory,
         unit: String(action.unit || existingProduct?.unit || "unit").trim(),
@@ -1851,6 +1898,7 @@ function reducer(currentState, action) {
         unitCost: Math.max(0, Number(action.unitCost ?? existingProduct?.unitCost ?? 0)),
         unitPrice: Math.max(0, Number(action.unitPrice ?? existingProduct?.unitPrice ?? 0)),
         imageUrl: String(action.imageUrl ?? existingProduct?.imageUrl ?? "").trim(),
+        imageStorageKey: String(action.imageStorageKey ?? existingProduct?.imageStorageKey ?? "").trim(),
         status,
         soldOutAt: Math.max(0, Number(action.stock ?? existingProduct?.stock ?? 0)) > 0 ? "" : (existingProduct?.soldOutAt || ""),
         equipmentStatus: stockCategory === "equipment" ? (existingProduct?.equipmentStatus || "in_stock") : undefined,
@@ -1876,6 +1924,40 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "HYDRATE_PRODUCT_IMAGES": {
+      const imagesByProductId = new Map((action.images || []).map((image) => [image.productId, image]));
+      state.products.forEach((product) => {
+        const image = imagesByProductId.get(product.id);
+        if (!image) return;
+        product.imageUrl = String(image.imageUrl || product.imageUrl || "");
+        product.imageStorageKey = String(image.imageStorageKey || product.imageStorageKey || "");
+      });
+      return state;
+    }
+
+    case "DELETE_PRODUCTS": {
+      if (currentUserRole(state) !== "ceo") return state;
+
+      const requestedIds = new Set((action.productIds || []).map((id) => String(id || "").trim()).filter(Boolean));
+      const deletedProducts = state.products.filter((product) => requestedIds.has(product.id));
+      if (!deletedProducts.length) return state;
+
+      deletedProducts.forEach((product) => {
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "deleted",
+          recordType: "inventory",
+          recordLabel: product.id,
+          summary: `Deleted stock record for ${product.name}`,
+          details: `${product.id} · ${Number(product.stock || 0)} ${product.unit || "units"} removed from current stock`
+        });
+      });
+
+      state.products = state.products.filter((product) => !requestedIds.has(product.id));
+      state.stockAssignments = (state.stockAssignments || []).filter((assignment) => !requestedIds.has(assignment.productId));
+      return state;
+    }
+
     case "TOGGLE_PRODUCT_STATUS": {
       const product = state.products.find((item) => item.id === action.productId);
       if (product) {
@@ -1895,40 +1977,59 @@ function reducer(currentState, action) {
     case "RECORD_STOCK_DISPATCH": {
       if (!["ceo", "store_keeper"].includes(currentUserRole(state))) return state;
 
-      const product = state.products.find((item) => item.id === action.productId);
-      const quantity = Number(action.quantity || 0);
       const recipientType = String(action.recipientType || "Recipient").trim();
       const recipientName = String(action.recipientName || "Recipient").trim();
       const normalizedRecipientType = recipientType.toLowerCase();
       const isInternalDispatch = normalizedRecipientType.includes("internal");
       const isRepresentativeDispatch = normalizedRecipientType.includes("representative");
+      const paymentType = isInternalDispatch ? "none" : normalized(action.paymentType || "cash");
       const destination = String(action.destination || recipientType).trim();
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
       const dispatchDate = dateOnly(action.dispatchDate) || todayISO();
       const expectedDeliveryAt = dateOnly(action.expectedDeliveryAt) || dispatchDate;
-      const transactionId = createId("TXN");
+      const dispatchId = createId("DSP");
       const representativeAccount = isRepresentativeDispatch
         ? (state.accounts || []).find((account) => (
             normalized(account.name) === normalized(recipientName) &&
             ["sales_rep", "sales representative"].includes(normalized(account.role).replaceAll("-", "_"))
           ))
         : null;
+      const requestedItems = Array.isArray(action.items) && action.items.length
+        ? action.items
+        : [{ productId: action.productId, quantity: action.quantity }];
+      const dispatchItems = requestedItems.map((item) => {
+        const product = state.products.find((candidate) => candidate.id === item.productId);
+        return {
+          product,
+          quantity: Number(item.quantity || 0),
+          unitPrice: Number(product?.unitPrice || 0),
+          transactionId: createId("TXN")
+        };
+      });
+      const productIds = dispatchItems.map((item) => item.product?.id).filter(Boolean);
+      const hasDuplicateProducts = new Set(productIds).size !== productIds.length;
       let orderId = "";
+      let invoiceId = "";
 
       if (
-        !product ||
-        product.status === "inactive" ||
-        !Number.isFinite(quantity) ||
-        quantity <= 0 ||
-        !Number.isFinite(Number(product.stock)) ||
-        Number(product.stock || 0) < quantity ||
+        !dispatchItems.length ||
+        hasDuplicateProducts ||
+        dispatchItems.some(({ product, quantity }) => (
+          !product ||
+          product.status === "inactive" ||
+          !Number.isFinite(quantity) ||
+          quantity <= 0 ||
+          !Number.isFinite(Number(product.stock)) ||
+          Number(product.stock || 0) < quantity ||
+          (isRepresentativeDispatch && stockCategoryIdForProduct(product) !== "finished_products")
+        )) ||
         !isValidISODate(dispatchDate) ||
         (!isInternalDispatch && !isValidISODate(expectedDeliveryAt)) ||
         (!isInternalDispatch && expectedDeliveryAt < dispatchDate) ||
+        (!isInternalDispatch && !["cash", "credit"].includes(paymentType)) ||
         !recipientName ||
-        !destination ||
-        (isRepresentativeDispatch && stockCategoryIdForProduct(product) !== "finished_products")
+        !destination
       ) {
         return state;
       }
@@ -1937,60 +2038,67 @@ function reducer(currentState, action) {
         return state;
       }
 
-      product.stock = Math.max(0, Number(product.stock || 0) - quantity);
-      product.updatedAt = dispatchDate;
-      product.soldOutAt = product.stock <= 0 ? dispatchDate : "";
-
-      if (isRepresentativeDispatch) {
-        state.stockAssignments = [
-          {
-            id: createId("ASN"),
-            routeId: routeId || destination || "Factory dispatch",
-            repName: recipientName,
-            repUserId: representativeAccount?.userId || "",
-            repMembershipId: representativeAccount?.id || "",
-            productId: product.id,
-            assignedAt: dispatchDate,
-            transactionId,
-            assigned: quantity,
-            sold: 0,
-            returned: 0,
-            status: "open",
-            varianceFlagged: false,
-            varianceNote: ""
-          },
-          ...state.stockAssignments
-        ];
-      }
-
       if (!isInternalDispatch) {
-        orderId = createDispatchSalesOrder(state, {
-          transactionId,
-          product,
-          quantity,
+        const dispatchRecords = createDispatchSalesOrder(state, {
+          dispatchId,
+          transactionIds: dispatchItems.map((item) => item.transactionId),
+          items: dispatchItems,
           recipientName,
           recipientType,
           destination,
           dispatchDate,
           expectedDeliveryAt,
+          paymentType,
           staffName,
           repUserId: representativeAccount?.userId || ""
         });
+        orderId = dispatchRecords.orderId;
+        invoiceId = dispatchRecords.invoiceId;
       }
 
-      state.stockTransactions = [
-        {
+      const transactions = dispatchItems.map(({ product, quantity, unitPrice, transactionId }) => {
+        product.stock = Math.max(0, Number(product.stock || 0) - quantity);
+        product.updatedAt = dispatchDate;
+        product.soldOutAt = product.stock <= 0 ? dispatchDate : "";
+
+        if (isRepresentativeDispatch) {
+          state.stockAssignments = [
+            {
+              id: createId("ASN"),
+              dispatchId,
+              routeId: routeId || destination || "Factory dispatch",
+              repName: recipientName,
+              repUserId: representativeAccount?.userId || "",
+              repMembershipId: representativeAccount?.id || "",
+              productId: product.id,
+              assignedAt: dispatchDate,
+              transactionId,
+              invoiceId,
+              paymentType,
+              assigned: quantity,
+              sold: 0,
+              returned: 0,
+              status: "open",
+              varianceFlagged: false,
+              varianceNote: ""
+            },
+            ...state.stockAssignments
+          ];
+        }
+
+        return {
           id: transactionId,
+          dispatchId,
           clientId: state.client?.id || "",
           type: isInternalDispatch ? "internal movement" : "supply",
           productId: product.id,
           productName: product.name,
           quantity,
           unit: product.unit || "unit",
-          amount: quantity * Number(product.unitPrice || 0),
-          unitPrice: Number(product.unitPrice || 0),
+          amount: quantity * unitPrice,
+          unitPrice,
           unitCost: Number(product.unitCost || 0),
-          paymentType: "none",
+          paymentType,
           partyType: recipientType,
           partyName: recipientName,
           recipientName,
@@ -2000,20 +2108,23 @@ function reducer(currentState, action) {
           recordedBy: staffName,
           recordedByUserId: state.user?.id || "",
           movementDirection: "out",
-          creditImpact: 0,
+          creditImpact: paymentType === "credit" ? quantity * unitPrice : 0,
           orderId,
+          invoiceId,
           expectedDeliveryAt: isInternalDispatch ? "" : expectedDeliveryAt,
           soldOutAfterDispatch: product.stock <= 0
-        },
-        ...(state.stockTransactions || [])
-      ];
+        };
+      });
+
+      state.stockTransactions = [...transactions, ...(state.stockTransactions || [])];
 
       appendActivityLog(state, {
         clientId: state.client?.id,
         actionType: "dispatched",
         recordType: "stock_movement",
-        recordLabel: product.id,
-        summary: `Dispatched ${quantity} ${product.name} to ${recipientName}`
+        recordLabel: dispatchId,
+        summary: `Dispatched ${dispatchItems.length} product${dispatchItems.length === 1 ? "" : "s"} to ${recipientName}`,
+        details: dispatchItems.map(({ product, quantity }) => `${quantity} ${product.name}`).join(", ")
       });
 
       if (orderId) {
@@ -2023,6 +2134,13 @@ function reducer(currentState, action) {
           recordType: "order",
           recordLabel: orderId,
           summary: `${orderId} created from factory dispatch to ${recipientName}`
+        });
+        appendActivityLog(state, {
+          clientId: state.client?.id,
+          actionType: "created",
+          recordType: "invoice",
+          recordLabel: invoiceId,
+          summary: `${invoiceId} created for ${recipientName} (${paymentType})`
         });
       }
 
@@ -2115,6 +2233,19 @@ function reducer(currentState, action) {
           const order = (state.orders || []).find((item) => item.id === transaction.orderId);
           const orderItem = order?.items?.find((item) => item.productId === transaction.productId);
           if (orderItem) orderItem.quantity = nextQuantity;
+          const invoice = (state.invoices || []).find((item) => (
+            item.id === transaction.invoiceId ||
+            item.orderId === transaction.orderId ||
+            (item.transactionIds || []).includes(transaction.id)
+          ));
+          const invoiceItem = invoice?.items?.find((item) => item.productId === transaction.productId);
+          if (invoiceItem) invoiceItem.quantity = nextQuantity;
+          if (invoice) invoice.amount = invoice.items.reduce((total, item) => (
+            total + Number(item.quantity || 0) * Number(item.unitPrice || 0)
+          ), 0);
+          if (String(transaction.paymentType || "").toLowerCase().includes("credit")) {
+            updateCreditBalance(state, transaction.partyName, delta * Number(transaction.unitPrice || product.unitPrice || 0));
+          }
           applied = true;
         }
       }
@@ -2583,6 +2714,7 @@ function reducer(currentState, action) {
         id: retailerId || createId("RTL"),
         name: nextName,
         city: String(action.city ?? existingRetailer?.city ?? "").trim(),
+        lga: String(action.lga ?? existingRetailer?.lga ?? "").trim(),
         region: stateName,
         stateName,
         address: String(action.address ?? existingRetailer?.address ?? "").trim(),

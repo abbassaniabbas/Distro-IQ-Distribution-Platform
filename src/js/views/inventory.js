@@ -16,6 +16,8 @@ import {
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
+import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
+import { removeProductImage, saveProductImage } from "../services/product-images.js";
 import { printTabularReport } from "../services/report-export.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
@@ -27,6 +29,50 @@ const DISPATCH_PAGE_SIZE = 10;
 const MOVEMENT_PAGE_SIZE = 10;
 const FINISHED_PRODUCTS_CATEGORY = "finished_products";
 const RAW_MATERIALS_CATEGORY = "raw_materials";
+const PRODUCT_SIZE_UNITS = [
+  { value: "g", label: "g" },
+  { value: "kg", label: "kg" },
+  { value: "mg", label: "mg" },
+  { value: "ml", label: "ml" },
+  { value: "other", label: "Other" }
+];
+const stockEntrySession = {
+  open: false,
+  family: "",
+  productIds: [],
+  adding: false,
+  editingProductId: "",
+  draft: {},
+  imageUrl: "",
+  defaults: {}
+};
+
+function renderProductSizeUnitOptions(selected = "g") {
+  return PRODUCT_SIZE_UNITS.map((unit) => `
+    <option value="${unit.value}" ${unit.value === selected ? "selected" : ""}>${unit.label}</option>
+  `).join("");
+}
+
+function normalizeProductSizeUnit(value) {
+  return String(value || "").trim().replace(/\s+/g, "");
+}
+
+function formatProductSize(value, unit) {
+  const numericValue = String(value || "").trim();
+  const normalizedUnit = normalizeProductSizeUnit(unit);
+  return numericValue && normalizedUnit ? `${numericValue}${normalizedUnit}` : "";
+}
+
+function splitProductSize(value, fallbackUnit = "g") {
+  const match = String(value || "").trim().match(/^(\d+(?:\.\d+)?)\s*([^\d\s]+)$/);
+  const unit = normalizeProductSizeUnit(match?.[2] || fallbackUnit) || "g";
+  const standardUnit = PRODUCT_SIZE_UNITS.some((option) => option.value === unit) ? unit : "other";
+  return {
+    value: match?.[1] || "",
+    unit: standardUnit,
+    customUnit: standardUnit === "other" ? unit : ""
+  };
+}
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -320,12 +366,12 @@ function renderStockProductModal(state, permissions) {
   ));
 
   return `
-    <div id="stock-product-modal" class="stock-modal-backdrop" hidden>
+    <div id="stock-product-modal" class="stock-modal-backdrop" ${stockEntrySession.open ? "" : "hidden"}>
       <section class="stock-modal" role="dialog" aria-modal="true" aria-labelledby="stock-product-modal-title">
         <header class="stock-modal-header">
           <div>
             <span class="eyebrow">Stock record</span>
-            <h2 id="stock-product-modal-title">Add stock</h2>
+            <h2 id="stock-product-modal-title">${stockEntrySession.editingProductId ? "Update stock" : "Add stock"}</h2>
           </div>
           ${textButton({
             iconName: "x",
@@ -335,80 +381,36 @@ function renderStockProductModal(state, permissions) {
         </header>
       <form id="manager-product-form" class="manager-form-grid" novalidate>
         <input type="hidden" name="productId">
+        <section class="span-full affiliated-product-progress" data-affiliated-product-progress hidden aria-live="polite">
+          <header>
+            <div>
+              <span class="affiliated-product-success">${icon("check")}<strong>Product added successfully</strong></span>
+              <small>Add another type or size under the same product when needed.</small>
+            </div>
+            ${iconButton({ iconName: "plus", label: "Add affiliated product", className: "js-add-affiliated-product" })}
+          </header>
+          <div class="affiliated-product-list" data-affiliated-product-list></div>
+        </section>
+        <div class="stock-entry-fields span-full manager-form-grid" data-stock-entry-fields>
         <label class="field">
           <span>Product name</span>
-          <input name="name" placeholder="Plantain Chips 50g" required>
+          <input name="name" placeholder="Plantain Chips" required>
         </label>
         <label class="field">
           <span>Product type</span>
-          <input name="productType" placeholder="Plantain, spicy, classic" required>
+          <input name="productType" placeholder="Original, pouch, spicy" required>
         </label>
-        <label class="field">
+        <div class="field">
           <span>Product size</span>
-          <input name="size" placeholder="50g, 100g, family pack">
-        </label>
-        <section class="span-full product-size-builder" data-multi-size-section>
-          <div class="production-stock-update-heading">
-            <div>
-              <span class="eyebrow">More sizes</span>
-              <strong>Add every size of this product together</strong>
-              <p>Each size receives its own SKU and factory quantity.</p>
-            </div>
-            <button class="button" type="button" data-add-product-size>${icon("plus")}<span>Add another size</span></button>
+          <div class="product-size-control">
+            <input name="sizeValue" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="150" aria-label="Product size value" required>
+            <select name="sizeUnit" aria-label="Product size unit" required>
+              ${renderProductSizeUnitOptions()}
+            </select>
+            <input name="sizeUnitOther" maxlength="12" placeholder="Custom unit" aria-label="Custom product size unit" hidden>
           </div>
-          <div class="additional-product-size-list" data-additional-size-list></div>
-          <template data-additional-size-template>
-            <div class="additional-product-size-row" data-additional-size-row>
-              <label class="field">
-                <span>Product type</span>
-                <input name="variantProductType" placeholder="Plantain, spicy, classic" required>
-              </label>
-              <label class="field">
-                <span>Product size</span>
-                <input name="variantSize" placeholder="100g" required>
-              </label>
-              <label class="field">
-                <span>SKU</span>
-                <input name="variantSku" data-variant-sku readonly required>
-              </label>
-              <label class="field">
-                <span>Category</span>
-                <select name="variantStockCategory" required>
-                  ${state.stockCategories.map((category) => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join("")}
-                </select>
-              </label>
-              <label class="field">
-                <span>Unit</span>
-                <input name="variantUnit" placeholder="pack, carton, kg" required>
-              </label>
-              <label class="field">
-                <span>Factory stock</span>
-                <input name="variantStock" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
-              </label>
-              <label class="field">
-                <span>Reorder point</span>
-                <input name="variantReorderPoint" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
-              </label>
-              <label class="field">
-                <span>Cost price (${escapeHtml(moneySymbol)})</span>
-                <input name="variantUnitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
-              </label>
-              <label class="field">
-                <span>Selling price (${escapeHtml(moneySymbol)})</span>
-                <input name="variantUnitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
-              </label>
-              <label class="field">
-                <span>Catalogue status</span>
-                <select name="variantStatus" required>
-                  <option value="active">Visible</option>
-                  <option value="inactive">Hidden</option>
-                </select>
-              </label>
-              <div class="additional-size-remove">${iconButton({ iconName: "x", label: "Remove size and type", className: "js-remove-product-size" })}</div>
-            </div>
-          </template>
-        </section>
-        <label class="field">
+        </div>
+        <label class="field stock-sku-field">
           <span>SKU</span>
           <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products, state.client?.skuFormat))}" readonly required>
         </label>
@@ -419,10 +421,6 @@ function renderStockProductModal(state, permissions) {
               <option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>
             `).join("")}
           </select>
-        </label>
-        <label class="field">
-          <span>Unit</span>
-          <input name="unit" placeholder="pack, carton, kg" required>
         </label>
         <label class="field">
           <span>Factory stock</span>
@@ -505,7 +503,7 @@ function renderStockProductModal(state, permissions) {
           ${textButton({
             iconName: "check",
             label: "Save stock",
-            className: "primary",
+            className: "primary js-save-stock-entry",
             type: "submit"
           })}
           ${textButton({
@@ -515,6 +513,7 @@ function renderStockProductModal(state, permissions) {
           })}
         </div>
         <span id="manager-product-message" class="field-error span-full" aria-live="polite"></span>
+        </div>
       </form>
       </section>
     </div>
@@ -681,7 +680,7 @@ function renderProductCard(product, state, permissions) {
 
       <div class="stock-line">
         <div class="stock-meta">
-          <span>${formatNumber(product.stock)} ${escapeHtml(productUnit(product))}</span>
+          <span>${formatNumber(product.stock)} available</span>
           <span>${health.daysCover} days cover</span>
         </div>
         ${progressBar(health.percent, health.tone)}
@@ -780,6 +779,11 @@ function renderProductListRow(product, state, permissions) {
       data-stock-category="${escapeHtml(stockCategory)}"
       data-search-index="${escapeHtml(searchIndex)}"
     >
+      ${canManageProducts ? `
+        <td class="stock-select-cell">
+          <input class="js-select-stock" type="checkbox" value="${escapeHtml(product.id)}" aria-label="Select ${escapeHtml(product.name)} (${escapeHtml(product.id)})">
+        </td>
+      ` : ""}
       <td>
         <div class="stock-health-item">
           <div class="product-media">${renderProductImage(product)}</div>
@@ -789,10 +793,10 @@ function renderProductListRow(product, state, permissions) {
           </div>
         </div>
       </td>
-      <td><strong>${escapeHtml(product.category)}</strong><div class="muted">${escapeHtml(productUnit(product))}</div></td>
+      <td><strong>${escapeHtml(product.category)}</strong></td>
       <td>${escapeHtml(product.productType || "Standard")}</td>
       <td>${escapeHtml(product.size || "Standard")}</td>
-      <td><div class="stock-health-quantity"><strong>${formatNumber(product.stock)} ${escapeHtml(productUnit(product))}</strong><span>${formatNumber(product.reorderPoint)} reorder point</span></div></td>
+      <td><div class="stock-health-quantity"><strong>${formatNumber(product.stock)}</strong><span>${formatNumber(product.reorderPoint)} reorder point</span></div></td>
       <td>
         <div class="stock-health-progress">
           <div>
@@ -807,6 +811,7 @@ function renderProductListRow(product, state, permissions) {
         <div class="row-actions stock-list-actions">
           ${canManageProducts ? iconButton({ iconName: "settings", label: "Update stock record", className: "js-edit-product", data: { "product-id": product.id } }) : ""}
           ${canManageProducts ? iconButton({ iconName: product.status === "inactive" ? "check" : "x", label: product.status === "inactive" ? "Show" : "Hide", className: "js-toggle-product-status", data: { "product-id": product.id } }) : ""}
+          ${canManageProducts ? iconButton({ iconName: "trash", label: "Delete stock record", className: "js-delete-product warning-icon", data: { "product-id": product.id } }) : ""}
           ${canRestock ? iconButton({ iconName: "plus", label: "Add stock quantity", className: "stock-action-primary js-restock-product", data: { "product-id": product.id } }) : ""}
           ${canReduceStock ? iconButton({ iconName: "alert", label: "Reduce stock", className: "js-reduce-stock", disabled: Number(product.stock || 0) <= 0, data: { "product-id": product.id } }) : ""}
           ${isRawMaterial && Number(product.stock || 0) > 0 && (canManageProducts || canReduceStock)
@@ -854,7 +859,7 @@ function dispatchRecipientOptions(state, recipientType) {
         .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")))
         .map((retailer) => ({
           value: retailer.name,
-          label: [retailer.name, retailer.city || retailer.stateName || retailer.region].filter(Boolean).join(" - ")
+          label: [retailer.name, retailer.lga || retailer.city || retailer.stateName || retailer.region].filter(Boolean).join(" - ")
         })),
       { value: "__other__", label: "Other customer / supermarket" }
     ];
@@ -898,10 +903,39 @@ function renderDispatchProductOptions(state, recipientType, selectedProductId = 
     '<option value="">Choose stock item</option>',
     ...dispatchableProducts(state, recipientType).map((product) => `
       <option value="${escapeHtml(product.id)}" ${product.id === selectedProductId ? "selected" : ""}>
-        ${escapeHtml(product.name)} (${formatNumber(product.stock)} ${escapeHtml(productUnit(product))})
+        ${escapeHtml(product.name)} (${formatNumber(product.stock)} available)
       </option>
     `)
   ].join("");
+}
+
+function renderDispatchItemRow(state, recipientType, { removable = false } = {}) {
+  return `
+    <div class="dispatch-item-row" data-dispatch-item-row>
+      <label class="field">
+        <span>Product</span>
+        <select name="dispatchProductId" data-dispatch-product-select required>
+          ${renderDispatchProductOptions(state, recipientType)}
+        </select>
+      </label>
+      <label class="field">
+        <span>Quantity</span>
+        <input name="dispatchQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
+      </label>
+      <label class="field">
+        <span>Unit price</span>
+        <input data-dispatch-unit-price value="0" readonly aria-label="Selected product unit price">
+      </label>
+      <div class="dispatch-item-remove">
+        ${iconButton({
+          iconName: "trash",
+          label: "Remove product from dispatch",
+          className: "js-remove-dispatch-item warning-icon",
+          disabled: !removable
+        })}
+      </div>
+    </div>
+  `;
 }
 
 function otherRecipientPlaceholder(recipientType) {
@@ -943,16 +977,25 @@ function renderDispatchForm(state, permissions) {
           </select>
           <input name="recipientNameOther" data-dispatch-recipient-other placeholder="Type recipient name" hidden>
         </label>
-        <label class="field">
-          <span>Item</span>
-          <select name="productId" data-dispatch-product-select required>
-            ${renderDispatchProductOptions(state, "Sales Representative")}
+        <label class="field" data-dispatch-payment-field>
+          <span>Payment method</span>
+          <select name="paymentType" required>
+            <option value="cash">Cash paid on dispatch</option>
+            <option value="credit">Credit</option>
           </select>
         </label>
-        <label class="field">
-          <span>Quantity</span>
-          <input name="quantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
-        </label>
+        <section class="span-full dispatch-items-builder">
+          <header>
+            <strong>Products being dispatched</strong>
+            ${iconButton({ iconName: "plus", label: "Add another product", className: "js-add-dispatch-item" })}
+          </header>
+          <div class="dispatch-item-list" data-dispatch-item-list>
+            ${renderDispatchItemRow(state, "Sales Representative")}
+          </div>
+          <template data-dispatch-item-template>
+            ${renderDispatchItemRow(state, "Sales Representative", { removable: true })}
+          </template>
+        </section>
         <label class="field">
           <span>Destination / drop-off point</span>
           <input name="destination" placeholder="${escapeHtml(destinationPlaceholder("Sales Representative"))}" required>
@@ -1062,9 +1105,9 @@ function renderDispatchPage(state, permissions) {
   return `
     ${renderDispatchForm(state, permissions)}
     <section class="panel inventory-layout">
-      ${panelHeader("Dispatch log", "Item, quantity, dispatch and expected delivery dates, recipient, destination, and staff responsible")}
+      ${panelHeader("Dispatch log", "Item, quantity, payment, delivery, recipient, destination, and staff responsible")}
       ${table(
-        ["Item", "Quantity", "Dispatched", "Expected", "Recipient", "Destination", "Staff", "Adjustment"],
+        ["Item", "Quantity", "Payment / invoice", "Dispatched", "Expected", "Recipient", "Destination", "Staff", "Adjustment"],
         renderDispatchRows(state),
         "No factory dispatches recorded yet"
       )}
@@ -1104,6 +1147,9 @@ function renderDispatchRows(state) {
       transaction.quantity,
       transaction.date,
       transaction.expectedDeliveryAt,
+      transaction.paymentType,
+      transaction.invoiceId,
+      transaction.dispatchId,
       recipient,
       destination,
       staff
@@ -1116,6 +1162,10 @@ function renderDispatchRows(state) {
           <div class="muted">${escapeHtml(transaction.id)}</div>
         </td>
         <td>${formatNumber(transaction.quantity)}</td>
+        <td>
+          ${escapeHtml(statusText(transaction.paymentType || "none"))}
+          <div class="muted">${escapeHtml(transaction.invoiceId || transaction.dispatchId || "Internal movement")}</div>
+        </td>
         <td>${formatDate(transaction.date)}</td>
         <td>${transaction.expectedDeliveryAt ? formatDate(transaction.expectedDeliveryAt) : '<span class="muted">Not set</span>'}</td>
         <td>
@@ -1430,6 +1480,14 @@ function renderStockHealthPage(state, permissions) {
       <div class="toolbar">
         ${panelHeader("Stock health", "Raw materials, finished products, equipment, days remaining, and low-stock warnings")}
         <div class="toolbar-group">
+          ${permissions.canManageProducts
+            ? textButton({
+                iconName: "trash",
+                label: "Delete selected",
+                className: "warning js-delete-selected-stock",
+                disabled: true
+              })
+            : ""}
           ${canAddStock
             ? textButton({
                 iconName: "plus",
@@ -1453,6 +1511,7 @@ function renderStockHealthPage(state, permissions) {
         <table class="data-table stock-health-table">
           <thead>
             <tr>
+              ${permissions.canManageProducts ? '<th class="stock-select-cell"><input class="js-select-all-stock" type="checkbox" aria-label="Select all visible stock records"></th>' : ""}
               <th>Stock item</th>
               <th>Category</th>
               <th>Product type</th>
@@ -1466,7 +1525,7 @@ function renderStockHealthPage(state, permissions) {
           <tbody>
             ${visibleProducts.length
               ? visibleProducts.map((product) => renderProductListRow(product, state, permissions)).join("")
-              : '<tr><td colspan="8"><div class="empty-state">No active stock items available</div></td></tr>'}
+              : `<tr><td colspan="${permissions.canManageProducts ? 9 : 8}"><div class="empty-state">No active stock items available</div></td></tr>`}
           </tbody>
         </table>
       </div>
@@ -1760,6 +1819,8 @@ export function renderInventory({ state }) {
 
 export function bindInventory({ root, store, signal }) {
   const categoryFilter = qs("#inventory-category-filter", root);
+  const selectAllStock = qs(".js-select-all-stock", root);
+  const deleteSelectedStockButton = qs(".js-delete-selected-stock", root);
   const stockModal = qs("#stock-product-modal", root);
   const stockModalTitle = qs("#stock-product-modal-title", root);
   const restockModal = qs("#restock-modal", root);
@@ -1778,9 +1839,13 @@ export function bindInventory({ root, store, signal }) {
   const dispatchForm = qs("#stock-dispatch-form", root);
   const dashboardDispatchModal = qs("#dashboard-dispatch-modal", root);
   const dispatchRecipientType = dispatchForm ? qs('select[name="recipientType"]', dispatchForm) : null;
-  const dispatchProductSelect = dispatchForm ? qs("[data-dispatch-product-select]", dispatchForm) : null;
+  const dispatchItemList = dispatchForm ? qs("[data-dispatch-item-list]", dispatchForm) : null;
+  const dispatchItemTemplate = dispatchForm ? qs("[data-dispatch-item-template]", dispatchForm) : null;
+  const addDispatchItemButton = dispatchForm ? qs(".js-add-dispatch-item", dispatchForm) : null;
   const dispatchRecipientSelect = dispatchForm ? qs("[data-dispatch-recipient-select]", dispatchForm) : null;
   const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
+  const dispatchPaymentField = dispatchForm ? qs("[data-dispatch-payment-field]", dispatchForm) : null;
+  const dispatchPaymentSelect = dispatchForm ? qs('select[name="paymentType"]', dispatchForm) : null;
   const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
   const dispatchDateInput = dispatchForm ? qs('input[name="dispatchDate"]', dispatchForm) : null;
   const expectedDeliveryInput = dispatchForm ? qs('input[name="expectedDeliveryAt"]', dispatchForm) : null;
@@ -1788,7 +1853,8 @@ export function bindInventory({ root, store, signal }) {
   const requestedProductId = routeParams.get("product");
   const requestedStockType = routeParams.get("type");
   const requestedAction = routeParams.get("action");
-  let stockImageDataUrl = "";
+  let stockImageDataUrl = stockEntrySession.imageUrl || "";
+  let stockImageCleared = false;
   const batchMaterialList = qs("[data-batch-material-list]", root);
   const productionStockUpdate = productForm ? qs("[data-production-stock-update]", productForm) : null;
   const rawMaterialSaleModal = qs("#raw-material-sale-modal", root);
@@ -1803,40 +1869,28 @@ export function bindInventory({ root, store, signal }) {
   const correctionModal = qs("#record-correction-modal", root);
   const correctionForm = qs("#record-correction-form", root);
   const correctionMessage = qs("#record-correction-message", root);
-  const multiSizeSection = qs("[data-multi-size-section]", productForm || root);
-  const additionalSizeList = qs("[data-additional-size-list]", productForm || root);
-  const additionalSizeTemplate = qs("[data-additional-size-template]", productForm || root);
+  const affiliatedProductProgress = qs("[data-affiliated-product-progress]", productForm || root);
+  const affiliatedProductList = qs("[data-affiliated-product-list]", productForm || root);
+  const addAffiliatedProductButton = qs(".js-add-affiliated-product", productForm || root);
+  const saveStockEntryButton = qs(".js-save-stock-entry", productForm || root);
+  const stockEntryFields = qs("[data-stock-entry-fields]", productForm || root);
+  const sizeUnitSelect = productForm?.elements.sizeUnit;
+  const customSizeUnitInput = productForm?.elements.sizeUnitOther;
+  let sessionAddedProductIds = [...stockEntrySession.productIds];
+  let activeProductFamily = stockEntrySession.family;
+  let entrySaved = sessionAddedProductIds.length > 0 && !stockEntrySession.adding;
 
-  function bindAdditionalSizeRemoveButtons() {
-    if (!additionalSizeList) return;
-    qsa(".js-remove-product-size", additionalSizeList).forEach((button) => {
-      button.onclick = () => button.closest("[data-additional-size-row]")?.remove();
-    });
+  function updateCustomSizeUnitVisibility() {
+    if (!sizeUnitSelect || !customSizeUnitInput) return;
+    const usesCustomUnit = sizeUnitSelect.value === "other";
+    customSizeUnitInput.hidden = !usesCustomUnit;
+    customSizeUnitInput.required = usesCustomUnit;
+    if (!usesCustomUnit) customSizeUnitInput.value = "";
   }
 
-  qs("[data-add-product-size]", productForm || root)?.addEventListener("click", () => {
-    const row = additionalSizeTemplate?.content?.firstElementChild?.cloneNode(true);
-    if (!row || !additionalSizeList) return;
-    const reservedProducts = [
-      ...(store.getState().products || []),
-      { id: productForm?.elements.sku?.value || "" },
-      ...qsa("[data-variant-sku]", additionalSizeList).map((input) => ({ id: input.value }))
-    ].filter((product) => product.id);
-    const setValue = (name, value) => {
-      const control = qs(`[name="${name}"]`, row);
-      if (control) control.value = value ?? "";
-    };
-    setValue("variantProductType", productForm?.elements.productType?.value);
-    setValue("variantSku", nextAutomaticProductId(reservedProducts, store.getState().client?.skuFormat));
-    setValue("variantStockCategory", productForm?.elements.stockCategory?.value || FINISHED_PRODUCTS_CATEGORY);
-    setValue("variantUnit", productForm?.elements.unit?.value);
-    setValue("variantReorderPoint", productForm?.elements.reorderPoint?.value);
-    setValue("variantUnitCost", productForm?.elements.unitCost?.value);
-    setValue("variantUnitPrice", productForm?.elements.unitPrice?.value);
-    setValue("variantStatus", productForm?.elements.status?.value || "active");
-    additionalSizeList.appendChild(row);
-    bindAdditionalSizeRemoveButtons();
-    qs('input[name="variantProductType"]', row)?.focus();
+  sizeUnitSelect?.addEventListener("change", () => {
+    updateCustomSizeUnitVisibility();
+    if (!customSizeUnitInput.hidden) customSizeUnitInput.focus();
   });
 
   qsa(".js-open-record-correction", root).forEach((button) => {
@@ -2216,9 +2270,83 @@ export function bindInventory({ root, store, signal }) {
     qsa("[data-stock-category]", root).forEach((row) => {
       row.hidden = categoryFilter.value !== "all" && row.dataset.stockCategory !== categoryFilter.value;
     });
+    updateStockSelectionControls();
   }
 
+  function stockSelectionCheckboxes() {
+    return qsa(".js-select-stock", root);
+  }
+
+  function visibleStockSelectionCheckboxes() {
+    return stockSelectionCheckboxes().filter((checkbox) => !checkbox.closest("tr")?.hidden);
+  }
+
+  function updateStockSelectionControls() {
+    const selectedCount = stockSelectionCheckboxes().filter((checkbox) => checkbox.checked).length;
+    const visibleCheckboxes = visibleStockSelectionCheckboxes();
+    const visibleSelectedCount = visibleCheckboxes.filter((checkbox) => checkbox.checked).length;
+
+    if (deleteSelectedStockButton) {
+      deleteSelectedStockButton.disabled = selectedCount === 0;
+      const label = qs("span", deleteSelectedStockButton);
+      if (label) label.textContent = selectedCount ? `Delete selected (${selectedCount})` : "Delete selected";
+    }
+
+    if (selectAllStock) {
+      selectAllStock.checked = visibleCheckboxes.length > 0 && visibleSelectedCount === visibleCheckboxes.length;
+      selectAllStock.indeterminate = visibleSelectedCount > 0 && visibleSelectedCount < visibleCheckboxes.length;
+    }
+  }
+
+  function confirmStockDeletion(productIds) {
+    const products = store.getState().products.filter((product) => productIds.includes(product.id));
+    if (!products.length) return false;
+    const names = products.slice(0, 3).map((product) => product.name).join(", ");
+    const remaining = products.length > 3 ? ` and ${products.length - 3} more` : "";
+    const subject = products.length === 1 ? names : `${products.length} stock records (${names}${remaining})`;
+    return typeof window.confirm !== "function" || window.confirm(
+      `Delete ${subject} permanently? Current factory stock and representative allocations for the selected records will be removed. Historical transactions will remain in the activity records.`
+    );
+  }
+
+  stockSelectionCheckboxes().forEach((checkbox) => {
+    checkbox.addEventListener("change", updateStockSelectionControls);
+  });
+
+  selectAllStock?.addEventListener("change", () => {
+    visibleStockSelectionCheckboxes().forEach((checkbox) => {
+      checkbox.checked = selectAllStock.checked;
+    });
+    updateStockSelectionControls();
+  });
+
+  deleteSelectedStockButton?.addEventListener("click", () => {
+    const productIds = stockSelectionCheckboxes()
+      .filter((checkbox) => checkbox.checked)
+      .map((checkbox) => checkbox.value);
+    if (!confirmStockDeletion(productIds)) return;
+    store.dispatch({
+      type: "DELETE_PRODUCTS",
+      productIds,
+      message: `${productIds.length} stock record${productIds.length === 1 ? "" : "s"} deleted`
+    });
+  });
+
+  qsa(".js-delete-product", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const productId = button.dataset.productId;
+      if (!confirmStockDeletion([productId])) return;
+      store.dispatch({
+        type: "DELETE_PRODUCTS",
+        productIds: [productId],
+        message: "Stock record deleted"
+      });
+    });
+  });
+
   categoryFilter?.addEventListener("change", applyStockTypeFilter);
+
+  updateStockSelectionControls();
 
   if (categoryFilter && requestedStockType && [...categoryFilter.options].some((option) => option.value === requestedStockType)) {
     categoryFilter.value = requestedStockType;
@@ -2355,6 +2483,42 @@ export function bindInventory({ root, store, signal }) {
     }
   }
 
+  const stockDraftFields = [
+    "productId",
+    "name",
+    "productType",
+    "sizeValue",
+    "sizeUnit",
+    "sizeUnitOther",
+    "sku",
+    "stockCategory",
+    "stock",
+    "reorderPoint",
+    "unitCost",
+    "unitPrice",
+    "status",
+    "productionBatchReference",
+    "productionBatchDate",
+    "productionQuantity",
+    "productionNotes"
+  ];
+
+  function captureStockEditDraft() {
+    if (!productForm?.elements.productId?.value) return;
+    stockEntrySession.editingProductId = productForm.elements.productId.value;
+    stockEntrySession.draft = Object.fromEntries(stockDraftFields
+      .map((name) => [name, productForm.elements[name]?.value])
+      .filter(([, value]) => value !== undefined));
+    stockEntrySession.imageUrl = stockImageDataUrl;
+  }
+
+  function restoreStockEditDraft() {
+    if (!productForm || !stockEntrySession.draft) return;
+    Object.entries(stockEntrySession.draft).forEach(([name, value]) => {
+      if (productForm.elements[name] && name !== "productId") productForm.elements[name].value = value;
+    });
+  }
+
   function updateProductionStockVisibility() {
     if (!productForm || !productionStockUpdate) return;
 
@@ -2381,25 +2545,110 @@ export function bindInventory({ root, store, signal }) {
     productForm.reset();
     productForm.elements.productId.value = "";
     productForm.elements.sku.value = nextAutomaticProductId(store.getState().products, store.getState().client?.skuFormat);
-    if (additionalSizeList) additionalSizeList.innerHTML = "";
-    if (multiSizeSection) multiSizeSection.hidden = false;
+    productForm.elements.name.readOnly = false;
+    sessionAddedProductIds = [];
+    activeProductFamily = "";
+    entrySaved = false;
+    stockEntrySession.family = "";
+    stockEntrySession.productIds = [];
+    stockEntrySession.adding = false;
+    stockEntrySession.editingProductId = "";
+    stockEntrySession.draft = {};
+    stockEntrySession.imageUrl = "";
+    stockEntrySession.defaults = {};
+    if (affiliatedProductList) affiliatedProductList.innerHTML = "";
+    if (affiliatedProductProgress) affiliatedProductProgress.hidden = true;
+    if (stockEntryFields) stockEntryFields.hidden = false;
+    if (saveStockEntryButton) saveStockEntryButton.disabled = false;
     resetProductionStockFields();
     updateProductionStockVisibility();
+    updateCustomSizeUnitVisibility();
     stockImageDataUrl = "";
+    stockImageCleared = false;
     if (stockImageInput) stockImageInput.value = "";
     setStockImageUploadState();
     if (stockModalTitle) stockModalTitle.textContent = "Add stock";
     if (productMessage) productMessage.textContent = "";
   }
 
+  function renderAffiliatedProductProgress() {
+    if (!affiliatedProductList || !affiliatedProductProgress) return;
+    const products = sessionAddedProductIds
+      .map((productId) => store.getState().products.find((product) => product.id === productId))
+      .filter(Boolean);
+    affiliatedProductList.innerHTML = products.map((product) => `
+      <article class="affiliated-product-item">
+        <span>${icon("check")}</span>
+        <div>
+          <strong>${escapeHtml(product.productType || "Standard")} · ${escapeHtml(product.size || "Standard")}</strong>
+          <small>${escapeHtml(product.id)} · ${formatNumber(product.stock || 0)} available</small>
+        </div>
+      </article>
+    `).join("");
+    affiliatedProductProgress.hidden = products.length === 0;
+    if (stockEntryFields) stockEntryFields.hidden = entrySaved;
+  }
+
+  function prepareAffiliatedProductForm() {
+    if (!productForm || !activeProductFamily) return;
+    const previousCategory = stockEntrySession.defaults.stockCategory || productForm.elements.stockCategory.value;
+    const previousReorderPoint = stockEntrySession.defaults.reorderPoint ?? productForm.elements.reorderPoint.value;
+    const previousUnitCost = stockEntrySession.defaults.unitCost ?? productForm.elements.unitCost.value;
+    const previousUnitPrice = stockEntrySession.defaults.unitPrice ?? productForm.elements.unitPrice.value;
+    const previousStatus = stockEntrySession.defaults.status || productForm.elements.status.value;
+
+    productForm.reset();
+    productForm.elements.productId.value = "";
+    productForm.elements.name.value = activeProductFamily;
+    productForm.elements.name.readOnly = true;
+    productForm.elements.sku.value = nextAutomaticProductId(store.getState().products, store.getState().client?.skuFormat);
+    productForm.elements.stockCategory.value = previousCategory || FINISHED_PRODUCTS_CATEGORY;
+    productForm.elements.reorderPoint.value = previousReorderPoint;
+    productForm.elements.unitCost.value = previousUnitCost;
+    productForm.elements.unitPrice.value = previousUnitPrice;
+    productForm.elements.status.value = previousStatus || "active";
+    resetProductionStockFields();
+    updateProductionStockVisibility();
+    updateCustomSizeUnitVisibility();
+    setStockImageUploadState();
+    entrySaved = false;
+    stockEntrySession.adding = true;
+    stockEntrySession.editingProductId = "";
+    stockEntrySession.draft = {};
+    if (stockEntryFields) stockEntryFields.hidden = false;
+    if (saveStockEntryButton) saveStockEntryButton.disabled = false;
+    if (productMessage) productMessage.textContent = `Add another type or size for ${activeProductFamily}.`;
+    productForm.elements.productType.focus();
+  }
+
+  addAffiliatedProductButton?.addEventListener("click", prepareAffiliatedProductForm);
+
+  if (stockEntrySession.open && sessionAddedProductIds.length) {
+    productForm.elements.name.value = activeProductFamily;
+    productForm.elements.name.readOnly = true;
+    if (saveStockEntryButton) saveStockEntryButton.disabled = entrySaved;
+    if (productMessage && entrySaved) productMessage.textContent = `${sessionAddedProductIds.length} product record${sessionAddedProductIds.length === 1 ? "" : "s"} added successfully.`;
+    renderAffiliatedProductProgress();
+    setStockImageUploadState();
+  }
+
   function openStockModal() {
     if (!stockModal || !productForm) return;
 
+    stockEntrySession.open = true;
     stockModal.hidden = false;
     productForm.elements.name?.focus();
   }
 
   function closeStockModal() {
+    stockEntrySession.open = false;
+    stockEntrySession.family = "";
+    stockEntrySession.productIds = [];
+    stockEntrySession.adding = false;
+    stockEntrySession.editingProductId = "";
+    stockEntrySession.draft = {};
+    stockEntrySession.imageUrl = "";
+    stockEntrySession.defaults = {};
     if (stockModal) stockModal.hidden = true;
   }
 
@@ -2417,7 +2666,7 @@ export function bindInventory({ root, store, signal }) {
 
     restockForm.reset();
     restockForm.elements.productId.value = product.id;
-    restockForm.elements.productName.value = `${product.name} (${formatNumber(product.stock)} ${productUnit(product)} currently)`;
+    restockForm.elements.productName.value = `${product.name} (${formatNumber(product.stock)} currently available)`;
     if (restockMessage) restockMessage.textContent = "";
     restockModal.hidden = false;
     restockForm.elements.quantity.focus();
@@ -2429,53 +2678,84 @@ export function bindInventory({ root, store, signal }) {
 
     reduceStockForm.reset();
     reduceStockForm.elements.productId.value = product.id;
-    reduceStockForm.elements.productName.value = `${product.name} (${formatNumber(product.stock)} ${productUnit(product)} currently)`;
+    reduceStockForm.elements.productName.value = `${product.name} (${formatNumber(product.stock)} currently available)`;
     if (reduceStockMessage) reduceStockMessage.textContent = "";
     reduceStockModal.hidden = false;
     reduceStockForm.elements.quantity.focus();
   }
 
+  function finishStockImagePicker() {
+    delete document.documentElement.dataset.filePickerActive;
+  }
+
+  stockImageInput?.addEventListener("click", () => {
+    captureStockEditDraft();
+    document.documentElement.dataset.filePickerActive = "true";
+    window.addEventListener("focus", () => {
+      window.setTimeout(finishStockImagePicker, 500);
+    }, { once: true });
+  });
+
+  stockImageInput?.addEventListener("cancel", finishStockImagePicker);
+
   stockImageInput?.addEventListener("change", async () => {
     const file = stockImageInput.files?.[0];
+    const previousImageDataUrl = stockImageDataUrl;
 
     if (!file) {
-      stockImageDataUrl = "";
       setStockImageUploadState();
+      finishStockImagePicker();
       return;
     }
 
     const fileError = validateLogoFile(file).replace("logo", "picture");
 
     if (fileError) {
-      stockImageDataUrl = "";
+      stockImageDataUrl = previousImageDataUrl;
+      stockEntrySession.imageUrl = previousImageDataUrl;
       stockImageInput.value = "";
       setStockImageUploadState({
         error: fileError
       });
+      finishStockImagePicker();
       return;
     }
 
     try {
       stockImageDataUrl = await readLogoFile(file);
+      stockImageCleared = false;
+      stockEntrySession.imageUrl = stockImageDataUrl;
+      captureStockEditDraft();
       setStockImageUploadState({
         fileName: file.name
       });
     } catch (error) {
-      stockImageDataUrl = "";
+      stockImageDataUrl = previousImageDataUrl;
+      stockEntrySession.imageUrl = previousImageDataUrl;
       stockImageInput.value = "";
       setStockImageUploadState({
         error: error.message.replace("Logo", "Picture")
       });
+    } finally {
+      finishStockImagePicker();
     }
   });
 
   clearStockImageButton?.addEventListener("click", () => {
     stockImageDataUrl = "";
+    stockImageCleared = true;
+    stockEntrySession.imageUrl = "";
     if (stockImageInput) stockImageInput.value = "";
+    captureStockEditDraft();
     setStockImageUploadState();
   });
 
-  productForm?.addEventListener("submit", (event) => {
+  productForm?.addEventListener("input", captureStockEditDraft);
+  productForm?.addEventListener("change", (event) => {
+    if (event.target !== stockImageInput) captureStockEditDraft();
+  });
+
+  productForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const formData = new FormData(productForm);
     const sku = String(formData.get("sku") || "").trim();
@@ -2483,34 +2763,23 @@ export function bindInventory({ root, store, signal }) {
     const productId = String(existingProductId || sku).trim();
     const rawProductName = String(formData.get("name") || "").trim();
     const productType = String(formData.get("productType") || "").trim();
-    const primarySize = String(formData.get("size") || "").trim();
+    const sizeValue = String(formData.get("sizeValue") || "").trim();
+    const selectedSizeUnit = String(formData.get("sizeUnit") || "").trim();
+    const customSizeUnit = normalizeProductSizeUnit(formData.get("sizeUnitOther"));
+    const sizeUnit = selectedSizeUnit === "other" ? customSizeUnit : selectedSizeUnit;
+    const primarySize = formatProductSize(sizeValue, sizeUnit);
     const productFamily = existingProductId
       ? String(store.getState().products.find((product) => product.id === existingProductId)?.productFamily || rawProductName).trim()
-      : rawProductName;
+      : activeProductFamily || rawProductName;
     const variantName = (type, size) => [productFamily, type, size].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
     const primaryProductName = existingProductId ? rawProductName : variantName(productType, primarySize);
-    const additionalVariants = qsa("[data-additional-size-row]", productForm).map((row) => ({
-      productType: String(qs('[name="variantProductType"]', row)?.value || "").trim(),
-      size: String(qs('input[name="variantSize"]', row)?.value || "").trim(),
-      sku: String(qs('[name="variantSku"]', row)?.value || "").trim(),
-      stockCategory: String(qs('[name="variantStockCategory"]', row)?.value || "").trim(),
-      unit: String(qs('[name="variantUnit"]', row)?.value || "").trim(),
-      stockRaw: String(qs('input[name="variantStock"]', row)?.value || "").trim(),
-      stock: Number(qs('input[name="variantStock"]', row)?.value || 0),
-      reorderPointRaw: String(qs('[name="variantReorderPoint"]', row)?.value || "").trim(),
-      reorderPoint: Number(qs('[name="variantReorderPoint"]', row)?.value || 0),
-      unitCostRaw: String(qs('[name="variantUnitCost"]', row)?.value || "").trim(),
-      unitCost: Number(qs('[name="variantUnitCost"]', row)?.value || 0),
-      unitPriceRaw: String(qs('[name="variantUnitPrice"]', row)?.value || "").trim(),
-      unitPrice: Number(qs('[name="variantUnitPrice"]', row)?.value || 0),
-      status: String(qs('[name="variantStatus"]', row)?.value || "").trim()
-    }));
     const requiredFields = [
       ["name", "product name"],
       ["productType", "product type"],
+      ["sizeValue", "product size"],
+      ["sizeUnit", "size unit"],
       ["sku", "SKU"],
       ["stockCategory", "category"],
-      ["unit", "unit"],
       ["stock", "factory stock"],
       ["reorderPoint", "reorder point"],
       ["unitCost", "cost price"],
@@ -2520,7 +2789,7 @@ export function bindInventory({ root, store, signal }) {
     const missingFields = requiredFields
       .filter(([fieldName]) => String(formData.get(fieldName) ?? "").trim() === "")
       .map(([, label]) => label);
-    const numberFields = ["stock", "reorderPoint", "unitCost", "unitPrice"];
+    const numberFields = ["sizeValue", "stock", "reorderPoint", "unitCost", "unitPrice"];
     const invalidNumberField = numberFields.find((fieldName) => {
       const rawValue = String(formData.get(fieldName) ?? "").trim();
       const numberValue = Number(rawValue);
@@ -2542,6 +2811,7 @@ export function bindInventory({ root, store, signal }) {
       productionMaterialIds.some(Boolean) || productionMaterialQuantities.some((quantity) => quantity > 0)
     );
     const state = store.getState();
+    const existingProduct = state.products.find((product) => product.id === existingProductId);
 
     if (productMessage) productMessage.textContent = "";
 
@@ -2550,55 +2820,23 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
+    if (selectedSizeUnit === "other" && !customSizeUnit) {
+      if (productMessage) productMessage.textContent = "Enter the custom product size unit.";
+      return;
+    }
+
+    if (!Number.isFinite(Number(sizeValue)) || Number(sizeValue) <= 0) {
+      if (productMessage) productMessage.textContent = "Product size must be greater than zero.";
+      return;
+    }
+
     if (invalidNumberField) {
       if (productMessage) productMessage.textContent = "Stock quantities and prices must be zero or higher.";
       return;
     }
 
-    const incompleteVariant = additionalVariants.find((variant) => (
-      !variant.productType || !variant.size || !variant.sku || !variant.stockCategory || !variant.unit || !variant.status ||
-      variant.stockRaw === "" || variant.reorderPointRaw === "" || variant.unitCostRaw === "" || variant.unitPriceRaw === "" ||
-      ![variant.stock, variant.reorderPoint, variant.unitCost, variant.unitPrice].every((value) => Number.isFinite(value) && value >= 0)
-    ));
-    const sizeKeys = [
-      `${productType}|${primarySize}`,
-      ...additionalVariants.map((variant) => `${variant.productType}|${variant.size}`)
-    ].map((value) => value.toLowerCase());
-    const duplicateSize = sizeKeys.find((value, index) => sizeKeys.indexOf(value) !== index);
-
-    if (additionalVariants.length && !primarySize) {
-      if (productMessage) productMessage.textContent = "Enter the first product size before adding more sizes.";
-      return;
-    }
-
-    if (incompleteVariant) {
-      if (productMessage) productMessage.textContent = "Complete SKU, category, unit, stock, reorder point, prices, status, type, and size for every added record.";
-      return;
-    }
-
-    if (duplicateSize) {
-      if (productMessage) productMessage.textContent = "Each product size can only be added once.";
-      return;
-    }
-
     if (duplicateProductName(store.getState(), primaryProductName, existingProductId)) {
       if (productMessage) productMessage.textContent = "A product with this name already exists. Use a different product name.";
-      return;
-    }
-
-    const duplicateVariantName = additionalVariants.find((variant) => duplicateProductName(store.getState(), variantName(variant.productType, variant.size)));
-    if (duplicateVariantName) {
-      if (productMessage) productMessage.textContent = `${variantName(duplicateVariantName.productType, duplicateVariantName.size)} already exists.`;
-      return;
-    }
-
-    const duplicateVariantSku = additionalVariants.find((variant, index) => (
-      duplicateProductSku(store.getState(), variant.sku) ||
-      additionalVariants.findIndex((candidate) => candidate.sku.toLowerCase() === variant.sku.toLowerCase()) !== index ||
-      variant.sku.toLowerCase() === sku.toLowerCase()
-    ));
-    if (duplicateVariantSku) {
-      if (productMessage) productMessage.textContent = `SKU ${duplicateVariantSku.sku} is already in use.`;
       return;
     }
 
@@ -2645,6 +2883,54 @@ export function bindInventory({ root, store, signal }) {
       }
     }
 
+    let imageStorageKey = String(existingProduct?.imageStorageKey || "");
+    let imageUrlForState = stockImageCleared ? "" : (stockImageDataUrl || existingProduct?.imageUrl || "");
+    const shouldStoreImage = imageUrlForState.startsWith("data:image/") && (
+      Boolean(stockImageInput?.files?.[0]) || !imageStorageKey
+    );
+
+    if (shouldStoreImage) {
+      try {
+        imageStorageKey = await saveProductImage({
+          clientId: state.client?.id,
+          productId,
+          dataUrl: imageUrlForState
+        });
+        if (!imageStorageKey) throw new Error("Product image storage key was not created.");
+      } catch (error) {
+        if (productMessage) productMessage.textContent = "The picture could not be saved permanently. Try selecting it again.";
+        return;
+      }
+    } else if (stockImageCleared && imageStorageKey) {
+      try {
+        await removeProductImage(imageStorageKey);
+      } catch {
+        // The stock record can still remove its picture if stale browser image data cannot be deleted.
+      }
+      imageStorageKey = "";
+      imageUrlForState = "";
+    }
+
+    if (existingProductId) {
+      stockEntrySession.open = false;
+    } else {
+      activeProductFamily = productFamily;
+      sessionAddedProductIds = [...new Set([...sessionAddedProductIds, productId])];
+      entrySaved = true;
+      stockEntrySession.open = true;
+      stockEntrySession.family = productFamily;
+      stockEntrySession.productIds = sessionAddedProductIds;
+      stockEntrySession.adding = false;
+      stockEntrySession.imageUrl = stockImageDataUrl;
+      stockEntrySession.defaults = {
+        stockCategory: String(formData.get("stockCategory") || FINISHED_PRODUCTS_CATEGORY),
+        reorderPoint: String(formData.get("reorderPoint") || ""),
+        unitCost: String(formData.get("unitCost") || ""),
+        unitPrice: String(formData.get("unitPrice") || ""),
+        status: String(formData.get("status") || "active")
+      };
+    }
+
     store.dispatch({
       type: "UPSERT_PRODUCT",
       productId,
@@ -2653,39 +2939,19 @@ export function bindInventory({ root, store, signal }) {
       productFamily,
       productType,
       size: primarySize,
+      sizeValue,
+      sizeUnit,
       stockCategory: formData.get("stockCategory"),
-      unit: formData.get("unit"),
+      unit: sizeUnit,
       stock: Number(formData.get("stock") || 0),
       reorderPoint: Number(formData.get("reorderPoint") || 0),
       unitCost: Number(formData.get("unitCost") || 0),
       unitPrice: Number(formData.get("unitPrice") || 0),
       status: formData.get("status"),
-      imageUrl: stockImageDataUrl,
+      imageUrl: imageUrlForState,
+      imageStorageKey,
       message: existingProductId ? "Stock updated" : "Stock added"
     });
-
-    if (!existingProductId) {
-      additionalVariants.forEach((variant, index) => {
-        store.dispatch({
-          type: "UPSERT_PRODUCT",
-          productId: variant.sku,
-          sku: variant.sku,
-          name: variantName(variant.productType, variant.size),
-          productFamily,
-          productType: variant.productType,
-          size: variant.size,
-          stockCategory: variant.stockCategory,
-          unit: variant.unit,
-          stock: variant.stock,
-          reorderPoint: variant.reorderPoint,
-          unitCost: variant.unitCost,
-          unitPrice: variant.unitPrice,
-          status: variant.status,
-          imageUrl: stockImageDataUrl,
-          message: index === additionalVariants.length - 1 ? "Product sizes added" : ""
-        });
-      });
-    }
 
     if (hasProductionUsage) {
       store.dispatch({
@@ -2701,14 +2967,15 @@ export function bindInventory({ root, store, signal }) {
       });
     }
 
-    closeStockModal();
+    if (existingProductId) closeStockModal();
   });
 
   qs(".js-clear-product-form", root)?.addEventListener("click", () => {
-    resetProductForm();
+    if (sessionAddedProductIds.length && activeProductFamily) prepareAffiliatedProductForm();
+    else resetProductForm();
   });
 
-  function fillProductForm(productId) {
+  function fillProductForm(productId, { restoreDraft = false } = {}) {
     const product = store.getState().products.find((item) => item.id === productId);
     if (!productForm || !product) return false;
 
@@ -2717,29 +2984,47 @@ export function bindInventory({ root, store, signal }) {
     productForm.elements.productId.value = product.id;
     productForm.elements.sku.value = product.id;
     productForm.elements.name.value = product.name || "";
+    productForm.elements.name.readOnly = false;
     productForm.elements.productType.value = product.productType || "";
-    productForm.elements.size.value = product.size || "";
-    if (additionalSizeList) additionalSizeList.innerHTML = "";
-    if (multiSizeSection) multiSizeSection.hidden = true;
+    const parsedSize = splitProductSize(product.size, product.sizeUnit || product.unit);
+    productForm.elements.sizeValue.value = product.sizeValue || parsedSize.value;
+    productForm.elements.sizeUnit.value = product.sizeUnit || parsedSize.unit;
+    productForm.elements.sizeUnitOther.value = product.sizeUnit && product.sizeUnit !== "other" && !PRODUCT_SIZE_UNITS.some((option) => option.value === product.sizeUnit)
+      ? product.sizeUnit
+      : parsedSize.customUnit;
+    if (productForm.elements.sizeUnitOther.value) productForm.elements.sizeUnit.value = "other";
+    updateCustomSizeUnitVisibility();
+    sessionAddedProductIds = [];
+    activeProductFamily = "";
+    entrySaved = false;
+    if (affiliatedProductProgress) affiliatedProductProgress.hidden = true;
+    if (stockEntryFields) stockEntryFields.hidden = false;
     productForm.elements.stockCategory.value = stockCategoryIdForProduct(product);
-    productForm.elements.unit.value = productUnit(product);
     productForm.elements.stock.value = product.stock || 0;
     productForm.elements.reorderPoint.value = product.reorderPoint || 0;
     productForm.elements.unitCost.value = product.unitCost || 0;
     productForm.elements.unitPrice.value = product.unitPrice || 0;
     productForm.elements.status.value = product.status || "active";
     resetProductionStockFields();
+    if (restoreDraft) restoreStockEditDraft();
     updateProductionStockVisibility();
-    stockImageDataUrl = product.imageUrl || "";
+    updateCustomSizeUnitVisibility();
+    stockImageDataUrl = restoreDraft ? (stockEntrySession.imageUrl || product.imageUrl || "") : (product.imageUrl || "");
+    stockImageCleared = false;
+    stockEntrySession.editingProductId = product.id;
+    stockEntrySession.imageUrl = stockImageDataUrl;
     if (stockImageInput) stockImageInput.value = "";
     setStockImageUploadState();
     openStockModal();
+    if (!restoreDraft) captureStockEditDraft();
     return true;
   }
 
   productForm?.elements.stockCategory?.addEventListener("change", updateProductionStockVisibility);
 
-  if (requestedProductId) {
+  if (stockEntrySession.open && stockEntrySession.editingProductId) {
+    fillProductForm(stockEntrySession.editingProductId, { restoreDraft: true });
+  } else if (requestedProductId) {
     fillProductForm(requestedProductId);
   }
 
@@ -2885,18 +3170,48 @@ export function bindInventory({ root, store, signal }) {
   }
 
   function updateDispatchProductOptions() {
-    if (!dispatchRecipientType || !dispatchProductSelect) return;
+    if (!dispatchRecipientType || !dispatchForm) return;
 
-    const selectedProductId = dispatchProductSelect.value;
-    dispatchProductSelect.innerHTML = renderDispatchProductOptions(
-      store.getState(),
-      dispatchRecipientType.value,
-      selectedProductId
-    );
+    qsa("[data-dispatch-product-select]", dispatchForm).forEach((select) => {
+      const selectedProductId = select.value;
+      select.innerHTML = renderDispatchProductOptions(store.getState(), dispatchRecipientType.value, selectedProductId);
+      if (selectedProductId && ![...select.options].some((option) => option.value === selectedProductId)) {
+        select.value = "";
+      }
+      updateDispatchItemPrice(select.closest("[data-dispatch-item-row]"));
+    });
+  }
+
+  function updateDispatchItemPrice(row) {
+    if (!row) return;
+    const productId = qs("[data-dispatch-product-select]", row)?.value;
+    const product = store.getState().products.find((item) => item.id === productId);
+    const priceInput = qs("[data-dispatch-unit-price]", row);
+    if (priceInput) priceInput.value = product ? formatCurrency(product.unitPrice || 0) : formatCurrency(0);
+  }
+
+  function syncDispatchItemRemoveButtons() {
+    if (!dispatchItemList) return;
+    const rows = qsa("[data-dispatch-item-row]", dispatchItemList);
+    rows.forEach((row) => {
+      const removeButton = qs(".js-remove-dispatch-item", row);
+      if (removeButton) removeButton.disabled = rows.length === 1;
+    });
+  }
+
+  function syncDispatchPaymentField() {
+    if (!dispatchRecipientType || !dispatchPaymentField || !dispatchPaymentSelect) return;
+    const isInternal = dispatchRecipientType.value.toLowerCase().includes("internal");
+    dispatchPaymentField.hidden = isInternal;
+    dispatchPaymentSelect.disabled = isInternal;
+    dispatchPaymentSelect.required = !isInternal;
+    if (isInternal) dispatchPaymentSelect.value = "cash";
   }
 
   updateDispatchRecipientOptions();
   updateDispatchProductOptions();
+  syncDispatchItemRemoveButtons();
+  syncDispatchPaymentField();
 
   function syncExpectedDeliveryDate() {
     if (!dispatchDateInput || !expectedDeliveryInput) return;
@@ -2913,16 +3228,39 @@ export function bindInventory({ root, store, signal }) {
   dispatchRecipientType?.addEventListener("change", () => {
     updateDispatchRecipientOptions();
     updateDispatchProductOptions();
+    syncDispatchPaymentField();
   });
   dispatchRecipientSelect?.addEventListener("change", updateOtherRecipientField);
+  addDispatchItemButton?.addEventListener("click", () => {
+    if (!dispatchItemList || !dispatchItemTemplate) return;
+    dispatchItemList.append(dispatchItemTemplate.content.cloneNode(true));
+    updateDispatchProductOptions();
+    syncDispatchItemRemoveButtons();
+    qsa("[data-dispatch-item-row]", dispatchItemList).at(-1)?.querySelector("select")?.focus();
+  });
+  dispatchItemList?.addEventListener("change", (event) => {
+    if (event.target.matches("[data-dispatch-product-select]")) {
+      updateDispatchItemPrice(event.target.closest("[data-dispatch-item-row]"));
+    }
+  });
+  dispatchItemList?.addEventListener("click", (event) => {
+    const removeButton = event.target.closest(".js-remove-dispatch-item");
+    if (!removeButton || removeButton.disabled) return;
+    removeButton.closest("[data-dispatch-item-row]")?.remove();
+    syncDispatchItemRemoveButtons();
+  });
 
   dispatchForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     const state = store.getState();
     const formData = new FormData(dispatchForm);
-    const productId = String(formData.get("productId") || "");
-    const quantity = Number(formData.get("quantity") || 0);
-    const product = state.products.find((item) => item.id === productId);
+    const items = qsa("[data-dispatch-item-row]", dispatchForm).map((row) => ({
+      productId: String(qs("[data-dispatch-product-select]", row)?.value || "").trim(),
+      quantity: Number(qs('input[name="dispatchQuantity"]', row)?.value || 0)
+    }));
+    const recipientType = String(formData.get("recipientType") || "");
+    const isInternalDispatch = recipientType.toLowerCase().includes("internal");
+    const paymentType = isInternalDispatch ? "none" : String(formData.get("paymentType") || "");
     const recipientChoice = String(formData.get("recipientNameChoice") || "").trim();
     const otherRecipient = String(formData.get("recipientNameOther") || "").trim();
     const recipientName = recipientChoice === "__other__" ? otherRecipient : recipientChoice;
@@ -2932,8 +3270,15 @@ export function bindInventory({ root, store, signal }) {
 
     if (message) message.textContent = "";
 
-    if (!product || !quantity || quantity <= 0 || !recipientName || !formData.get("destination") || !dispatchDate || !expectedDeliveryAt) {
-      if (message) message.textContent = "Choose an item, quantity, recipient, destination, dispatch date, and expected delivery date.";
+    if (!items.length || items.some((item) => !item.productId || !item.quantity || item.quantity <= 0) || !recipientName || !formData.get("destination") || !dispatchDate || !expectedDeliveryAt || (!isInternalDispatch && !paymentType)) {
+      if (message) message.textContent = "Complete every product, quantity, recipient, payment method, destination, and delivery date.";
+      return;
+    }
+
+    const duplicateProductId = items.find((item, index) => items.findIndex((candidate) => candidate.productId === item.productId) !== index)?.productId;
+    if (duplicateProductId) {
+      const duplicateProduct = state.products.find((product) => product.id === duplicateProductId);
+      if (message) message.textContent = `${duplicateProduct?.name || "A product"} is selected more than once. Combine it into one quantity.`;
       return;
     }
 
@@ -2942,25 +3287,34 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
-    if (quantity > Number(product.stock || 0)) {
-      if (message) message.textContent = `Only ${formatNumber(product.stock)} available.`;
+    const unavailableItem = items.find((item) => {
+      const product = state.products.find((candidate) => candidate.id === item.productId);
+      return !product || item.quantity > Number(product.stock || 0);
+    });
+    if (unavailableItem) {
+      const product = state.products.find((candidate) => candidate.id === unavailableItem.productId);
+      if (message) message.textContent = product
+        ? `Only ${formatNumber(product.stock)} ${product.name} available.`
+        : "One selected product is no longer available.";
       return;
     }
 
     if (
-      String(formData.get("recipientType") || "").toLowerCase().includes("representative") &&
-      stockCategoryIdForProduct(product) !== FINISHED_PRODUCTS_CATEGORY
+      recipientType.toLowerCase().includes("representative") &&
+      items.some((item) => stockCategoryIdForProduct(state.products.find((product) => product.id === item.productId)) !== FINISHED_PRODUCTS_CATEGORY)
     ) {
       if (message) message.textContent = "Only finished products can be assigned to a sales representative.";
       return;
     }
 
+    const invoiceIdsBeforeDispatch = new Set((state.invoices || []).map((invoice) => invoice.id));
+
     store.dispatch({
       type: "RECORD_STOCK_DISPATCH",
-      productId,
-      quantity,
-      recipientType: formData.get("recipientType"),
+      items,
+      recipientType,
       recipientName,
+      paymentType,
       destination: formData.get("destination"),
       dispatchDate,
       expectedDeliveryAt,
@@ -2968,14 +3322,21 @@ export function bindInventory({ root, store, signal }) {
       message: "Factory dispatch recorded"
     });
 
+    const recordedState = store.getState();
+    const recordedInvoice = getInvoiceRecords(recordedState).find((invoice) => !invoiceIdsBeforeDispatch.has(invoice.id));
+
     dispatchForm.reset();
     dispatchForm.elements.dispatchDate.value = todayISO();
     dispatchForm.elements.expectedDeliveryAt.value = tomorrowISO();
     dispatchForm.elements.staffName.value = currentStaffName(store.getState());
+    if (dispatchItemList) dispatchItemList.innerHTML = renderDispatchItemRow(store.getState(), "Sales Representative");
     syncExpectedDeliveryDate();
     updateDispatchRecipientOptions();
     updateDispatchProductOptions();
+    syncDispatchItemRemoveButtons();
+    syncDispatchPaymentField();
     if (dashboardDispatchModal) dashboardDispatchModal.hidden = true;
+    if (recordedInvoice) openInvoiceQuickView(recordedInvoice, recordedState);
   });
 
   qsa(".js-restock-product", root).forEach((button) => {

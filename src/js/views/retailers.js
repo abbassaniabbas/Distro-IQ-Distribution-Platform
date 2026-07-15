@@ -7,6 +7,7 @@ import {
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, scopeStateForCurrentRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
+import { getNigeriaLgas, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../data/nigeria-locations.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
 
@@ -31,16 +32,23 @@ function renderSupermarketManager(state, permissions) {
           <input name="name" placeholder="Customer outlet name" required>
         </label>
         <label class="field">
-          <span>City or town</span>
-          <input name="city" placeholder="Lagos">
+          <span>State</span>
+          <select name="stateName" required>
+            ${NIGERIA_STATE_NAMES.map((stateName) => `
+              <option value="${escapeHtml(stateName)}">${escapeHtml(stateName)}</option>
+            `).join("")}
+          </select>
         </label>
         <label class="field">
-          <span>State</span>
-          <input name="stateName" placeholder="Lagos">
+          <span>Local government area</span>
+          <select name="lga" required>
+            <option value="">Select LGA</option>
+            ${getNigeriaLgas("Kaduna").map((lga) => `<option value="${escapeHtml(lga)}">${escapeHtml(lga)}</option>`).join("")}
+          </select>
         </label>
         <label class="field">
           <span>Address</span>
-          <input name="address" placeholder="Street, area, or landmark">
+          <input name="address" placeholder="Street, area, or landmark" required>
         </label>
         <label class="field">
           <span>Customer type</span>
@@ -134,6 +142,7 @@ function renderRetailerListItem(retailer, state) {
   const searchIndex = [
     retailer.id,
     retailer.name,
+    retailer.lga,
     retailer.city,
     retailer.stateName,
     retailer.region,
@@ -157,7 +166,7 @@ function renderRetailerListItem(retailer, state) {
         <span>
           <span class="eyebrow">${escapeHtml(retailer.id)}</span>
           <strong>${escapeHtml(retailer.name)}</strong>
-          <small>${escapeHtml([retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</small>
+          <small>${escapeHtml([retailer.lga || retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</small>
           ${retailer.status === "inactive" ? '<small class="retailer-inactive-label">Inactive</small>' : ""}
         </span>
         <span>
@@ -278,7 +287,7 @@ export function renderCustomerDetails(retailer, state, permissions) {
       <div>
         <span class="eyebrow">${escapeHtml(retailer.id)}</span>
         <h3>${escapeHtml(retailer.name)}</h3>
-        <p>${escapeHtml([retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</p>
+        <p>${escapeHtml([retailer.lga || retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</p>
       </div>
       <div class="row-actions">
         ${statusPill(rating.status)}
@@ -290,6 +299,8 @@ export function renderCustomerDetails(retailer, state, permissions) {
       ${detailItem("Customer type", retailer.channel || "Not set")}
       ${detailItem("Contact person", retailer.contact || "Not set")}
       ${detailItem("Phone", retailer.contactPhone || "Not set")}
+      ${detailItem("State", retailer.stateName || retailer.region || "Not set")}
+      ${detailItem("Local government area", retailer.lga || retailer.city || "Not set")}
       ${detailItem("Address", retailer.address || "Not set")}
       ${detailItem("Customer rating", rating.label)}
       ${detailItem("Rating basis", `${formatNumber(rating.score)} / 100`)}
@@ -404,8 +415,23 @@ export function renderRetailers({ state }) {
 export function bindRetailers({ root, store }) {
   const ratingFilter = qs("#retailer-rating-filter", root);
   const retailerForm = qs("#retailer-form", root);
+  const stateSelect = retailerForm?.elements.stateName;
+  const lgaSelect = retailerForm?.elements.lga;
   const customerModal = qs("#customer-details-modal", root);
   const customerModalContent = qs("#customer-details-content", root);
+
+  function updateLgaOptions(selectedLga = "") {
+    if (!stateSelect || !lgaSelect) return;
+    const lgas = getNigeriaLgas(stateSelect.value);
+    lgaSelect.innerHTML = `
+      <option value="">Select LGA</option>
+      ${lgas.map((lga) => `<option value="${escapeHtml(lga)}">${escapeHtml(lga)}</option>`).join("")}
+    `;
+    lgaSelect.value = lgas.includes(selectedLga) ? selectedLga : "";
+    lgaSelect.disabled = lgas.length === 0;
+  }
+
+  stateSelect?.addEventListener("change", () => updateLgaOptions());
 
   ratingFilter?.addEventListener("change", () => {
     qsa(".retailer-list-item", root).forEach((card) => {
@@ -450,8 +476,9 @@ export function bindRetailers({ root, store }) {
     const creditLimit = getCreditLimitForParty(state.creditLimits || [], retailer.name);
     retailerForm.elements.retailerId.value = retailer.id;
     retailerForm.elements.name.value = retailer.name || "";
-    retailerForm.elements.city.value = retailer.city || "";
-    retailerForm.elements.stateName.value = retailer.stateName || retailer.region || "";
+    const retailerState = normalizeNigeriaStateName(retailer.stateName || retailer.region) || "Kaduna";
+    retailerForm.elements.stateName.value = retailerState;
+    updateLgaOptions(retailer.lga || retailer.city || "");
     retailerForm.elements.address.value = retailer.address || "";
     const channelValue = retailer.channel || "Supermarket";
     const hasChannelOption = [...retailerForm.elements.channel.options].some((option) => option.value === channelValue);
@@ -487,12 +514,22 @@ export function bindRetailers({ root, store }) {
       return;
     }
 
+    if (!String(formData.get("stateName") || "").trim() || !String(formData.get("lga") || "").trim()) {
+      if (message) message.textContent = "Select the customer state and local government area.";
+      return;
+    }
+
+    if (!String(formData.get("address") || "").trim()) {
+      if (message) message.textContent = "Enter the customer address.";
+      return;
+    }
+
     store.dispatch({
       type: "UPSERT_RETAILER",
       retailerId: formData.get("retailerId"),
       name: formData.get("name"),
-      city: formData.get("city"),
       stateName: formData.get("stateName"),
+      lga: formData.get("lga"),
       address: formData.get("address"),
       channel: formData.get("channel"),
       contact: formData.get("contact"),
@@ -511,6 +548,7 @@ export function bindRetailers({ root, store }) {
   qs(".js-clear-retailer-form", root)?.addEventListener("click", () => {
     retailerForm?.reset();
     if (retailerForm?.elements.retailerId) retailerForm.elements.retailerId.value = "";
+    updateLgaOptions();
   });
 
   qsa(".js-edit-retailer", root).forEach((button) => {

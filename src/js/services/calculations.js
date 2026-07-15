@@ -365,7 +365,7 @@ export function getCreditGuardForOrder(order, state) {
   const paymentType = String(order.paymentType || "credit").toLowerCase();
   const paymentStatus = String(order.paymentStatus || "").toLowerCase();
   const isCreditSale = paymentType.includes("credit") && paymentStatus !== "paid";
-  const shouldProject = isCreditSale && order.status !== "delivered";
+  const shouldProject = isCreditSale && order.status !== "delivered" && !order.creditApplied;
   const creditImpact = shouldProject ? orderTotal : 0;
   const currentBalance = Number(limit?.balance ?? retailer?.outstanding ?? 0);
   const limitAmount = Number(limit?.limit || 0);

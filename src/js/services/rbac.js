@@ -224,7 +224,15 @@ export function scopeStateForCurrentRole(state) {
     retailers,
     orders,
     routes: [],
-    invoices: (state.invoices || []).filter((invoice) => customerIds.has(invoice.retailerId) || invoice.repUserId === userId),
+    invoices: (state.invoices || []).filter((invoice) => {
+      const invoiceRepName = String(invoice.repName || "").trim().toLowerCase();
+
+      // A shared customer must never make another representative's invoice visible.
+      // repName is retained only as a compatibility fallback for older invoices that
+      // were saved before repUserId was recorded.
+      if (invoice.repUserId) return invoice.repUserId === userId;
+      return Boolean(actorName && invoiceRepName === actorName);
+    }),
     stockAssignments,
     stockTransactions: (state.stockTransactions || []).filter((transaction) => {
       const partyName = String(transaction.partyName || "").trim().toLowerCase();
