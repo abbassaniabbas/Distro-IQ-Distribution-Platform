@@ -598,6 +598,19 @@
   text-decoration: none;
 }
 
+.ceo-product-family-trigger {
+  display: grid;
+  width: 100%;
+  min-height: 100px;
+  gap: 5px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
 .ceo-product-family-card:hover,
 .ceo-product-family-card.is-active {
   border-color: var(--navy);
@@ -611,6 +624,36 @@
 .ceo-product-family-card b {
   margin-top: auto;
   color: var(--navy);
+}
+
+.ceo-product-type-dropdown {
+  display: grid;
+  gap: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.ceo-product-type-dropdown[hidden] {
+  display: none;
+}
+
+.ceo-product-type-dropdown button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--navy);
+  background: var(--surface-soft);
+  cursor: pointer;
+}
+
+.ceo-product-type-dropdown svg {
+  width: 16px;
+  height: 16px;
 }
 
 .product-size-drilldown {
@@ -650,6 +693,162 @@
 
 .compact-record-modal {
   width: min(100%, 580px);
+}
+
+.product-size-builder {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+}
+
+.additional-product-size-list {
+  display: grid;
+  gap: 10px;
+}
+
+.additional-product-size-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: end;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #fff;
+}
+
+.additional-size-remove {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+}
+
+.size-stock-link {
+  color: var(--navy);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.selected-size-stock-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px;
+  border: 1px solid var(--navy);
+  border-radius: var(--radius-sm);
+  background: var(--navy-soft);
+}
+
+.selected-size-stock-card > div {
+  display: grid;
+  gap: 4px;
+}
+
+.selected-size-stock-card > div:last-child {
+  justify-items: stretch;
+}
+
+.selected-size-stock-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(110px, 1fr));
+  gap: 8px;
+  width: min(100%, 620px);
+}
+
+.selected-size-stock-metrics > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.selected-size-stock-metrics strong {
+  font-size: 1.8rem;
+  color: var(--navy);
+}
+
+.ceo-product-size-modal {
+  width: min(100%, 980px);
+}
+
+.ceo-size-picture-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.ceo-size-picture-card {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  background: #fff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ceo-size-picture-card:hover,
+.ceo-size-picture-card:focus-visible {
+  border-color: var(--navy);
+  box-shadow: 0 8px 22px rgba(7, 26, 47, 0.1);
+}
+
+.ceo-size-picture-card[hidden] {
+  display: none;
+}
+
+.ceo-size-picture {
+  display: grid;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 10px;
+  color: var(--navy);
+  background: var(--navy-soft);
+  font-size: 1.7rem;
+  font-weight: 900;
+}
+
+.ceo-size-picture img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.ceo-size-picture-card > span:last-child {
+  display: grid;
+  gap: 2px;
+}
+
+@media (max-width: 640px) {
+  .additional-product-size-row {
+    grid-template-columns: 1fr;
+  }
+
+  .additional-product-size-row .icon-button {
+    justify-self: end;
+  }
+
+  .selected-size-stock-card {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .selected-size-stock-card > div:last-child {
+    justify-items: start;
+  }
+
+  .selected-size-stock-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 #dashboard-dispatch-modal .manager-tool-panel {

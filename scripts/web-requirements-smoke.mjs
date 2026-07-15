@@ -15,6 +15,7 @@ import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
 import { renderOrders } from "../src/js/views/orders.js";
+import { renderPasswordReset } from "../src/js/views/password-reset.js";
 import { renderCustomerDetails, renderRetailers } from "../src/js/views/retailers.js";
 import { renderSettings } from "../src/js/views/settings.js";
 import { buildLoginDetailsEmail } from "../src/js/views/team.js";
@@ -51,6 +52,10 @@ assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 4, "lo
 const backendErrorHtml = renderBackendSetup({ state: { backend: { error: "Temporary connection error" } } });
 assert.match(backendErrorHtml, /data-retry-workspace="true"/);
 assert.match(backendErrorHtml, /Try again/);
+const passwordSetupHtml = renderPasswordReset({ state: { session: { user: { id: "password-user" } }, user: { email: "password@example.com" }, client: { companyName: "Test Factory" } } });
+assert.match(passwordSetupHtml, /minlength="8"/);
+assert.match(passwordSetupHtml, /Use 8\+ characters/);
+assert.doesNotMatch(passwordSetupHtml, /12\+ characters/);
 assert.doesNotMatch(loginHtml, /value="manager"/, "the removed Manager role must not appear at login");
 assert.doesNotMatch(loginHtml, /<select name="role"/, "login role selection must not use a dropdown");
 const notificationFixture = {
@@ -371,6 +376,16 @@ globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
 assert.match(storeKeeperInventory, /name="sku" value="SKU-\d+" readonly/, "new products must receive an automatic SKU");
+assert.match(storeKeeperInventory, /name="productType"/);
+assert.match(storeKeeperInventory, /data-add-product-size/);
+assert.match(storeKeeperInventory, /data-additional-size-template/);
+assert.match(storeKeeperInventory, /name="variantSku"/);
+assert.match(storeKeeperInventory, /name="variantStockCategory"/);
+assert.match(storeKeeperInventory, /name="variantReorderPoint"/);
+assert.match(storeKeeperInventory, /name="variantUnitCost"/);
+assert.match(storeKeeperInventory, /name="variantUnitPrice"/);
+assert.match(storeKeeperInventory, /<th>Product type<\/th>/);
+assert.match(storeKeeperInventory, /<th>Size<\/th>/);
 
 assert.equal(effectiveOrderStatus({ status: "in_transit", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delayed");
 assert.equal(effectiveOrderStatus({ status: "delivered", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delivered");
@@ -757,7 +772,8 @@ assert.match(correctionApprovalDashboard, /Correction approvals/);
 assert.match(correctionApprovalDashboard, /One carton was entered twice/);
 assert.match(correctionApprovalDashboard, /Added stock/);
 assert.match(correctionApprovalDashboard, /Dispatched product/);
-assert.match(correctionApprovalDashboard, /productFamily=Plantain%20Chips/);
+assert.match(correctionApprovalDashboard, /js-toggle-product-types/);
+assert.match(correctionApprovalDashboard, /data-product-type-dropdown="Plantain Chips"/);
 store.dispatch({ type: "APPROVE_RECORD_CORRECTION", requestId: dispatchCorrectionRequest.id });
 assert.equal(store.getState().correctionRequests.find((request) => request.id === dispatchCorrectionRequest.id).status, "approved");
 assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionDispatch.id).quantity, Number(correctionDispatch.quantity) - 1);
@@ -765,10 +781,14 @@ assert.equal(store.getState().products.find((product) => product.id === "SKU-CHI
 if (Number.isFinite(correctionAssignmentBefore)) {
   assert.equal(store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id).assigned, correctionAssignmentBefore - 1);
 }
-globalThis.window.location.hash = "#/dashboard?productFamily=Plantain%20Chips";
 const productSizeDashboard = renderDashboard({ state: store.getState() });
-assert.match(productSizeDashboard, /Plantain Chips sizes/);
-assert.match(productSizeDashboard, /Stock affiliation/);
+assert.match(productSizeDashboard, /id="ceo-product-size-modal"/);
+assert.match(productSizeDashboard, /js-open-product-size-modal/);
+assert.match(productSizeDashboard, /data-size-sku="SKU-CHIPS"/);
+assert.match(productSizeDashboard, /Available in factory/);
+assert.match(productSizeDashboard, /Dispatched today/);
+assert.match(productSizeDashboard, /This month/);
+assert.match(productSizeDashboard, /This year/);
 
 authenticate("user-rep");
 const correctionSaleAssignment = store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id);

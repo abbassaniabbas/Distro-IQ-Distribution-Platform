@@ -31,7 +31,7 @@ import {
   bindOnboardingConfirmation
 } from "./views/onboarding.js";
 import { renderOrders, bindOrders } from "./views/orders.js";
-import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js";
+import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
 import { renderRetailers, bindRetailers } from "./views/retailers.js";
 import { renderSettings, bindSettings } from "./views/settings.js";

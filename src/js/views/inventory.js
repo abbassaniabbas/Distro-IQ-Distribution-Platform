@@ -340,13 +340,74 @@ function renderStockProductModal(state, permissions) {
           <input name="name" placeholder="Plantain Chips 50g" required>
         </label>
         <label class="field">
-          <span>Product group</span>
-          <input name="productFamily" placeholder="Plantain Chips, Kuli Kuli">
+          <span>Product type</span>
+          <input name="productType" placeholder="Plantain, spicy, classic" required>
         </label>
         <label class="field">
           <span>Product size</span>
           <input name="size" placeholder="50g, 100g, family pack">
         </label>
+        <section class="span-full product-size-builder" data-multi-size-section>
+          <div class="production-stock-update-heading">
+            <div>
+              <span class="eyebrow">More sizes</span>
+              <strong>Add every size of this product together</strong>
+              <p>Each size receives its own SKU and factory quantity.</p>
+            </div>
+            <button class="button" type="button" data-add-product-size>${icon("plus")}<span>Add another size</span></button>
+          </div>
+          <div class="additional-product-size-list" data-additional-size-list></div>
+          <template data-additional-size-template>
+            <div class="additional-product-size-row" data-additional-size-row>
+              <label class="field">
+                <span>Product type</span>
+                <input name="variantProductType" placeholder="Plantain, spicy, classic" required>
+              </label>
+              <label class="field">
+                <span>Product size</span>
+                <input name="variantSize" placeholder="100g" required>
+              </label>
+              <label class="field">
+                <span>SKU</span>
+                <input name="variantSku" data-variant-sku readonly required>
+              </label>
+              <label class="field">
+                <span>Category</span>
+                <select name="variantStockCategory" required>
+                  ${state.stockCategories.map((category) => `<option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>`).join("")}
+                </select>
+              </label>
+              <label class="field">
+                <span>Unit</span>
+                <input name="variantUnit" placeholder="pack, carton, kg" required>
+              </label>
+              <label class="field">
+                <span>Factory stock</span>
+                <input name="variantStock" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
+              </label>
+              <label class="field">
+                <span>Reorder point</span>
+                <input name="variantReorderPoint" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
+              </label>
+              <label class="field">
+                <span>Cost price (${escapeHtml(moneySymbol)})</span>
+                <input name="variantUnitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
+              </label>
+              <label class="field">
+                <span>Selling price (${escapeHtml(moneySymbol)})</span>
+                <input name="variantUnitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
+              </label>
+              <label class="field">
+                <span>Catalogue status</span>
+                <select name="variantStatus" required>
+                  <option value="active">Visible</option>
+                  <option value="inactive">Hidden</option>
+                </select>
+              </label>
+              <div class="additional-size-remove">${iconButton({ iconName: "x", label: "Remove size and type", className: "js-remove-product-size" })}</div>
+            </div>
+          </template>
+        </section>
         <label class="field">
           <span>SKU</span>
           <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products, state.client?.skuFormat))}" readonly required>
@@ -708,7 +769,7 @@ function renderProductListRow(product, state, permissions) {
   const lineageDescription = hasStockMaterialUsage
     ? `${formatNumber(batchesUsingStockMaterials.length)} linked batch${batchesUsingStockMaterials.length === 1 ? "" : "es"}${latestBatch ? ` - latest ${productionBatchReference(latestBatch)}` : ""}`
     : "Production batches with raw materials will appear here.";
-  const searchIndex = [product.id, product.name, product.category, product.region, product.warehouse]
+  const searchIndex = [product.id, product.name, product.productType, product.size, product.category, product.region, product.warehouse]
     .join(" ")
     .toLowerCase();
 
@@ -722,10 +783,15 @@ function renderProductListRow(product, state, permissions) {
       <td>
         <div class="stock-health-item">
           <div class="product-media">${renderProductImage(product)}</div>
-          <div><strong>${escapeHtml(product.name)}</strong><span>${escapeHtml(product.id)}</span></div>
+          <div>
+            <strong>${escapeHtml(product.name)}</strong>
+            <span>${escapeHtml(product.id)}</span>
+          </div>
         </div>
       </td>
       <td><strong>${escapeHtml(product.category)}</strong><div class="muted">${escapeHtml(productUnit(product))}</div></td>
+      <td>${escapeHtml(product.productType || "Standard")}</td>
+      <td>${escapeHtml(product.size || "Standard")}</td>
       <td><div class="stock-health-quantity"><strong>${formatNumber(product.stock)} ${escapeHtml(productUnit(product))}</strong><span>${formatNumber(product.reorderPoint)} reorder point</span></div></td>
       <td>
         <div class="stock-health-progress">
@@ -1388,7 +1454,9 @@ function renderStockHealthPage(state, permissions) {
           <thead>
             <tr>
               <th>Stock item</th>
-              <th>Type</th>
+              <th>Category</th>
+              <th>Product type</th>
+              <th>Size</th>
               <th>Available</th>
               <th>Health</th>
               <th>Pricing</th>
@@ -1398,7 +1466,7 @@ function renderStockHealthPage(state, permissions) {
           <tbody>
             ${visibleProducts.length
               ? visibleProducts.map((product) => renderProductListRow(product, state, permissions)).join("")
-              : '<tr><td colspan="6"><div class="empty-state">No active stock items available</div></td></tr>'}
+              : '<tr><td colspan="8"><div class="empty-state">No active stock items available</div></td></tr>'}
           </tbody>
         </table>
       </div>
@@ -1735,6 +1803,41 @@ export function bindInventory({ root, store, signal }) {
   const correctionModal = qs("#record-correction-modal", root);
   const correctionForm = qs("#record-correction-form", root);
   const correctionMessage = qs("#record-correction-message", root);
+  const multiSizeSection = qs("[data-multi-size-section]", productForm || root);
+  const additionalSizeList = qs("[data-additional-size-list]", productForm || root);
+  const additionalSizeTemplate = qs("[data-additional-size-template]", productForm || root);
+
+  function bindAdditionalSizeRemoveButtons() {
+    if (!additionalSizeList) return;
+    qsa(".js-remove-product-size", additionalSizeList).forEach((button) => {
+      button.onclick = () => button.closest("[data-additional-size-row]")?.remove();
+    });
+  }
+
+  qs("[data-add-product-size]", productForm || root)?.addEventListener("click", () => {
+    const row = additionalSizeTemplate?.content?.firstElementChild?.cloneNode(true);
+    if (!row || !additionalSizeList) return;
+    const reservedProducts = [
+      ...(store.getState().products || []),
+      { id: productForm?.elements.sku?.value || "" },
+      ...qsa("[data-variant-sku]", additionalSizeList).map((input) => ({ id: input.value }))
+    ].filter((product) => product.id);
+    const setValue = (name, value) => {
+      const control = qs(`[name="${name}"]`, row);
+      if (control) control.value = value ?? "";
+    };
+    setValue("variantProductType", productForm?.elements.productType?.value);
+    setValue("variantSku", nextAutomaticProductId(reservedProducts, store.getState().client?.skuFormat));
+    setValue("variantStockCategory", productForm?.elements.stockCategory?.value || FINISHED_PRODUCTS_CATEGORY);
+    setValue("variantUnit", productForm?.elements.unit?.value);
+    setValue("variantReorderPoint", productForm?.elements.reorderPoint?.value);
+    setValue("variantUnitCost", productForm?.elements.unitCost?.value);
+    setValue("variantUnitPrice", productForm?.elements.unitPrice?.value);
+    setValue("variantStatus", productForm?.elements.status?.value || "active");
+    additionalSizeList.appendChild(row);
+    bindAdditionalSizeRemoveButtons();
+    qs('input[name="variantProductType"]', row)?.focus();
+  });
 
   qsa(".js-open-record-correction", root).forEach((button) => {
     button.addEventListener("click", () => {
@@ -2278,6 +2381,8 @@ export function bindInventory({ root, store, signal }) {
     productForm.reset();
     productForm.elements.productId.value = "";
     productForm.elements.sku.value = nextAutomaticProductId(store.getState().products, store.getState().client?.skuFormat);
+    if (additionalSizeList) additionalSizeList.innerHTML = "";
+    if (multiSizeSection) multiSizeSection.hidden = false;
     resetProductionStockFields();
     updateProductionStockVisibility();
     stockImageDataUrl = "";
@@ -2376,8 +2481,33 @@ export function bindInventory({ root, store, signal }) {
     const sku = String(formData.get("sku") || "").trim();
     const existingProductId = String(formData.get("productId") || "").trim();
     const productId = String(existingProductId || sku).trim();
+    const rawProductName = String(formData.get("name") || "").trim();
+    const productType = String(formData.get("productType") || "").trim();
+    const primarySize = String(formData.get("size") || "").trim();
+    const productFamily = existingProductId
+      ? String(store.getState().products.find((product) => product.id === existingProductId)?.productFamily || rawProductName).trim()
+      : rawProductName;
+    const variantName = (type, size) => [productFamily, type, size].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+    const primaryProductName = existingProductId ? rawProductName : variantName(productType, primarySize);
+    const additionalVariants = qsa("[data-additional-size-row]", productForm).map((row) => ({
+      productType: String(qs('[name="variantProductType"]', row)?.value || "").trim(),
+      size: String(qs('input[name="variantSize"]', row)?.value || "").trim(),
+      sku: String(qs('[name="variantSku"]', row)?.value || "").trim(),
+      stockCategory: String(qs('[name="variantStockCategory"]', row)?.value || "").trim(),
+      unit: String(qs('[name="variantUnit"]', row)?.value || "").trim(),
+      stockRaw: String(qs('input[name="variantStock"]', row)?.value || "").trim(),
+      stock: Number(qs('input[name="variantStock"]', row)?.value || 0),
+      reorderPointRaw: String(qs('[name="variantReorderPoint"]', row)?.value || "").trim(),
+      reorderPoint: Number(qs('[name="variantReorderPoint"]', row)?.value || 0),
+      unitCostRaw: String(qs('[name="variantUnitCost"]', row)?.value || "").trim(),
+      unitCost: Number(qs('[name="variantUnitCost"]', row)?.value || 0),
+      unitPriceRaw: String(qs('[name="variantUnitPrice"]', row)?.value || "").trim(),
+      unitPrice: Number(qs('[name="variantUnitPrice"]', row)?.value || 0),
+      status: String(qs('[name="variantStatus"]', row)?.value || "").trim()
+    }));
     const requiredFields = [
       ["name", "product name"],
+      ["productType", "product type"],
       ["sku", "SKU"],
       ["stockCategory", "category"],
       ["unit", "unit"],
@@ -2425,8 +2555,50 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
-    if (duplicateProductName(store.getState(), formData.get("name"), existingProductId)) {
+    const incompleteVariant = additionalVariants.find((variant) => (
+      !variant.productType || !variant.size || !variant.sku || !variant.stockCategory || !variant.unit || !variant.status ||
+      variant.stockRaw === "" || variant.reorderPointRaw === "" || variant.unitCostRaw === "" || variant.unitPriceRaw === "" ||
+      ![variant.stock, variant.reorderPoint, variant.unitCost, variant.unitPrice].every((value) => Number.isFinite(value) && value >= 0)
+    ));
+    const sizeKeys = [
+      `${productType}|${primarySize}`,
+      ...additionalVariants.map((variant) => `${variant.productType}|${variant.size}`)
+    ].map((value) => value.toLowerCase());
+    const duplicateSize = sizeKeys.find((value, index) => sizeKeys.indexOf(value) !== index);
+
+    if (additionalVariants.length && !primarySize) {
+      if (productMessage) productMessage.textContent = "Enter the first product size before adding more sizes.";
+      return;
+    }
+
+    if (incompleteVariant) {
+      if (productMessage) productMessage.textContent = "Complete SKU, category, unit, stock, reorder point, prices, status, type, and size for every added record.";
+      return;
+    }
+
+    if (duplicateSize) {
+      if (productMessage) productMessage.textContent = "Each product size can only be added once.";
+      return;
+    }
+
+    if (duplicateProductName(store.getState(), primaryProductName, existingProductId)) {
       if (productMessage) productMessage.textContent = "A product with this name already exists. Use a different product name.";
+      return;
+    }
+
+    const duplicateVariantName = additionalVariants.find((variant) => duplicateProductName(store.getState(), variantName(variant.productType, variant.size)));
+    if (duplicateVariantName) {
+      if (productMessage) productMessage.textContent = `${variantName(duplicateVariantName.productType, duplicateVariantName.size)} already exists.`;
+      return;
+    }
+
+    const duplicateVariantSku = additionalVariants.find((variant, index) => (
+      duplicateProductSku(store.getState(), variant.sku) ||
+      additionalVariants.findIndex((candidate) => candidate.sku.toLowerCase() === variant.sku.toLowerCase()) !== index ||
+      variant.sku.toLowerCase() === sku.toLowerCase()
+    ));
+    if (duplicateVariantSku) {
+      if (productMessage) productMessage.textContent = `SKU ${duplicateVariantSku.sku} is already in use.`;
       return;
     }
 
@@ -2477,9 +2649,10 @@ export function bindInventory({ root, store, signal }) {
       type: "UPSERT_PRODUCT",
       productId,
       sku,
-      name: formData.get("name"),
-      productFamily: formData.get("productFamily"),
-      size: formData.get("size"),
+      name: primaryProductName,
+      productFamily,
+      productType,
+      size: primarySize,
       stockCategory: formData.get("stockCategory"),
       unit: formData.get("unit"),
       stock: Number(formData.get("stock") || 0),
@@ -2490,6 +2663,29 @@ export function bindInventory({ root, store, signal }) {
       imageUrl: stockImageDataUrl,
       message: existingProductId ? "Stock updated" : "Stock added"
     });
+
+    if (!existingProductId) {
+      additionalVariants.forEach((variant, index) => {
+        store.dispatch({
+          type: "UPSERT_PRODUCT",
+          productId: variant.sku,
+          sku: variant.sku,
+          name: variantName(variant.productType, variant.size),
+          productFamily,
+          productType: variant.productType,
+          size: variant.size,
+          stockCategory: variant.stockCategory,
+          unit: variant.unit,
+          stock: variant.stock,
+          reorderPoint: variant.reorderPoint,
+          unitCost: variant.unitCost,
+          unitPrice: variant.unitPrice,
+          status: variant.status,
+          imageUrl: stockImageDataUrl,
+          message: index === additionalVariants.length - 1 ? "Product sizes added" : ""
+        });
+      });
+    }
 
     if (hasProductionUsage) {
       store.dispatch({
@@ -2521,8 +2717,10 @@ export function bindInventory({ root, store, signal }) {
     productForm.elements.productId.value = product.id;
     productForm.elements.sku.value = product.id;
     productForm.elements.name.value = product.name || "";
-    productForm.elements.productFamily.value = product.productFamily || "";
+    productForm.elements.productType.value = product.productType || "";
     productForm.elements.size.value = product.size || "";
+    if (additionalSizeList) additionalSizeList.innerHTML = "";
+    if (multiSizeSection) multiSizeSection.hidden = true;
     productForm.elements.stockCategory.value = stockCategoryIdForProduct(product);
     productForm.elements.unit.value = productUnit(product);
     productForm.elements.stock.value = product.stock || 0;

@@ -55,13 +55,13 @@ function renderSupabaseReset({ state }) {
         <form id="reset-password-form" class="form-grid" novalidate data-mode="supabase">
           <label class="field">
             <span>New password</span>
-            <input name="newPassword" type="password" autocomplete="new-password">
+            <input name="newPassword" type="password" minlength="8" autocomplete="new-password" required>
           </label>
           <label class="field">
             <span>Confirm new password</span>
-            <input name="confirmPassword" type="password" autocomplete="new-password">
+            <input name="confirmPassword" type="password" minlength="8" autocomplete="new-password" required>
           </label>
-          <span id="reset-password-message" class="muted span-full">Enter your new password twice.</span>
+          <span id="reset-password-message" class="muted span-full">Use 8+ characters with uppercase, lowercase, a number, and a symbol.</span>
           <div class="span-full split">
             <span class="muted">You only need the temporary password once.</span>
             ${textButton({
@@ -123,18 +123,18 @@ function renderLocalReset({ state }) {
         <form id="reset-password-form" class="form-grid" novalidate data-mode="local">
           <label class="field">
             <span>Temporary password</span>
-            <input name="temporaryPassword" type="password" autocomplete="one-time-code">
+            <input name="temporaryPassword" type="password" autocomplete="one-time-code" required>
           </label>
           <label class="field">
             <span>New password</span>
-            <input name="newPassword" type="password" autocomplete="new-password">
+            <input name="newPassword" type="password" minlength="8" autocomplete="new-password" required>
           </label>
           <label class="field span-full">
             <span>Confirm new password</span>
-            <input name="confirmPassword" type="password" autocomplete="new-password">
+            <input name="confirmPassword" type="password" minlength="8" autocomplete="new-password" required>
           </label>
           <span id="reset-password-message" class="muted span-full">
-            Enter the temporary password from the invite, then set a new password.
+            Enter the temporary password, then use 8+ characters with uppercase, lowercase, a number, and a symbol.
           </span>
           <div class="span-full split">
             <span class="muted">This completes your account setup.</span>

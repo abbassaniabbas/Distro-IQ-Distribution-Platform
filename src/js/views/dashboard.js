@@ -1072,6 +1072,10 @@ function productFamilyLabel(product) {
   return withoutSize || product?.name || "Product";
 }
 
+function productTypeLabel(product) {
+  return String(product?.productType || "Standard").trim() || "Standard";
+}
+
 function dailyProductMovementRows(state) {
   const date = todayISO();
   const movementsByProduct = new Map();
@@ -1091,14 +1095,14 @@ function dailyProductMovementRows(state) {
       product,
       ...(movementsByProduct.get(product.id) || { added: 0, dispatched: 0 })
     }))
-    .sort((a, b) => productFamilyLabel(a.product).localeCompare(productFamilyLabel(b.product)) || productSizeLabel(a.product).localeCompare(productSizeLabel(b.product)));
+    .sort((a, b) => productFamilyLabel(a.product).localeCompare(productFamilyLabel(b.product)) || productTypeLabel(a.product).localeCompare(productTypeLabel(b.product)) || productSizeLabel(a.product).localeCompare(productSizeLabel(b.product)));
 }
 
 function renderDailyStockMovementTable(state) {
   return table(
     ["Product", "Added stock", "Dispatched product", "Available", "Status"],
     dailyProductMovementRows(state).map(({ product, added, dispatched }) => `
-      <tr data-search-index="${escapeHtml(`${product.name} ${productFamilyLabel(product)} ${productSizeLabel(product)}`.toLowerCase())}">
+      <tr data-search-index="${escapeHtml(`${product.name} ${productFamilyLabel(product)} ${productTypeLabel(product)} ${productSizeLabel(product)}`.toLowerCase())}">
         <td><strong>${escapeHtml(product.name)}</strong><div class="muted">${escapeHtml(productSizeLabel(product))}</div></td>
         <td>${formatNumber(added)}</td>
         <td>${formatNumber(dispatched)}</td>
@@ -1113,6 +1117,31 @@ function renderDailyStockMovementTable(state) {
   );
 }
 
+function productDispatchPeriods(state, productId) {
+  const today = todayISO();
+  const month = today.slice(0, 7);
+  const year = today.slice(0, 4);
+  const dispatches = (state.stockTransactions || []).filter((transaction) => (
+    transaction.productId === productId &&
+    transaction.movementDirection === "out" &&
+    ["supply", "internal movement"].includes(normalized(transaction.type))
+  ));
+  const totalFor = (prefix) => dispatches
+    .filter((transaction) => String(transaction.date || "").startsWith(prefix))
+    .reduce((total, transaction) => total + Number(transaction.quantity || 0), 0);
+
+  return {
+    today: totalFor(today),
+    month: totalFor(month),
+    year: totalFor(year)
+  };
+}
+
+function renderCeoSizePicture(product) {
+  if (product.imageUrl) return `<img src="${escapeHtml(product.imageUrl)}" alt="${escapeHtml(product.name)}">`;
+  return `<span>${escapeHtml(String(product.name || "PR").slice(0, 2).toUpperCase())}</span>`;
+}
+
 function renderCeoProductStock(state) {
   const rows = dailyProductMovementRows(state).filter(({ product }) => stockCategoryIdForProduct(product) === "finished_products");
   const families = new Map();
@@ -1122,39 +1151,79 @@ function renderCeoProductStock(state) {
     current.push(row);
     families.set(family, current);
   });
-  const selectedFamily = dashboardRouteParams().get("productFamily") || "";
-  const selectedRows = families.get(selectedFamily) || [];
 
   return `
     <div class="ceo-product-family-grid">
-      ${[...families.entries()].map(([family, familyRows]) => `
-        <a class="ceo-product-family-card${family === selectedFamily ? " is-active" : ""}" href="#/dashboard?productFamily=${encodeURIComponent(family)}">
-          <span class="eyebrow">Product</span>
-          <strong>${escapeHtml(family)}</strong>
-          <span>${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"}</span>
-          <b>${formatNumber(familyRows.reduce((total, row) => total + Number(row.product.stock || 0), 0))} available</b>
-        </a>
-      `).join("")}
+      ${[...families.entries()].map(([family, familyRows]) => {
+        const types = [...new Set(familyRows.map(({ product }) => productTypeLabel(product)))].sort();
+        return `
+          <article class="ceo-product-family-card">
+            <button class="ceo-product-family-trigger js-toggle-product-types" type="button" data-product-family="${escapeHtml(family)}" aria-expanded="false">
+              <span class="eyebrow">Product</span>
+              <strong>${escapeHtml(family)}</strong>
+              <span>${formatNumber(types.length)} type${types.length === 1 ? "" : "s"} · ${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"}</span>
+              <b>${formatNumber(familyRows.reduce((total, row) => total + Number(row.product.stock || 0), 0))} available</b>
+            </button>
+            <div class="ceo-product-type-dropdown" data-product-type-dropdown="${escapeHtml(family)}" hidden>
+              ${types.map((type) => `
+                <button class="js-open-product-size-modal" type="button" data-product-family="${escapeHtml(family)}" data-product-type="${escapeHtml(type)}">
+                  <span>${escapeHtml(type)}</span>${icon("arrowRight")}
+                </button>
+              `).join("")}
+            </div>
+          </article>
+        `;
+      }).join("")}
     </div>
-    ${selectedFamily ? `
-      <section class="product-size-drilldown">
-        ${panelHeader(`${selectedFamily} sizes`, "Stock is shown against the exact SKU and size it belongs to")}
-        ${table(
-          ["Size", "SKU", "Added today", "Dispatched today", "Available", "Stock affiliation"],
-          selectedRows.map(({ product, added, dispatched }) => `
-            <tr>
-              <td><strong>${escapeHtml(productSizeLabel(product))}</strong></td>
-              <td>${escapeHtml(product.id)}</td>
-              <td>${formatNumber(added)}</td>
-              <td>${formatNumber(dispatched)}</td>
-              <td>${formatNumber(product.stock || 0)} ${escapeHtml(product.unit || "units")}</td>
-              <td>${statusPill(Number(product.stock || 0) > 0 ? "affiliated" : "no_stock")}</td>
-            </tr>
-          `),
-          "No sizes are registered for this product"
-        )}
+    <div id="ceo-product-size-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal ceo-product-size-modal" role="dialog" aria-modal="true" aria-labelledby="ceo-product-size-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Product stock</span>
+            <h2 id="ceo-product-size-title">Product sizes</h2>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close product sizes", className: "js-close-product-size-modal" })}
+        </header>
+        <div class="ceo-size-picture-grid">
+          ${rows.map(({ product }) => {
+            const periods = productDispatchPeriods(state, product.id);
+            return `
+              <button
+                class="ceo-size-picture-card js-select-product-size"
+                type="button"
+                data-size-family="${escapeHtml(productFamilyLabel(product))}"
+                data-size-type="${escapeHtml(productTypeLabel(product))}"
+                data-size-name="${escapeHtml(product.name)}"
+                data-size-label="${escapeHtml(productSizeLabel(product))}"
+                data-size-sku="${escapeHtml(product.id)}"
+                data-size-available="${escapeHtml(product.stock || 0)}"
+                data-size-unit="${escapeHtml(product.unit || "units")}"
+                data-size-dispatch-day="${escapeHtml(periods.today)}"
+                data-size-dispatch-month="${escapeHtml(periods.month)}"
+                data-size-dispatch-year="${escapeHtml(periods.year)}"
+                hidden
+              >
+                <span class="ceo-size-picture">${renderCeoSizePicture(product)}</span>
+                <span><strong>${escapeHtml(productSizeLabel(product))}</strong><small>${escapeHtml(product.id)}</small></span>
+              </button>
+            `;
+          }).join("")}
+        </div>
+        <article class="selected-size-stock-card" data-selected-size-detail hidden aria-live="polite">
+          <div>
+            <span class="eyebrow" data-size-detail-type>Product type</span>
+            <strong data-size-detail-name>Product size</strong>
+            <small data-size-detail-sku>SKU</small>
+          </div>
+          <div class="selected-size-stock-metrics">
+            <div><span>Available in factory</span><strong data-size-detail-available>0</strong><small data-size-detail-unit>units</small></div>
+            <div><span>Dispatched today</span><strong data-size-detail-day>0</strong></div>
+            <div><span>This month</span><strong data-size-detail-month>0</strong></div>
+            <div><span>This year</span><strong data-size-detail-year>0</strong></div>
+          </div>
+        </article>
       </section>
-    ` : ""}
+    </div>
   `;
 }
 
@@ -2964,6 +3033,65 @@ function bindCeoDashboard({ root, store }) {
   const detailModal = qs("#leadership-detail-modal", root);
   const detailContent = qs("#leadership-detail-content", root);
   const detailTitle = qs("#leadership-detail-title", root);
+  const productSizeModal = qs("#ceo-product-size-modal", root);
+  const productSizeTitle = qs("#ceo-product-size-title", root);
+  const selectedSizeDetail = qs("[data-selected-size-detail]", root);
+
+  function closeProductSizeModal() {
+    if (productSizeModal) productSizeModal.hidden = true;
+  }
+
+  qsa(".js-toggle-product-types", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const family = button.dataset.productFamily || "";
+      const dropdown = qsa("[data-product-type-dropdown]", root).find((item) => item.dataset.productTypeDropdown === family);
+      const willOpen = Boolean(dropdown?.hidden);
+      qsa("[data-product-type-dropdown]", root).forEach((item) => { item.hidden = true; });
+      qsa(".js-toggle-product-types", root).forEach((item) => item.setAttribute("aria-expanded", "false"));
+      if (dropdown && willOpen) {
+        dropdown.hidden = false;
+        button.setAttribute("aria-expanded", "true");
+      }
+    });
+  });
+
+  qsa(".js-open-product-size-modal", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!productSizeModal) return;
+      const family = button.dataset.productFamily || "";
+      const type = button.dataset.productType || "";
+      qsa("[data-size-family]", productSizeModal).forEach((card) => {
+        card.hidden = card.dataset.sizeFamily !== family || card.dataset.sizeType !== type;
+      });
+      if (productSizeTitle) productSizeTitle.textContent = `${family} · ${type}`;
+      if (selectedSizeDetail) selectedSizeDetail.hidden = true;
+      productSizeModal.hidden = false;
+    });
+  });
+
+  qsa(".js-select-product-size", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!selectedSizeDetail) return;
+      const setText = (selector, value) => {
+        const target = qs(selector, selectedSizeDetail);
+        if (target) target.textContent = value;
+      };
+      setText("[data-size-detail-type]", `${button.dataset.sizeType} · ${button.dataset.sizeLabel}`);
+      setText("[data-size-detail-name]", button.dataset.sizeName || "Product size");
+      setText("[data-size-detail-sku]", button.dataset.sizeSku || "SKU");
+      setText("[data-size-detail-available]", formatNumber(button.dataset.sizeAvailable || 0));
+      setText("[data-size-detail-unit]", button.dataset.sizeUnit || "units");
+      setText("[data-size-detail-day]", formatNumber(button.dataset.sizeDispatchDay || 0));
+      setText("[data-size-detail-month]", formatNumber(button.dataset.sizeDispatchMonth || 0));
+      setText("[data-size-detail-year]", formatNumber(button.dataset.sizeDispatchYear || 0));
+      selectedSizeDetail.hidden = false;
+    });
+  });
+
+  qsa(".js-close-product-size-modal", root).forEach((button) => button.addEventListener("click", closeProductSizeModal));
+  productSizeModal?.addEventListener("click", (event) => {
+    if (event.target === productSizeModal) closeProductSizeModal();
+  });
 
   qsa(".js-approve-record-correction", root).forEach((button) => {
     button.addEventListener("click", () => {
