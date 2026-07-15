@@ -52,13 +52,13 @@ function validate(values, mode) {
 
   const password = String(values.password);
   if (mode === "signup" && (
-    password.length < 12 ||
+    password.length < 8 ||
     !/[a-z]/.test(password) ||
     !/[A-Z]/.test(password) ||
     !/\d/.test(password) ||
     !/[^A-Za-z0-9]/.test(password)
   )) {
-    errors.password = "Use 12+ characters with uppercase, lowercase, a number, and a symbol.";
+    errors.password = "Use 8+ characters with uppercase, lowercase, a number, and a symbol.";
   } else if (mode !== "signup" && password.length < 8) {
     errors.password = "Password must be at least 8 characters.";
   }

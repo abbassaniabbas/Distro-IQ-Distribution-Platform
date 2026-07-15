@@ -171,13 +171,13 @@ export function bindPasswordReset({ root, store }) {
     const submitButton = qs('button[type="submit"]', form);
 
     if (
-      String(newPassword).length < 12 ||
+      String(newPassword).length < 8 ||
       !/[a-z]/.test(String(newPassword)) ||
       !/[A-Z]/.test(String(newPassword)) ||
       !/\d/.test(String(newPassword)) ||
       !/[^A-Za-z0-9]/.test(String(newPassword))
     ) {
-      writeMessage(root, "Use 12+ characters with uppercase, lowercase, a number, and a symbol.", true);
+      writeMessage(root, "Use 8+ characters with uppercase, lowercase, a number, and a symbol.", true);
       return;
     }
 

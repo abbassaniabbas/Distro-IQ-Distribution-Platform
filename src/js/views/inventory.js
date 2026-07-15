@@ -14,7 +14,7 @@ import {
   formatPercent,
   statusText
 } from "../services/formatters.js";
-import { currentUserPermissions, salesRepresentativeNames } from "../services/rbac.js";
+import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { printTabularReport } from "../services/report-export.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
@@ -338,6 +338,14 @@ function renderStockProductModal(state, permissions) {
         <label class="field">
           <span>Product name</span>
           <input name="name" placeholder="Plantain Chips 50g" required>
+        </label>
+        <label class="field">
+          <span>Product group</span>
+          <input name="productFamily" placeholder="Plantain Chips, Kuli Kuli">
+        </label>
+        <label class="field">
+          <span>Product size</span>
+          <input name="size" placeholder="50g, 100g, family pack">
         </label>
         <label class="field">
           <span>SKU</span>
@@ -936,6 +944,41 @@ function renderDashboardDispatchModal(state, permissions) {
   `;
 }
 
+export function renderRecordCorrectionModal(submitLabel = "Send for CEO approval") {
+  return `
+    <div id="record-correction-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal compact-record-modal" role="dialog" aria-modal="true" aria-labelledby="record-correction-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Controlled adjustment</span>
+            <h2 id="record-correction-title">Request a correction</h2>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close correction request", className: "js-close-record-correction" })}
+        </header>
+        <form id="record-correction-form" class="manager-form-grid" novalidate>
+          <input type="hidden" name="transactionId">
+          <div class="client-id-box span-full">
+            <span class="eyebrow">Saved record</span>
+            <strong data-correction-record-label>Dispatch</strong>
+          </div>
+          <label class="field">
+            <span>Correct quantity</span>
+            <input name="requestedQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+          </label>
+          <label class="field span-full">
+            <span>Reason for adjustment</span>
+            <textarea name="reason" rows="3" maxlength="500" placeholder="Explain the mistake and why this quantity should change" required></textarea>
+          </label>
+          <div class="manager-form-actions span-full">
+            ${textButton({ iconName: "check", label: submitLabel, className: "primary", type: "submit" })}
+          </div>
+          <span id="record-correction-message" class="field-error span-full" role="status"></span>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
 export function renderStoreKeeperDispatchAction(state) {
   const permissions = currentUserPermissions(state);
 
@@ -945,6 +988,7 @@ export function renderStoreKeeperDispatchAction(state) {
       <span>Record dispatch</span>
     </button>
     ${renderDashboardDispatchModal(state, permissions)}
+    ${renderRecordCorrectionModal()}
   `;
 }
 
@@ -954,7 +998,7 @@ function renderDispatchPage(state, permissions) {
     <section class="panel inventory-layout">
       ${panelHeader("Dispatch log", "Item, quantity, dispatch and expected delivery dates, recipient, destination, and staff responsible")}
       ${table(
-        ["Item", "Quantity", "Dispatched", "Expected", "Recipient", "Destination", "Staff"],
+        ["Item", "Quantity", "Dispatched", "Expected", "Recipient", "Destination", "Staff", "Adjustment"],
         renderDispatchRows(state),
         "No factory dispatches recorded yet"
       )}
@@ -976,6 +1020,10 @@ function dispatchTransactions(state) {
 
 function renderDispatchRows(state) {
   const productMap = getProductMap(state.products);
+  const role = currentUserRole(state);
+  const pendingTransactionIds = new Set((state.correctionRequests || [])
+    .filter((request) => request.status === "pending")
+    .map((request) => request.transactionId));
 
   return [...dispatchTransactions(state)]
     .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || String(b.id || "").localeCompare(String(a.id || "")))
@@ -984,6 +1032,7 @@ function renderDispatchRows(state) {
     const recipient = transaction.recipientName || transaction.partyName || "Factory";
     const destination = transaction.dispatchDestination || transaction.destination || transaction.partyType || "Factory";
     const staff = transaction.staffResponsible || transaction.recordedBy || "Store Keeper";
+    const isAdjustableDispatch = transaction.movementDirection === "out" && ["supply", "internal movement"].includes(String(transaction.type || "").toLowerCase());
     const searchIndex = [
       product?.name,
       transaction.quantity,
@@ -1009,6 +1058,20 @@ function renderDispatchRows(state) {
         </td>
         <td>${escapeHtml(destination)}</td>
         <td>${escapeHtml(staff)}</td>
+        <td>
+          ${!isAdjustableDispatch ? '<span class="muted">—</span>' : pendingTransactionIds.has(transaction.id)
+            ? iconButton({ iconName: "clock", label: "Correction awaiting CEO approval", disabled: true })
+            : iconButton({
+                iconName: "refresh",
+                label: role === "ceo" ? "Adjust dispatch" : "Request dispatch correction",
+                className: "js-open-record-correction",
+                data: {
+                  "transaction-id": transaction.id,
+                  "record-label": `${product?.name || transaction.productId} dispatch`,
+                  quantity: transaction.quantity
+                }
+              })}
+        </td>
       </tr>
     `;
   });
@@ -1622,6 +1685,7 @@ export function renderInventory({ state }) {
       ${renderAssignmentDetailsModal()}
       ${renderProductionTraceabilityModal()}
       ${renderRawMaterialSaleModal(state)}
+      ${renderRecordCorrectionModal(currentUserRole(state) === "ceo" ? "Save adjustment" : "Send for CEO approval")}
     </section>
   `;
 }
@@ -1668,6 +1732,66 @@ export function bindInventory({ root, store, signal }) {
   const rawSaleUnitPriceInput = rawMaterialSaleForm ? qs("[data-raw-sale-unit-price]", rawMaterialSaleForm) : null;
   const productionTraceabilityModal = qs("#production-traceability-modal", root);
   const productionTraceabilityContent = qs("#production-traceability-content", root);
+  const correctionModal = qs("#record-correction-modal", root);
+  const correctionForm = qs("#record-correction-form", root);
+  const correctionMessage = qs("#record-correction-message", root);
+
+  qsa(".js-open-record-correction", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!correctionModal || !correctionForm) return;
+      correctionForm.reset();
+      correctionForm.elements.transactionId.value = button.dataset.transactionId || "";
+      correctionForm.elements.requestedQuantity.value = button.dataset.quantity || "";
+      const label = qs("[data-correction-record-label]", correctionModal);
+      if (label) label.textContent = button.dataset.recordLabel || "Saved record";
+      if (correctionMessage) correctionMessage.textContent = "";
+      correctionModal.hidden = false;
+      correctionForm.elements.requestedQuantity.focus();
+    });
+  });
+
+  qsa(".js-close-record-correction", root).forEach((button) => {
+    button.addEventListener("click", () => { correctionModal.hidden = true; });
+  });
+  correctionModal?.addEventListener("click", (event) => {
+    if (event.target === correctionModal) correctionModal.hidden = true;
+  });
+  correctionForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(correctionForm);
+    const transactionId = String(formData.get("transactionId") || "");
+    const requestedQuantity = Number(formData.get("requestedQuantity") || 0);
+    const reason = String(formData.get("reason") || "").trim();
+    const transaction = (store.getState().stockTransactions || []).find((item) => item.id === transactionId);
+
+    if (correctionMessage) correctionMessage.textContent = "";
+    if (!transaction || !requestedQuantity || requestedQuantity <= 0 || requestedQuantity === Number(transaction.quantity || 0) || !reason) {
+      if (correctionMessage) correctionMessage.textContent = "Enter a different quantity and explain the reason for the adjustment.";
+      return;
+    }
+
+    const actorRole = currentUserRole(store.getState());
+    store.dispatch({
+      type: "REQUEST_RECORD_CORRECTION",
+      transactionId,
+      requestedQuantity,
+      reason,
+      message: "Correction sent for CEO approval"
+    });
+    if (actorRole === "ceo") {
+      const request = (store.getState().correctionRequests || []).find((item) => (
+        item.transactionId === transactionId && item.status === "pending"
+      ));
+      if (request) {
+        store.dispatch({
+          type: "APPROVE_RECORD_CORRECTION",
+          requestId: request.id,
+          message: "Dispatch adjustment saved"
+        });
+      }
+    }
+    correctionModal.hidden = true;
+  });
 
   function bindBatchMaterialRemoveButtons() {
     if (!batchMaterialList) return;
@@ -2354,6 +2478,8 @@ export function bindInventory({ root, store, signal }) {
       productId,
       sku,
       name: formData.get("name"),
+      productFamily: formData.get("productFamily"),
+      size: formData.get("size"),
       stockCategory: formData.get("stockCategory"),
       unit: formData.get("unit"),
       stock: Number(formData.get("stock") || 0),
@@ -2395,6 +2521,8 @@ export function bindInventory({ root, store, signal }) {
     productForm.elements.productId.value = product.id;
     productForm.elements.sku.value = product.id;
     productForm.elements.name.value = product.name || "";
+    productForm.elements.productFamily.value = product.productFamily || "";
+    productForm.elements.size.value = product.size || "";
     productForm.elements.stockCategory.value = stockCategoryIdForProduct(product);
     productForm.elements.unit.value = productUnit(product);
     productForm.elements.stock.value = product.stock || 0;

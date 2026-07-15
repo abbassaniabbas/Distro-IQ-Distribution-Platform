@@ -24,7 +24,7 @@ import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
-import { bindInventory, renderCeoQuickStockActions, renderStoreKeeperDispatchAction } from "./inventory.js";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -1059,6 +1059,132 @@ function renderCeoDrilldownTables(productRows, repRows, supermarketRows) {
   `;
 }
 
+function productSizeLabel(product) {
+  if (String(product?.size || "").trim()) return String(product.size).trim();
+  const match = String(product?.name || "").match(/\b\d+(?:\.\d+)?\s*(?:kg|g|ml|cl|l|pack|packs|pcs|pieces?)\b/i);
+  return match?.[0] || product?.unit || "Standard";
+}
+
+function productFamilyLabel(product) {
+  if (String(product?.productFamily || "").trim()) return String(product.productFamily).trim();
+  const size = productSizeLabel(product);
+  const withoutSize = String(product?.name || "Product").replace(size, "").replace(/[-–—|]+/g, " ").replace(/\s+/g, " ").trim();
+  return withoutSize || product?.name || "Product";
+}
+
+function dailyProductMovementRows(state) {
+  const date = todayISO();
+  const movementsByProduct = new Map();
+
+  (state.stockTransactions || []).filter((transaction) => transaction.date === date).forEach((transaction) => {
+    const row = movementsByProduct.get(transaction.productId) || { added: 0, dispatched: 0 };
+    const type = normalized(transaction.type);
+    if (transaction.movementDirection === "in") row.added += Number(transaction.quantity || 0);
+    if (transaction.movementDirection === "out" && ["supply", "internal movement"].includes(type)) {
+      row.dispatched += Number(transaction.quantity || 0);
+    }
+    movementsByProduct.set(transaction.productId, row);
+  });
+
+  return activeStockProducts(state.products)
+    .map((product) => ({
+      product,
+      ...(movementsByProduct.get(product.id) || { added: 0, dispatched: 0 })
+    }))
+    .sort((a, b) => productFamilyLabel(a.product).localeCompare(productFamilyLabel(b.product)) || productSizeLabel(a.product).localeCompare(productSizeLabel(b.product)));
+}
+
+function renderDailyStockMovementTable(state) {
+  return table(
+    ["Product", "Added stock", "Dispatched product", "Available", "Status"],
+    dailyProductMovementRows(state).map(({ product, added, dispatched }) => `
+      <tr data-search-index="${escapeHtml(`${product.name} ${productFamilyLabel(product)} ${productSizeLabel(product)}`.toLowerCase())}">
+        <td><strong>${escapeHtml(product.name)}</strong><div class="muted">${escapeHtml(productSizeLabel(product))}</div></td>
+        <td>${formatNumber(added)}</td>
+        <td>${formatNumber(dispatched)}</td>
+        <td>${formatNumber(product.stock || 0)} ${escapeHtml(product.unit || "units")}</td>
+        <td>
+          ${statusPill(Number(product.stock || 0) <= 0 ? "sold_out" : "in_stock")}
+          ${product.soldOutAt ? `<div class="muted">Saved ${formatDate(product.soldOutAt)}</div>` : ""}
+        </td>
+      </tr>
+    `),
+    "No products have been added yet"
+  );
+}
+
+function renderCeoProductStock(state) {
+  const rows = dailyProductMovementRows(state).filter(({ product }) => stockCategoryIdForProduct(product) === "finished_products");
+  const families = new Map();
+  rows.forEach((row) => {
+    const family = productFamilyLabel(row.product);
+    const current = families.get(family) || [];
+    current.push(row);
+    families.set(family, current);
+  });
+  const selectedFamily = dashboardRouteParams().get("productFamily") || "";
+  const selectedRows = families.get(selectedFamily) || [];
+
+  return `
+    <div class="ceo-product-family-grid">
+      ${[...families.entries()].map(([family, familyRows]) => `
+        <a class="ceo-product-family-card${family === selectedFamily ? " is-active" : ""}" href="#/dashboard?productFamily=${encodeURIComponent(family)}">
+          <span class="eyebrow">Product</span>
+          <strong>${escapeHtml(family)}</strong>
+          <span>${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"}</span>
+          <b>${formatNumber(familyRows.reduce((total, row) => total + Number(row.product.stock || 0), 0))} available</b>
+        </a>
+      `).join("")}
+    </div>
+    ${selectedFamily ? `
+      <section class="product-size-drilldown">
+        ${panelHeader(`${selectedFamily} sizes`, "Stock is shown against the exact SKU and size it belongs to")}
+        ${table(
+          ["Size", "SKU", "Added today", "Dispatched today", "Available", "Stock affiliation"],
+          selectedRows.map(({ product, added, dispatched }) => `
+            <tr>
+              <td><strong>${escapeHtml(productSizeLabel(product))}</strong></td>
+              <td>${escapeHtml(product.id)}</td>
+              <td>${formatNumber(added)}</td>
+              <td>${formatNumber(dispatched)}</td>
+              <td>${formatNumber(product.stock || 0)} ${escapeHtml(product.unit || "units")}</td>
+              <td>${statusPill(Number(product.stock || 0) > 0 ? "affiliated" : "no_stock")}</td>
+            </tr>
+          `),
+          "No sizes are registered for this product"
+        )}
+      </section>
+    ` : ""}
+  `;
+}
+
+function renderCorrectionApprovals(state) {
+  const pending = (state.correctionRequests || []).filter((request) => request.status === "pending");
+  if (!pending.length) return "";
+
+  return `
+    <section class="panel correction-approval-panel">
+      ${panelHeader("Correction approvals", `${formatNumber(pending.length)} saved record${pending.length === 1 ? "" : "s"} waiting for CEO review`)}
+      <div class="correction-approval-list">
+        ${pending.map((request) => `
+          <article class="correction-approval-row">
+            <div>
+              <span class="eyebrow">${escapeHtml(request.recordType)} · ${escapeHtml(request.transactionId)}</span>
+              <strong>${escapeHtml(request.productName)}</strong>
+              <p>${formatNumber(request.originalQuantity)} → ${formatNumber(request.requestedQuantity)} · ${escapeHtml(request.reason)}</p>
+              <small>Requested by ${escapeHtml(request.requestedBy)}</small>
+            </div>
+            <div class="correction-approval-actions">
+              ${iconButton({ iconName: "check", label: "Approve correction", className: "js-approve-record-correction", data: { "request-id": request.id } })}
+              ${iconButton({ iconName: "x", label: "Reject correction", className: "js-reject-record-correction", data: { "request-id": request.id } })}
+            </div>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
 function renderCeoDashboard(state) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
@@ -1106,6 +1232,18 @@ function renderCeoDashboard(state) {
           iconName: "dashboard"
         })}
       </div>
+
+      ${renderCorrectionApprovals(state)}
+
+      <section class="panel ceo-product-stock-panel">
+        ${panelHeader("Products", "Select chips, kuli kuli, or another product to view its sizes and affiliated stock")}
+        ${renderCeoProductStock(state)}
+      </section>
+
+      <section class="panel">
+        ${panelHeader("Today's factory stock", "Added stock and dispatched products are recorded against each product")}
+        ${renderDailyStockMovementTable(state)}
+      </section>
 
       <div class="ceo-dashboard-layout">
         <section class="panel ceo-chart-panel">
@@ -1220,6 +1358,9 @@ function storeKeeperDispatches(state, limit = 5) {
 function renderStoreKeeperDispatchRows(state) {
   const productMap = getProductMap(state.products || []);
   const dispatches = storeKeeperDispatches(state);
+  const pendingTransactionIds = new Set((state.correctionRequests || [])
+    .filter((request) => request.status === "pending")
+    .map((request) => request.transactionId));
 
   if (!dispatches.length) {
     return '<div class="empty-state">No factory dispatches recorded yet</div>';
@@ -1229,6 +1370,7 @@ function renderStoreKeeperDispatchRows(state) {
     <div class="storekeeper-dispatch-list">
       ${dispatches.map((dispatch) => {
         const product = productMap.get(dispatch.productId);
+        const isAdjustableDispatch = dispatch.movementDirection === "out" && ["supply", "internal movement"].includes(normalized(dispatch.type));
 
         return `
           <article class="storekeeper-dispatch-row" data-search-index="${escapeHtml(`${product?.name || ""} ${dispatch.partyName || ""}`.toLowerCase())}">
@@ -1239,6 +1381,18 @@ function renderStoreKeeperDispatchRows(state) {
             <div>
               ${statusPill(dispatch.movementDirection === "in" ? "in_stock" : "dispatched")}
               <span class="muted">${formatDate(dispatch.date)}</span>
+              ${!isAdjustableDispatch ? "" : pendingTransactionIds.has(dispatch.id)
+                ? iconButton({ iconName: "clock", label: "Correction awaiting CEO approval", disabled: true })
+                : iconButton({
+                    iconName: "refresh",
+                    label: "Request dispatch correction",
+                    className: "js-open-record-correction",
+                    data: {
+                      "transaction-id": dispatch.id,
+                      "record-label": `${product?.name || dispatch.productId} dispatch`,
+                      quantity: dispatch.quantity
+                    }
+                  })}
             </div>
           </article>
         `;
@@ -1284,6 +1438,11 @@ function renderStoreKeeperDashboard(state, permissions) {
           iconName: "truck"
         })}
       </div>
+
+      <section class="panel">
+        ${panelHeader("Today's factory stock", "Every stock addition and product dispatch is kept against the product for the day")}
+        ${renderDailyStockMovementTable(state)}
+      </section>
 
       <div class="dashboard-layout">
         <section class="panel">
@@ -2176,6 +2335,9 @@ function renderRepReportLines(transactions, state) {
   }
 
   const lines = repTransactionLines(transactions, state);
+  const pendingTransactionIds = new Set((state.correctionRequests || [])
+    .filter((request) => request.status === "pending")
+    .map((request) => request.transactionId));
 
   return `
     <div class="rep-report-lines" aria-label="Daily report lines">
@@ -2188,6 +2350,18 @@ function renderRepReportLines(transactions, state) {
           <div>
             <strong>${formatNumber(line.quantity)}</strong>
             <span>${escapeHtml([line.type, formatCurrency(line.amount), line.returnDisposition].filter(Boolean).join(" - "))}</span>
+            ${line.type === "Sale" ? (pendingTransactionIds.has(line.transactionId)
+              ? iconButton({ iconName: "clock", label: "Correction awaiting CEO approval", disabled: true })
+              : iconButton({
+                  iconName: "refresh",
+                  label: "Request sale correction",
+                  className: "js-open-rep-record-correction",
+                  data: {
+                    "transaction-id": line.transactionId,
+                    "record-label": `${line.productName} sale to ${line.customerName}`,
+                    quantity: line.quantity
+                  }
+                })) : ""}
           </div>
         </article>
       `).join("")}
@@ -2320,7 +2494,8 @@ function renderSalesRepDashboard(state) {
 
       <div class="rep-main-grid${fieldReportsEnabled ? "" : " is-report-disabled"}">
         ${renderRepQuickLog(state, assignments)}
-        ${fieldReportsEnabled ? renderRepReportPanel(repName, transactions, summary, existingReport, state) : ""}
+      ${fieldReportsEnabled ? renderRepReportPanel(repName, transactions, summary, existingReport, state) : ""}
+      ${renderRecordCorrectionModal()}
         ${creditControlEnabled ? renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage) : ""}
       </div>
 
@@ -2790,6 +2965,29 @@ function bindCeoDashboard({ root, store }) {
   const detailContent = qs("#leadership-detail-content", root);
   const detailTitle = qs("#leadership-detail-title", root);
 
+  qsa(".js-approve-record-correction", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      store.dispatch({
+        type: "APPROVE_RECORD_CORRECTION",
+        requestId: button.dataset.requestId,
+        message: "Correction approved and stock records updated"
+      });
+    });
+  });
+
+  qsa(".js-reject-record-correction", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const note = window.prompt("Why is this correction being rejected?", "Correction not approved");
+      if (note === null || !note.trim()) return;
+      store.dispatch({
+        type: "REJECT_RECORD_CORRECTION",
+        requestId: button.dataset.requestId,
+        note,
+        message: "Correction rejected"
+      });
+    });
+  });
+
   function closeDetailModal() {
     if (detailModal) detailModal.hidden = true;
   }
@@ -2887,6 +3085,50 @@ function bindSalesRepDashboard({ root, store }) {
   const walkInPaymentNote = qs("[data-walk-in-payment-note]", root);
   const returnProductSelect = qs('select[name="returnAssignmentId"]', root);
   const returnCustomerSelect = qs("[data-rep-return-customer]", root);
+  const correctionModal = qs("#record-correction-modal", root);
+  const correctionForm = qs("#record-correction-form", root);
+  const correctionMessage = qs("#record-correction-message", root);
+
+  qsa(".js-open-rep-record-correction", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!correctionModal || !correctionForm) return;
+      correctionForm.reset();
+      correctionForm.elements.transactionId.value = button.dataset.transactionId || "";
+      correctionForm.elements.requestedQuantity.value = button.dataset.quantity || "";
+      const label = qs("[data-correction-record-label]", correctionModal);
+      if (label) label.textContent = button.dataset.recordLabel || "Saved sale";
+      if (correctionMessage) correctionMessage.textContent = "";
+      correctionModal.hidden = false;
+      correctionForm.elements.requestedQuantity.focus();
+    });
+  });
+  qsa(".js-close-record-correction", root).forEach((button) => {
+    button.addEventListener("click", () => { correctionModal.hidden = true; });
+  });
+  correctionModal?.addEventListener("click", (event) => {
+    if (event.target === correctionModal) correctionModal.hidden = true;
+  });
+  correctionForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(correctionForm);
+    const transactionId = String(formData.get("transactionId") || "");
+    const requestedQuantity = Number(formData.get("requestedQuantity") || 0);
+    const reason = String(formData.get("reason") || "").trim();
+    const transaction = (store.getState().stockTransactions || []).find((item) => item.id === transactionId);
+    if (correctionMessage) correctionMessage.textContent = "";
+    if (!transaction || !requestedQuantity || requestedQuantity <= 0 || requestedQuantity === Number(transaction.quantity || 0) || !reason) {
+      if (correctionMessage) correctionMessage.textContent = "Enter a different quantity and explain the reason for the adjustment.";
+      return;
+    }
+    store.dispatch({
+      type: "REQUEST_RECORD_CORRECTION",
+      transactionId,
+      requestedQuantity,
+      reason,
+      message: "Correction sent for CEO approval"
+    });
+    correctionModal.hidden = true;
+  });
 
   function applyWalkInPaymentRule() {
     if (!saleCustomerSelect || !salePaymentSelect) return;

@@ -241,6 +241,7 @@ function ensureStateShape(value) {
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
     productionBatches: Array.isArray(state.productionBatches) ? state.productionBatches : [],
     offlineSalesQueue: Array.isArray(state.offlineSalesQueue) ? state.offlineSalesQueue : [],
+    correctionRequests: Array.isArray(state.correctionRequests) ? state.correctionRequests : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
     orders: normalizeOrders(mergeSeedRecords(state.orders, seedData.orders)),
     routes: mergeSeedRecords(state.routes, seedData.routes),
@@ -412,6 +413,8 @@ function productChangeDetails(previousProduct, nextProduct) {
   const trackedFields = [
     ["id", "SKU"],
     ["name", "product name"],
+    ["productFamily", "product group"],
+    ["size", "product size"],
     ["stockCategory", "stock type"],
     ["stock", "stock"],
     ["reorderPoint", "reorder point"],
@@ -902,6 +905,7 @@ function reducer(currentState, action) {
         creditLimitHistory: [],
         productionBatches: [],
         offlineSalesQueue: [],
+        correctionRequests: [],
         retailers: [],
         orders: [],
         routes: [],
@@ -1323,6 +1327,7 @@ function reducer(currentState, action) {
       });
       finishedProduct.stock = Number(finishedProduct.stock || 0) + quantityProduced;
       finishedProduct.updatedAt = todayISO();
+      finishedProduct.soldOutAt = "";
       state.productionBatches = [{
         id: batchId,
         clientId: state.client?.id || "",
@@ -1454,6 +1459,7 @@ function reducer(currentState, action) {
 
       product.stock = Number(product.stock || 0) - quantity;
       product.updatedAt = saleDate;
+      product.soldOutAt = product.stock <= 0 ? saleDate : "";
       if (paymentType === "credit") updateCreditBalance(state, customerName, amount);
       state.stockTransactions = [{
         id: transactionId,
@@ -1517,6 +1523,7 @@ function reducer(currentState, action) {
 
       product.stock = Number(product.stock || 0) + quantity;
       product.updatedAt = todayISO();
+      product.soldOutAt = "";
       const transactionId = createId("TXN");
       state.stockTransactions = [{
         id: transactionId,
@@ -1634,6 +1641,7 @@ function reducer(currentState, action) {
       if (transactionType === "return" && returnDisposition === "to_store") {
         product.stock = Number(product.stock || 0) + quantity;
         product.updatedAt = todayISO();
+        product.soldOutAt = "";
       }
 
       const transactionId = createId("TXN");
@@ -1828,6 +1836,8 @@ function reducer(currentState, action) {
       const product = {
         id: nextProductId,
         name: String(action.name || existingProduct?.name || "New product").trim(),
+        productFamily: String(action.productFamily ?? existingProduct?.productFamily ?? "").trim(),
+        size: String(action.size ?? existingProduct?.size ?? "").trim(),
         category: categoryNameForStockCategory(stockCategory),
         stockCategory,
         unit: String(action.unit || existingProduct?.unit || "unit").trim(),
@@ -1840,6 +1850,7 @@ function reducer(currentState, action) {
         unitPrice: Math.max(0, Number(action.unitPrice ?? existingProduct?.unitPrice ?? 0)),
         imageUrl: String(action.imageUrl ?? existingProduct?.imageUrl ?? "").trim(),
         status,
+        soldOutAt: Math.max(0, Number(action.stock ?? existingProduct?.stock ?? 0)) > 0 ? "" : (existingProduct?.soldOutAt || ""),
         equipmentStatus: stockCategory === "equipment" ? (existingProduct?.equipmentStatus || "in_stock") : undefined,
         updatedAt: todayISO()
       };
@@ -1926,6 +1937,7 @@ function reducer(currentState, action) {
 
       product.stock = Math.max(0, Number(product.stock || 0) - quantity);
       product.updatedAt = dispatchDate;
+      product.soldOutAt = product.stock <= 0 ? dispatchDate : "";
 
       if (isRepresentativeDispatch) {
         state.stockAssignments = [
@@ -1937,6 +1949,7 @@ function reducer(currentState, action) {
             repMembershipId: representativeAccount?.id || "",
             productId: product.id,
             assignedAt: dispatchDate,
+            transactionId,
             assigned: quantity,
             sold: 0,
             returned: 0,
@@ -1983,10 +1996,12 @@ function reducer(currentState, action) {
           staffResponsible: staffName,
           date: dispatchDate,
           recordedBy: staffName,
+          recordedByUserId: state.user?.id || "",
           movementDirection: "out",
           creditImpact: 0,
           orderId,
-          expectedDeliveryAt: isInternalDispatch ? "" : expectedDeliveryAt
+          expectedDeliveryAt: isInternalDispatch ? "" : expectedDeliveryAt,
+          soldOutAfterDispatch: product.stock <= 0
         },
         ...(state.stockTransactions || [])
       ];
@@ -2009,6 +2024,171 @@ function reducer(currentState, action) {
         });
       }
 
+      return state;
+    }
+
+    case "REQUEST_RECORD_CORRECTION": {
+      const role = currentUserRole(state);
+      const transaction = (state.stockTransactions || []).find((item) => item.id === action.transactionId);
+      const requestedQuantity = Number(action.requestedQuantity || 0);
+      const reason = String(action.reason || "").trim();
+      const actorName = currentActorName(state);
+      const transactionType = normalized(transaction?.type);
+      const isDispatch = transaction?.movementDirection === "out" && ["supply", "internal movement"].includes(transactionType);
+      const isRepSale = transactionType === "sale" && (
+        transaction?.repUserId === state.user?.id || normalized(transaction?.recordedBy) === normalized(actorName)
+      );
+      const ownsDispatch = transaction?.recordedByUserId
+        ? transaction.recordedByUserId === state.user?.id
+        : normalized(transaction?.recordedBy) === normalized(actorName);
+      const mayRequest = (role === "store_keeper" && isDispatch && ownsDispatch) || (role === "sales_rep" && isRepSale) || (role === "ceo" && (isDispatch || isRepSale));
+      const alreadyPending = (state.correctionRequests || []).some((request) => (
+        request.transactionId === transaction?.id && request.status === "pending"
+      ));
+
+      if (!transaction || !mayRequest || alreadyPending || !reason || !Number.isFinite(requestedQuantity) || requestedQuantity <= 0 || requestedQuantity === Number(transaction.quantity || 0)) {
+        return state;
+      }
+
+      state.correctionRequests = [{
+        id: createId("COR"),
+        clientId: state.client?.id || "",
+        transactionId: transaction.id,
+        recordType: isDispatch ? "dispatch" : "sale",
+        productId: transaction.productId,
+        productName: transaction.productName || state.products.find((product) => product.id === transaction.productId)?.name || transaction.productId,
+        originalQuantity: Number(transaction.quantity || 0),
+        requestedQuantity,
+        reason: reason.slice(0, 500),
+        requestedBy: actorName,
+        requestedByUserId: state.user?.id || "",
+        requestedByRole: role,
+        status: "pending",
+        createdAt: new Date().toISOString()
+      }, ...(state.correctionRequests || [])];
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "requested",
+        recordType: "record_correction",
+        recordLabel: transaction.id,
+        summary: `${actorName} requested a ${isDispatch ? "dispatch" : "sale"} correction: ${reason}`
+      });
+      return state;
+    }
+
+    case "APPROVE_RECORD_CORRECTION": {
+      if (currentUserRole(state) !== "ceo") return state;
+
+      const request = (state.correctionRequests || []).find((item) => item.id === action.requestId);
+      if (!request || request.status !== "pending") return state;
+
+      const transaction = (state.stockTransactions || []).find((item) => item.id === request.transactionId);
+      const product = state.products.find((item) => item.id === transaction?.productId);
+      const nextQuantity = Number(request.requestedQuantity || 0);
+      const previousQuantity = Number(transaction?.quantity || 0);
+      const delta = nextQuantity - previousQuantity;
+      let applied = false;
+
+      if (transaction && product && request.recordType === "dispatch") {
+        const assignment = (state.stockAssignments || []).find((item) => (
+          item.transactionId === transaction.id || (
+            item.productId === transaction.productId &&
+            normalized(item.repName) === normalized(transaction.partyName) &&
+            dateOnly(item.assignedAt) === dateOnly(transaction.date)
+          )
+        ));
+        const nextAssigned = assignment ? Number(assignment.assigned || 0) + delta : 0;
+        const committed = assignment ? Number(assignment.sold || 0) + Number(assignment.returned || 0) : 0;
+
+        if (nextQuantity > 0 && delta <= Number(product.stock || 0) && (!assignment || nextAssigned >= committed)) {
+          product.stock = Number(product.stock || 0) - delta;
+          product.updatedAt = todayISO();
+          product.soldOutAt = product.stock <= 0 ? todayISO() : "";
+          transaction.quantity = nextQuantity;
+          transaction.amount = nextQuantity * Number(transaction.unitPrice || product.unitPrice || 0);
+          transaction.correctedAt = new Date().toISOString();
+          transaction.correctionReason = request.reason;
+          if (assignment) assignment.assigned = nextAssigned;
+          const order = (state.orders || []).find((item) => item.id === transaction.orderId);
+          const orderItem = order?.items?.find((item) => item.productId === transaction.productId);
+          if (orderItem) orderItem.quantity = nextQuantity;
+          applied = true;
+        }
+      }
+
+      if (transaction && request.recordType === "sale") {
+        const assignmentIds = transaction.assignmentIds || [transaction.assignmentId].filter(Boolean);
+        const assignments = (state.stockAssignments || []).filter((item) => assignmentIds.includes(item.id));
+        const availableToAdd = assignments.reduce((total, item) => total + assignmentOutstanding(item), 0);
+        const recordedAllocations = new Map((transaction.assignmentAllocations || []).map((item) => [item.assignmentId, Number(item.quantity || 0)]));
+        const removable = [...recordedAllocations.values()].reduce((total, quantity) => total + quantity, 0);
+
+        if (nextQuantity > 0 && ((delta >= 0 && delta <= availableToAdd) || (delta < 0 && -delta <= removable))) {
+          let remaining = Math.abs(delta);
+          const orderedAssignments = delta >= 0 ? assignments : [...assignments].reverse();
+          orderedAssignments.forEach((assignment) => {
+            if (remaining <= 0) return;
+            const currentAllocation = recordedAllocations.get(assignment.id) || 0;
+            const adjustable = delta >= 0 ? assignmentOutstanding(assignment) : currentAllocation;
+            const change = Math.min(adjustable, remaining);
+            assignment.sold = Number(assignment.sold || 0) + (delta >= 0 ? change : -change);
+            recordedAllocations.set(assignment.id, currentAllocation + (delta >= 0 ? change : -change));
+            refreshAssignmentCompletion(state, assignment);
+            remaining -= change;
+          });
+
+          transaction.quantity = nextQuantity;
+          transaction.amount = nextQuantity * Number(transaction.unitPrice || 0);
+          transaction.assignmentAllocations = [...recordedAllocations.entries()]
+            .filter(([, quantity]) => quantity > 0)
+            .map(([assignmentId, quantity]) => ({ assignmentId, quantity }));
+          transaction.correctedAt = new Date().toISOString();
+          transaction.correctionReason = request.reason;
+          const order = (state.orders || []).find((item) => item.id === transaction.orderId);
+          const orderItem = order?.items?.find((item) => item.productId === transaction.productId);
+          if (orderItem) orderItem.quantity = nextQuantity;
+          const invoice = (state.invoices || []).find((item) => item.transactionId === transaction.id);
+          const invoiceItem = invoice?.items?.find((item) => item.productId === transaction.productId);
+          if (invoiceItem) invoiceItem.quantity = nextQuantity;
+          if (invoice) invoice.amount = nextQuantity * Number(transaction.unitPrice || 0);
+          if (String(transaction.paymentType || "").toLowerCase().includes("credit")) {
+            updateCreditBalance(state, transaction.partyName, delta * Number(transaction.unitPrice || 0));
+          }
+          applied = true;
+        }
+      }
+
+      if (!applied) return state;
+
+      request.status = "approved";
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "record_correction",
+        recordLabel: request.transactionId,
+        summary: `Approved ${request.recordType} correction from ${request.originalQuantity} to ${request.requestedQuantity}: ${request.reason}`
+      });
+      return state;
+    }
+
+    case "REJECT_RECORD_CORRECTION": {
+      if (currentUserRole(state) !== "ceo") return state;
+      const request = (state.correctionRequests || []).find((item) => item.id === action.requestId);
+      if (!request || request.status !== "pending") return state;
+      request.status = "rejected";
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      request.reviewNote = String(action.note || "Correction not approved").trim().slice(0, 500);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "rejected",
+        recordType: "record_correction",
+        recordLabel: request.transactionId,
+        summary: `Rejected ${request.recordType} correction requested by ${request.requestedBy}`
+      });
       return state;
     }
 
@@ -2292,6 +2472,7 @@ function reducer(currentState, action) {
       if (product && quantity > 0) {
         product.stock = Number(product.stock || 0) + quantity;
         product.updatedAt = todayISO();
+        product.soldOutAt = "";
         state.stockTransactions = [
           {
             id: createId("TXN"),
@@ -2336,6 +2517,7 @@ function reducer(currentState, action) {
       if (product && quantity > 0 && quantity <= Number(product.stock || 0) && reason) {
         product.stock = Math.max(0, Number(product.stock || 0) - quantity);
         product.updatedAt = todayISO();
+        product.soldOutAt = product.stock <= 0 ? todayISO() : "";
         state.stockTransactions = [
           {
             id: createId("TXN"),

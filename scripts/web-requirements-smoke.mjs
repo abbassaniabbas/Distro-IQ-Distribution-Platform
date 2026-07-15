@@ -720,6 +720,89 @@ assert.equal(store.getState().accounts.some((account) => account.id === security
 store.dispatch({ type: "DELETE_ACCOUNT", accountId: "membership-ceo" });
 assert.equal(store.getState().accounts.some((account) => account.id === "membership-ceo"), true, "CEO accounts must be protected from staff deletion");
 
+authenticate("user-manager");
+store.dispatch({ type: "RESTOCK_PRODUCT", productId: "SKU-CHIPS", quantity: 10 });
+authenticate("user-store");
+store.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  productId: "SKU-CHIPS",
+  quantity: 4,
+  recipientType: "Sales Representative",
+  recipientName: "Amina Rep",
+  destination: "Correction test route",
+  dispatchDate: "2026-07-14",
+  expectedDeliveryAt: "2099-07-15",
+  staffName: "Tola Store"
+});
+const correctionDispatch = store.getState().stockTransactions.find((transaction) => transaction.dispatchDestination === "Correction test route");
+assert.ok(correctionDispatch, "dispatch correction fixture must be recorded");
+const correctionStockBefore = store.getState().products.find((product) => product.id === "SKU-CHIPS").stock;
+const correctionAssignmentBefore = store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id)?.assigned;
+store.dispatch({
+  type: "REQUEST_RECORD_CORRECTION",
+  transactionId: correctionDispatch.id,
+  requestedQuantity: Number(correctionDispatch.quantity) - 1,
+  reason: "One carton was entered twice"
+});
+const dispatchCorrectionRequest = store.getState().correctionRequests.find((request) => request.transactionId === correctionDispatch.id && request.status === "pending");
+assert.ok(dispatchCorrectionRequest, "Store Keeper must be able to request a reasoned dispatch correction");
+globalThis.window.location.hash = "#/inventory?tab=dispatch";
+assert.match(renderInventory({ state: store.getState() }), /Correction awaiting CEO approval/);
+store.dispatch({ type: "APPROVE_RECORD_CORRECTION", requestId: dispatchCorrectionRequest.id });
+assert.equal(store.getState().correctionRequests.find((request) => request.id === dispatchCorrectionRequest.id).status, "pending", "Store Keeper must not approve a correction");
+
+authenticate("user-manager");
+const correctionApprovalDashboard = renderDashboard({ state: store.getState() });
+assert.match(correctionApprovalDashboard, /Correction approvals/);
+assert.match(correctionApprovalDashboard, /One carton was entered twice/);
+assert.match(correctionApprovalDashboard, /Added stock/);
+assert.match(correctionApprovalDashboard, /Dispatched product/);
+assert.match(correctionApprovalDashboard, /productFamily=Plantain%20Chips/);
+store.dispatch({ type: "APPROVE_RECORD_CORRECTION", requestId: dispatchCorrectionRequest.id });
+assert.equal(store.getState().correctionRequests.find((request) => request.id === dispatchCorrectionRequest.id).status, "approved");
+assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionDispatch.id).quantity, Number(correctionDispatch.quantity) - 1);
+assert.equal(store.getState().products.find((product) => product.id === "SKU-CHIPS").stock, correctionStockBefore + 1);
+if (Number.isFinite(correctionAssignmentBefore)) {
+  assert.equal(store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id).assigned, correctionAssignmentBefore - 1);
+}
+globalThis.window.location.hash = "#/dashboard?productFamily=Plantain%20Chips";
+const productSizeDashboard = renderDashboard({ state: store.getState() });
+assert.match(productSizeDashboard, /Plantain Chips sizes/);
+assert.match(productSizeDashboard, /Stock affiliation/);
+
+authenticate("user-rep");
+const correctionSaleAssignment = store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id);
+store.dispatch({
+  type: "LOG_REP_TRANSACTION",
+  assignmentIds: [correctionSaleAssignment.id],
+  productId: "SKU-CHIPS",
+  customerId: "",
+  customerName: "Walk-in customer",
+  customerType: "Walk-in",
+  quantity: 1,
+  transactionType: "sale",
+  paymentType: "cash",
+  repName: "Amina Rep"
+});
+const correctionSale = store.getState().stockTransactions.find((transaction) => (
+  transaction.type === "sale" && transaction.assignmentIds?.includes(correctionSaleAssignment.id)
+));
+assert.ok(correctionSale, "sale correction fixture must be recorded");
+store.dispatch({
+  type: "REQUEST_RECORD_CORRECTION",
+  transactionId: correctionSale.id,
+  requestedQuantity: Number(correctionSale.quantity) + 1,
+  reason: "Customer received one additional pack"
+});
+const saleCorrectionRequest = store.getState().correctionRequests.find((request) => request.transactionId === correctionSale.id && request.status === "pending");
+assert.ok(saleCorrectionRequest, "Sales Representative must request approval instead of editing a saved sale");
+assert.match(renderDashboard({ state: scopeStateForCurrentRole(store.getState()) }), /Correction awaiting CEO approval/);
+authenticate("user-manager");
+store.dispatch({ type: "APPROVE_RECORD_CORRECTION", requestId: saleCorrectionRequest.id });
+assert.equal(store.getState().correctionRequests.find((request) => request.id === saleCorrectionRequest.id).status, "approved");
+assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionSale.id).quantity, 2);
+assert.equal(store.getState().invoices.find((invoice) => invoice.transactionId === correctionSale.id).items[0].quantity, 2);
+
 const secondClient = { id: "client-other", companyName: "Other Factory", currencySymbol: "₦" };
 store.dispatch({
   type: "SET_AUTHENTICATED_WORKSPACE",
