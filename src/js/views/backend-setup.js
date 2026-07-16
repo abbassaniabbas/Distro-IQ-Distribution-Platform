@@ -1,22 +1,16 @@
-import { textButton, panelHeader } from "../ui/components.js";
+import { textButton } from "../ui/components.js";
+import { icon } from "../ui/icons.js";
 
-export function renderBackendSetup({ state }) {
-  const error = state.backend?.error;
-
+export function renderBackendSetup() {
   return `
-    <section class="view">
-      <section class="panel setup-card">
-        ${panelHeader("Setup required", "Your company sign-in is not ready yet")}
-        ${error ? '<div class="field-error">We could not open the workspace connection. Please ask an administrator to check setup.</div>' : ""}
-        <div class="client-id-box">
-          <span class="eyebrow">What to do next</span>
-          <strong>Finish workspace connection</strong>
+    <section class="view connection-view">
+      <section class="panel connection-card" role="alert" aria-labelledby="connection-status-title">
+        <span class="connection-status-icon" aria-hidden="true">${icon("alert")}</span>
+        <div>
+          <h1 id="connection-status-title">No connection</h1>
+          <p>Check your connection and try again.</p>
         </div>
-        <div class="stack">
-          <p>An administrator needs to complete the secure sign-in setup before users can continue.</p>
-          <p>Setup instructions are available in the project README.</p>
-          ${error ? textButton({ iconName: "refresh", label: "Try again", className: "primary", data: { "retry-workspace": "true" } }) : ""}
-        </div>
+        ${textButton({ iconName: "refresh", label: "Try again", className: "primary", data: { "retry-workspace": "true" } })}
       </section>
     </section>
   `;

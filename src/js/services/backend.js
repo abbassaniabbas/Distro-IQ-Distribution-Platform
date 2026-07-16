@@ -228,6 +228,10 @@ function friendlyEdgeFunctionMessage(message, fallback = "The request could not 
     return fallback;
   }
 
+  if (lower.includes("failed to send a request") || lower.includes("failed to fetch")) {
+    return "We could not reach the staff account service. Check your connection and try again.";
+  }
+
   if (lower === "missing invite fields" || lower.includes("redirectto")) {
     return "The invite service on Supabase is outdated. Deploy the updated invite-user function, then try again.";
   }
@@ -693,15 +697,25 @@ export async function inviteAccount({ client, name, email, phoneNumber, role }) 
 
   const supabase = await getSupabaseClient();
   const normalizedEmail = email.trim().toLowerCase();
-  const { data, error } = await supabase.functions.invoke("invite-user", {
-    body: {
-      clientId: client.id,
-      name: name.trim(),
-      email: normalizedEmail,
-      phoneNumber: String(phoneNumber || "").trim(),
-      role
-    }
-  });
+  const inviteBody = {
+    clientId: client.id,
+    name: name.trim(),
+    email: normalizedEmail,
+    phoneNumber: String(phoneNumber || "").trim(),
+    role
+  };
+  let result = await supabase.functions.invoke("invite-user", { body: inviteBody });
+  const isTransientFetchFailure = result.error && (
+    result.error.name === "FunctionsFetchError" ||
+    /failed to (send a request|fetch)/i.test(String(result.error.message || ""))
+  );
+
+  if (isTransientFetchFailure) {
+    await new Promise((resolve) => globalThis.setTimeout(resolve, 650));
+    result = await supabase.functions.invoke("invite-user", { body: inviteBody });
+  }
+
+  const { data, error } = result;
 
   if (error) {
     throw new Error(await edgeFunctionErrorMessage(error, "The team member could not be created."));

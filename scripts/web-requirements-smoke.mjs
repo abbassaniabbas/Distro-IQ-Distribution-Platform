@@ -18,6 +18,7 @@ import { renderInventory } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
 import { renderOrders } from "../src/js/views/orders.js";
 import { renderPasswordReset } from "../src/js/views/password-reset.js";
+import { renderPurchaseOrders } from "../src/js/views/purchase-orders.js";
 import { renderCustomerDetails, renderRetailers } from "../src/js/views/retailers.js";
 import { renderSettings } from "../src/js/views/settings.js";
 import { buildLoginDetailsEmail } from "../src/js/views/team.js";
@@ -36,7 +37,8 @@ const accounts = [
   { id: "membership-rep", clientId: client.id, userId: "user-rep", name: "Amina Rep", email: "amina@example.com", role: "sales_rep", status: "active" },
   { id: "membership-manager", clientId: client.id, userId: "user-manager", name: "Musa Manager", email: "musa@example.com", role: "manager", status: "active" },
   { id: "membership-ceo", clientId: client.id, userId: "user-ceo", name: "Chioma CEO", email: "chioma@example.com", role: "ceo", status: "active" },
-  { id: "membership-store", clientId: client.id, userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" }
+  { id: "membership-store", clientId: client.id, userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" },
+  { id: "membership-admin", clientId: client.id, userId: "user-admin", name: "Ada Admin", email: "ada@example.com", role: "admin", status: "active" }
 ];
 const store = createStore();
 
@@ -49,11 +51,15 @@ assert.equal(nextFormattedId("SKU-{0000}", ["SKU-0001", "SKU-0008"], "SKU"), "SK
 assert.equal(nextFormattedId("INV-{000}", ["INV-001"], "INV"), "INV-002");
 
 const loginHtml = renderAuth({ routeId: "login" });
-assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 3, "login must show the three supported role cards");
+assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 4, "login must show the four supported role cards");
+assert.match(loginHtml, /value="admin"/, "Admin must be available as a distinct sign-in role");
 assert.doesNotMatch(loginHtml, /value="accountant"|>Accountant</, "the removed Accountant role must not appear at login");
 const backendErrorHtml = renderBackendSetup({ state: { backend: { error: "Temporary connection error" } } });
 assert.match(backendErrorHtml, /data-retry-workspace="true"/);
 assert.match(backendErrorHtml, /Try again/);
+assert.match(backendErrorHtml, /No connection/);
+assert.match(backendErrorHtml, /Check your connection and try again/);
+assert.doesNotMatch(backendErrorHtml, /Setup required|company sign-in|workspace connection|What to do next|project README/);
 const passwordSetupHtml = renderPasswordReset({ state: { session: { user: { id: "password-user" } }, user: { email: "password@example.com" }, client: { companyName: "Test Factory" } } });
 assert.match(passwordSetupHtml, /minlength="8"/);
 assert.match(passwordSetupHtml, /Use 8\+ characters/);
@@ -105,6 +111,7 @@ assert.match(managerSettings, /data-open-delete-factory/);
 const managerTeam = renderTeam({ state: store.getState() });
 assert.doesNotMatch(managerTeam, /<option value="ceo">/, "CEO must not be assignable as a staff role");
 assert.doesNotMatch(managerTeam, /<option value="manager">/);
+assert.match(managerTeam, /<option value="admin">Admin<\/option>/);
 assert.match(managerTeam, /team-member-list/);
 assert.match(managerTeam, /data-team-account-id="membership-rep"/);
 assert.match(managerTeam, /team-account-modal/);
@@ -1022,7 +1029,9 @@ const multiDispatchStore = createStore();
 const multiDispatchClient = { id: "client-multi-dispatch", companyName: "Multi Dispatch Factory", currencySymbol: "₦" };
 const multiDispatchAccounts = [
   { id: "multi-ceo", clientId: multiDispatchClient.id, userId: "multi-ceo-user", name: "Multi CEO", email: "multi-ceo@example.com", role: "ceo", status: "active" },
-  { id: "multi-rep", clientId: multiDispatchClient.id, userId: "multi-rep-user", name: "Multi Rep", email: "multi-rep@example.com", role: "sales_rep", status: "active" }
+  { id: "multi-rep", clientId: multiDispatchClient.id, userId: "multi-rep-user", name: "Multi Rep", email: "multi-rep@example.com", role: "sales_rep", status: "active" },
+  { id: "multi-admin", clientId: multiDispatchClient.id, userId: "multi-admin-user", name: "Multi Admin", email: "multi-admin@example.com", role: "admin", status: "active" },
+  { id: "multi-store", clientId: multiDispatchClient.id, userId: "multi-store-user", name: "Multi Store", email: "multi-store@example.com", role: "store_keeper", status: "active" }
 ];
 multiDispatchStore.dispatch({
   type: "SET_AUTHENTICATED_WORKSPACE",
@@ -1127,6 +1136,97 @@ assert.equal(multiDispatchStore.getState().invoices[0].paymentType, "cash");
 assert.equal(multiDispatchStore.getState().invoices[0].status, "paid");
 assert.equal(multiDispatchStore.getState().invoices[0].amount, 1300);
 assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0, "cash dispatch must not increase representative credit");
+
+function authenticateMulti(userId) {
+  const account = multiDispatchAccounts.find((item) => item.userId === userId);
+  multiDispatchStore.dispatch({
+    type: "SET_AUTHENTICATED_WORKSPACE",
+    session: { user: { id: userId } },
+    user: { id: userId, email: account.email, user_metadata: { full_name: account.name } },
+    client: multiDispatchClient,
+    accounts: multiDispatchAccounts,
+    invites: [],
+    featureModules: [],
+    messages: [],
+    activityLogs: multiDispatchStore.getState().activityLogs
+  });
+}
+
+authenticateMulti("multi-rep-user");
+assert.equal(currentUserPermissions(multiDispatchStore.getState()).canRequestStock, true);
+assert.match(renderDashboard({ state: scopeStateForCurrentRole(multiDispatchStore.getState()) }), /Request stock/);
+multiDispatchStore.dispatch({
+  type: "SUBMIT_STOCK_REQUEST",
+  items: [
+    { productId: "MULTI-A", quantity: 2 },
+    { productId: "MULTI-B", quantity: 3 }
+  ],
+  neededBy: "2099-07-20",
+  priority: "urgent",
+  notes: "Weekend route allocation"
+});
+const stockRequest = multiDispatchStore.getState().stockRequests[0];
+assert.ok(stockRequest?.id.startsWith("REQ-"), "Sales Representative must be able to submit a stock request");
+assert.equal(stockRequest.status, "submitted");
+assert.equal(stockRequest.items.length, 2);
+
+authenticateMulti("multi-admin-user");
+assert.equal(currentUserRole(multiDispatchStore.getState()), "admin", "Admin must remain a distinct role");
+assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "purchase-orders", "activity-log", "settings"]);
+assert.equal(currentUserPermissions(multiDispatchStore.getState()).canDispatchStock, false);
+assert.match(renderDashboard({ state: multiDispatchStore.getState() }), /Admin portal/);
+assert.match(renderPurchaseOrders({ state: multiDispatchStore.getState() }), /Prepare PO/);
+const stockBeforeUnauthorizedAdminDispatch = multiDispatchStore.getState().products.find((product) => product.id === "MULTI-A").stock;
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  productId: "MULTI-A",
+  quantity: 1,
+  recipientType: "Sales Representative",
+  recipientName: "Multi Rep",
+  destination: "Admin must not dispatch",
+  paymentType: "cash",
+  dispatchDate: "2026-07-16",
+  expectedDeliveryAt: "2026-07-16"
+});
+assert.equal(multiDispatchStore.getState().products.find((product) => product.id === "MULTI-A").stock, stockBeforeUnauthorizedAdminDispatch, "Admin must not alter factory stock");
+multiDispatchStore.dispatch({
+  type: "PREPARE_PURCHASE_ORDER",
+  requestId: stockRequest.id,
+  items: stockRequest.items,
+  paymentType: "credit",
+  destination: "Van 12",
+  adminNotes: "Allocate exactly as approved"
+});
+const purchaseOrder = multiDispatchStore.getState().purchaseOrders[0];
+assert.ok(purchaseOrder?.id.startsWith("PO-"), "Admin must create a numbered Purchase Order");
+assert.equal(purchaseOrder.status, "forwarded");
+assert.equal(multiDispatchStore.getState().stockRequests[0].status, "po_prepared");
+
+authenticateMulti("multi-store-user");
+assert.equal(currentUserPermissions(multiDispatchStore.getState()).canFulfillPurchaseOrders, true);
+assert.match(renderDashboard({ state: multiDispatchStore.getState() }), /Forwarded Purchase Orders/);
+assert.match(renderPurchaseOrders({ state: multiDispatchStore.getState() }), /Issue stock/);
+const invoiceIdsBeforePoIssue = new Set(multiDispatchStore.getState().invoices.map((invoice) => invoice.id));
+const dispatchIdsBeforePoIssue = new Set(multiDispatchStore.getState().stockTransactions.map((transaction) => transaction.dispatchId).filter(Boolean));
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  items: purchaseOrder.items,
+  recipientType: "Sales Representative",
+  recipientName: purchaseOrder.repName,
+  destination: purchaseOrder.destination,
+  paymentType: purchaseOrder.paymentType,
+  dispatchDate: "2026-07-16",
+  expectedDeliveryAt: "2099-07-20",
+  staffName: "Multi Store"
+});
+const poIssueState = multiDispatchStore.getState();
+const poInvoice = poIssueState.invoices.find((invoice) => !invoiceIdsBeforePoIssue.has(invoice.id));
+const poDispatch = poIssueState.stockTransactions.find((transaction) => transaction.dispatchId && !dispatchIdsBeforePoIssue.has(transaction.dispatchId));
+assert.ok(poInvoice && poDispatch, "Issuing a Purchase Order must create its dispatch and invoice");
+multiDispatchStore.dispatch({ type: "MARK_PURCHASE_ORDER_ISSUED", purchaseOrderId: purchaseOrder.id, dispatchId: poDispatch.dispatchId, invoiceId: poInvoice.id });
+assert.equal(multiDispatchStore.getState().purchaseOrders[0].status, "issued");
+assert.equal(multiDispatchStore.getState().stockRequests[0].status, "fulfilled");
+assert.equal(multiDispatchStore.getState().purchaseOrders[0].invoiceId, poInvoice.id);
 
 const onboardingStore = createStore();
 onboardingStore.dispatch({

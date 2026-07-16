@@ -248,6 +248,8 @@ function ensureStateShape(value) {
     productionBatches: Array.isArray(state.productionBatches) ? state.productionBatches : [],
     offlineSalesQueue: Array.isArray(state.offlineSalesQueue) ? state.offlineSalesQueue : [],
     correctionRequests: Array.isArray(state.correctionRequests) ? state.correctionRequests : [],
+    stockRequests: Array.isArray(state.stockRequests) ? state.stockRequests : [],
+    purchaseOrders: Array.isArray(state.purchaseOrders) ? state.purchaseOrders : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
     orders: normalizeOrders(mergeSeedRecords(state.orders, seedData.orders)),
     routes: mergeSeedRecords(state.routes, seedData.routes),
@@ -966,6 +968,8 @@ function reducer(currentState, action) {
         productionBatches: [],
         offlineSalesQueue: [],
         correctionRequests: [],
+        stockRequests: [],
+        purchaseOrders: [],
         retailers: [],
         orders: [],
         routes: [],
@@ -1013,7 +1017,7 @@ function reducer(currentState, action) {
     }
 
     case "CREATE_ACCOUNT": {
-      if (!state.client?.id || !["sales_rep", "store_keeper"].includes(action.payload?.role)) return state;
+      if (!state.client?.id || !["sales_rep", "store_keeper", "admin"].includes(action.payload?.role)) return state;
       const { account, invite } = createAccountInvite({
         client: state.client,
         ...action.payload
@@ -1985,6 +1989,163 @@ function reducer(currentState, action) {
           summary: `${product.name} marked ${product.status}`
         });
       }
+      return state;
+    }
+
+    case "SUBMIT_STOCK_REQUEST": {
+      if (!state.client?.id || currentUserRole(state) !== "sales_rep") return state;
+
+      const account = currentWorkspaceAccount(state);
+      const requestedItems = Array.isArray(action.items) ? action.items : [];
+      const productIds = requestedItems.map((item) => String(item.productId || "")).filter(Boolean);
+      const items = requestedItems.map((item) => {
+        const product = state.products.find((candidate) => candidate.id === item.productId);
+        return {
+          productId: product?.id || "",
+          productName: product?.name || "",
+          sku: product?.id || "",
+          unit: product?.unit || "unit",
+          quantity: Number(item.quantity || 0)
+        };
+      });
+      const neededBy = dateOnly(action.neededBy);
+      const priority = normalized(action.priority || "normal");
+
+      if (
+        !items.length ||
+        new Set(productIds).size !== productIds.length ||
+        items.some((item) => {
+          const product = state.products.find((candidate) => candidate.id === item.productId);
+          return !product || product.status === "inactive" || stockCategoryIdForProduct(product) !== "finished_products" || !Number.isFinite(item.quantity) || item.quantity <= 0;
+        }) ||
+        !isValidISODate(neededBy) ||
+        neededBy < todayISO() ||
+        !["normal", "urgent"].includes(priority)
+      ) return state;
+
+      const request = {
+        id: nextFormattedId("REQ-{0000}", state.stockRequests.map((item) => item.id), "REQ"),
+        clientId: state.client.id,
+        repUserId: state.user?.id || "",
+        repMembershipId: account?.id || "",
+        repName: account?.name || currentActorLabel(state),
+        requestedAt: new Date().toISOString(),
+        neededBy,
+        priority,
+        notes: String(action.notes || "").trim(),
+        status: "submitted",
+        items
+      };
+
+      state.stockRequests = [request, ...state.stockRequests];
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "submitted",
+        recordType: "stock_request",
+        recordLabel: request.id,
+        summary: `${request.repName} submitted ${request.id}`,
+        details: items.map((item) => `${item.quantity} ${item.unit} ${item.productName}`).join(", ")
+      });
+      return state;
+    }
+
+    case "PREPARE_PURCHASE_ORDER": {
+      if (!state.client?.id || currentUserRole(state) !== "admin") return state;
+
+      const request = state.stockRequests.find((item) => item.id === action.requestId && item.status === "submitted");
+      if (!request) return state;
+      const items = (Array.isArray(action.items) && action.items.length ? action.items : request.items).map((item) => {
+        const requestedItem = request.items.find((candidate) => candidate.productId === item.productId);
+        return requestedItem ? { ...requestedItem, quantity: Number(item.quantity || 0) } : null;
+      }).filter(Boolean);
+      const destination = String(action.destination || "").trim();
+      const paymentType = normalized(action.paymentType || "credit");
+
+      if (
+        !items.length ||
+        items.some((item) => !Number.isFinite(item.quantity) || item.quantity <= 0) ||
+        !destination ||
+        !["cash", "credit"].includes(paymentType)
+      ) return state;
+
+      const purchaseOrder = {
+        id: nextFormattedId("PO-{0000}", state.purchaseOrders.map((item) => item.id), "PO"),
+        clientId: state.client.id,
+        requestId: request.id,
+        repUserId: request.repUserId,
+        repMembershipId: request.repMembershipId,
+        repName: request.repName,
+        items,
+        paymentType,
+        destination,
+        neededBy: request.neededBy,
+        priority: request.priority,
+        requestNotes: request.notes,
+        adminNotes: String(action.adminNotes || "").trim(),
+        status: "forwarded",
+        preparedBy: currentActorLabel(state),
+        preparedAt: new Date().toISOString(),
+        forwardedAt: new Date().toISOString()
+      };
+
+      request.status = "po_prepared";
+      request.purchaseOrderId = purchaseOrder.id;
+      state.purchaseOrders = [purchaseOrder, ...state.purchaseOrders];
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "forwarded",
+        recordType: "purchase_order",
+        recordLabel: purchaseOrder.id,
+        summary: `${purchaseOrder.id} forwarded to the Store Keeper`,
+        details: `${purchaseOrder.repName} · ${items.length} product${items.length === 1 ? "" : "s"}`
+      });
+      return state;
+    }
+
+    case "DECLINE_STOCK_REQUEST": {
+      if (!state.client?.id || currentUserRole(state) !== "admin") return state;
+      const request = state.stockRequests.find((item) => item.id === action.requestId && item.status === "submitted");
+      const reason = String(action.reason || "").trim();
+      if (!request || !reason) return state;
+
+      request.status = "declined";
+      request.declineReason = reason;
+      request.reviewedBy = currentActorLabel(state);
+      request.reviewedAt = new Date().toISOString();
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "declined",
+        recordType: "stock_request",
+        recordLabel: request.id,
+        summary: `${request.id} declined`,
+        details: reason
+      });
+      return state;
+    }
+
+    case "MARK_PURCHASE_ORDER_ISSUED": {
+      if (!state.client?.id || currentUserRole(state) !== "store_keeper") return state;
+      const purchaseOrder = state.purchaseOrders.find((item) => item.id === action.purchaseOrderId && item.status === "forwarded");
+      if (!purchaseOrder || !action.dispatchId || !action.invoiceId) return state;
+
+      purchaseOrder.status = "issued";
+      purchaseOrder.dispatchId = String(action.dispatchId);
+      purchaseOrder.invoiceId = String(action.invoiceId);
+      purchaseOrder.issuedBy = currentActorLabel(state);
+      purchaseOrder.issuedAt = new Date().toISOString();
+      const request = state.stockRequests.find((item) => item.id === purchaseOrder.requestId);
+      if (request) {
+        request.status = "fulfilled";
+        request.fulfilledAt = purchaseOrder.issuedAt;
+      }
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "issued",
+        recordType: "purchase_order",
+        recordLabel: purchaseOrder.id,
+        summary: `${purchaseOrder.id} issued to ${purchaseOrder.repName}`,
+        details: `Dispatch ${purchaseOrder.dispatchId} · Invoice ${purchaseOrder.invoiceId}`
+      });
       return state;
     }
 

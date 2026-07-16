@@ -70,6 +70,7 @@ function dashboardIdentity(state, role = currentUserRole(state)) {
   const companyName = state.client?.companyName || "DistroIQ workspace";
   const roleLabels = {
     ceo: "CEO",
+    admin: "Admin",
     store_keeper: "Store Keeper",
     sales_rep: "Sales Representative"
   };
@@ -1508,6 +1509,24 @@ function renderStoreKeeperDashboard(state, permissions) {
         ${renderDailyStockMovementTable(state)}
       </section>
 
+      <section class="panel purchase-order-dashboard-panel">
+        ${panelHeader(
+          "Forwarded Purchase Orders",
+          "Approved representative requests waiting for allocation",
+          `<a class="button primary" href="#/purchase-orders">${icon("arrowRight")}<span>Open queue</span></a>`
+        )}
+        <div class="dashboard-po-list">
+          ${(state.purchaseOrders || []).filter((purchaseOrder) => purchaseOrder.status === "forwarded").slice(0, 4).map((purchaseOrder) => `
+            <a href="#/purchase-orders" class="dashboard-po-row" data-search-index="${escapeHtml(`${purchaseOrder.id} ${purchaseOrder.repName}`.toLowerCase())}">
+              <span><strong>${escapeHtml(purchaseOrder.id)}</strong><small>${escapeHtml(purchaseOrder.repName)}</small></span>
+              <span><strong>${formatNumber(purchaseOrder.items?.length || 0)} products</strong><small>Needed ${formatDate(purchaseOrder.neededBy)}</small></span>
+              ${statusPill(purchaseOrder.priority || "normal")}
+              ${icon("arrowRight")}
+            </a>
+          `).join("") || '<div class="empty-state">No Purchase Orders are waiting for allocation</div>'}
+        </div>
+      </section>
+
       <div class="dashboard-layout">
         <section class="panel">
           ${panelHeader("Low-stock alerts", `${formatNumber(lowStockProducts.length)} item${lowStockProducts.length === 1 ? "" : "s"} need attention`)}
@@ -2578,6 +2597,58 @@ function renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage) {
   `;
 }
 
+function renderRepStockRequestPanel(state) {
+  const finishedProducts = (state.products || [])
+    .filter((product) => product.status !== "inactive" && stockCategoryIdForProduct(product) === "finished_products")
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  const userId = state.user?.id || "";
+  const repName = normalized(currentRepName(state));
+  const requests = (state.stockRequests || [])
+    .filter((request) => request.repUserId === userId || normalized(request.repName) === repName)
+    .slice(0, 5);
+
+  return `
+    <section class="panel rep-stock-request-panel">
+      ${panelHeader(
+        "Stock requests",
+        "Send one request with all products needed from the factory",
+        `<button class="button primary js-open-stock-request" type="button" ${finishedProducts.length ? "" : "disabled"}>${icon("plus")}<span>Request stock</span></button>`
+      )}
+      <div class="rep-request-history">
+        ${requests.map((request) => `
+          <article class="rep-request-row" data-search-index="${escapeHtml(`${request.id} ${request.status} ${request.neededBy}`.toLowerCase())}">
+            <span><strong>${escapeHtml(request.id)}</strong><small>${formatNumber(request.items?.length || 0)} product${request.items?.length === 1 ? "" : "s"}</small></span>
+            <span><strong>Needed ${formatDate(request.neededBy)}</strong><small>${escapeHtml(request.purchaseOrderId || request.declineReason || "Sent to Admin")}</small></span>
+            ${statusPill(request.status)}
+          </article>
+        `).join("") || '<div class="empty-state">No stock requests submitted yet</div>'}
+      </div>
+      <div id="rep-stock-request-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+        <section class="stock-modal rep-stock-request-modal" role="dialog" aria-modal="true" aria-labelledby="rep-stock-request-title">
+          <header class="stock-modal-header">
+            <div><span class="eyebrow">Factory allocation</span><h2 id="rep-stock-request-title">Request stock</h2></div>
+            ${iconButton({ iconName: "x", label: "Close stock request", className: "js-close-stock-request" })}
+          </header>
+          <form id="rep-stock-request-form" class="form-grid">
+            <div class="span-full rep-request-product-list">
+              ${finishedProducts.map((product) => `
+                <label class="rep-request-product">
+                  <span><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.id)} · ${escapeHtml(product.size || product.unit || "Unit")}</small></span>
+                  <input type="number" min="0" step="1" name="request-${escapeHtml(product.id)}" data-request-product-id="${escapeHtml(product.id)}" placeholder="0" aria-label="Quantity of ${escapeHtml(product.name)}">
+                </label>
+              `).join("") || '<div class="empty-state">No finished products are available to request</div>'}
+            </div>
+            <label class="field"><span>Needed by</span><input type="date" name="neededBy" min="${todayISO()}" value="${todayISO()}" required></label>
+            <label class="field"><span>Priority</span><select name="priority" required><option value="normal">Normal</option><option value="urgent">Urgent</option></select></label>
+            <label class="field span-full"><span>Request note</span><textarea name="notes" rows="3" placeholder="Optional delivery or allocation details"></textarea></label>
+            <div class="form-actions span-full"><span id="rep-stock-request-message" class="rep-form-message"></span><button class="button primary" type="submit">${icon("arrowRight")}<span>Send to Admin</span></button></div>
+          </form>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
 function renderSalesRepDashboard(state) {
   const repName = currentRepName(state);
   const assignments = buildRepAssignments(state, repName);
@@ -2646,11 +2717,49 @@ function renderSalesRepDashboard(state) {
         ${renderRepStockCards(visibleAssignments)}
       </section>
 
+      ${renderRepStockRequestPanel(state)}
+
       <section class="panel">
         ${panelHeader("Product catalogue", "Visible snacks from the factory")}
         ${renderRepProductCatalogue(state.products)}
       </section>
 
+    </section>
+  `;
+}
+
+function renderAdminDashboard(state) {
+  const requests = state.stockRequests || [];
+  const purchaseOrders = state.purchaseOrders || [];
+  const pending = requests.filter((request) => request.status === "submitted");
+  const forwarded = purchaseOrders.filter((purchaseOrder) => purchaseOrder.status === "forwarded");
+  const issued = purchaseOrders.filter((purchaseOrder) => purchaseOrder.status === "issued");
+
+  return `
+    <section class="view dashboard-view admin-dashboard">
+      ${dashboardIdentity(state, "admin")}
+      <section class="admin-command-strip">
+        <div><span class="eyebrow">Admin portal</span><h2>Sales documentation and stock coordination</h2><p>Review representative requests, prepare Purchase Orders, and forward them for factory allocation.</p></div>
+        <a class="button primary" href="#/purchase-orders">${icon("orders")}<span>Open Purchase Orders</span></a>
+      </section>
+      <div class="metric-grid">
+        ${metricCard({ label: "Requests to review", value: formatNumber(pending.length), meta: "Submitted by representatives", iconName: "orders" })}
+        ${metricCard({ label: "Awaiting allocation", value: formatNumber(forwarded.length), meta: "Forwarded to Store Keeper", iconName: "arrowRight" })}
+        ${metricCard({ label: "Issued orders", value: formatNumber(issued.length), meta: "Allocated and dispatched", iconName: "check" })}
+      </div>
+      <section class="panel">
+        ${panelHeader("Latest stock requests", "Requests are handled in the order and priority received", `<a class="button" href="#/purchase-orders">${icon("arrowRight")}<span>View all</span></a>`)}
+        <div class="dashboard-po-list">
+          ${pending.slice(0, 6).map((request) => `
+            <a href="#/purchase-orders" class="dashboard-po-row" data-search-index="${escapeHtml(`${request.id} ${request.repName} ${request.priority}`.toLowerCase())}">
+              <span><strong>${escapeHtml(request.id)}</strong><small>${escapeHtml(request.repName)}</small></span>
+              <span><strong>${formatNumber(request.items?.length || 0)} products</strong><small>Needed ${formatDate(request.neededBy)}</small></span>
+              ${statusPill(request.priority || "normal")}
+              ${icon("arrowRight")}
+            </a>
+          `).join("") || '<div class="empty-state">No representative stock requests are waiting</div>'}
+        </div>
+      </section>
     </section>
   `;
 }
@@ -2874,6 +2983,10 @@ export function renderDashboard({ state }) {
 
   if (state.session && state.client?.id && role === "ceo") {
     return renderCeoDashboard(state);
+  }
+
+  if (state.session && state.client?.id && role === "admin") {
+    return renderAdminDashboard(state);
   }
 
   if (state.session && state.client?.id && role === "store_keeper") {
@@ -3349,6 +3462,46 @@ function bindSalesRepDashboard({ root, store }) {
   const productSizeModal = qs("#rep-product-size-modal", root);
   const productSizeTitle = qs("#rep-product-size-title", root);
   const selectedProductDetail = qs("[data-rep-selected-size-detail]", root);
+  const stockRequestModal = qs("#rep-stock-request-modal", root);
+  const stockRequestForm = qs("#rep-stock-request-form", root);
+  const stockRequestMessage = qs("#rep-stock-request-message", root);
+
+  function closeStockRequestModal() {
+    if (stockRequestModal) stockRequestModal.hidden = true;
+  }
+
+  qs(".js-open-stock-request", root)?.addEventListener("click", () => {
+    if (!stockRequestModal) return;
+    if (stockRequestMessage) stockRequestMessage.textContent = "";
+    stockRequestModal.hidden = false;
+  });
+  qsa(".js-close-stock-request", root).forEach((button) => button.addEventListener("click", closeStockRequestModal));
+  stockRequestModal?.addEventListener("click", (event) => {
+    if (event.target === stockRequestModal) closeStockRequestModal();
+  });
+  stockRequestForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const formData = new FormData(stockRequestForm);
+    const items = qsa("[data-request-product-id]", stockRequestForm)
+      .map((input) => ({ productId: input.dataset.requestProductId, quantity: Number(input.value || 0) }))
+      .filter((item) => item.quantity > 0);
+
+    if (!stockRequestForm.reportValidity()) return;
+    if (!items.length) {
+      if (stockRequestMessage) stockRequestMessage.textContent = "Enter a quantity for at least one product.";
+      return;
+    }
+
+    store.dispatch({
+      type: "SUBMIT_STOCK_REQUEST",
+      items,
+      neededBy: formData.get("neededBy"),
+      priority: formData.get("priority"),
+      notes: formData.get("notes"),
+      message: "Stock request sent to Admin"
+    });
+    closeStockRequestModal();
+  });
 
   function closeRepProductSizes() {
     if (productSizeModal) productSizeModal.hidden = true;

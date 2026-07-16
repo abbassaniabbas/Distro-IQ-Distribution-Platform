@@ -12,6 +12,11 @@ export const ROLE_OPTIONS = [
     description: "Raw materials, finished products, equipment, stock movement, and dispatch"
   },
   {
+    value: "admin",
+    label: "Admin",
+    description: "Sales documentation, representative stock requests, and Purchase Order coordination"
+  },
+  {
     value: "ceo",
     label: "CEO",
     description: "Full company leadership, sales operations, stock oversight, credit control, team access, and report review"
@@ -21,7 +26,6 @@ export const ROLE_OPTIONS = [
 const LEGACY_ROLE_MAP = {
   manager: "ceo",
   owner: "ceo",
-  admin: "ceo",
   operations: "store_keeper",
   viewer: "ceo",
   super_admin: "ceo"
@@ -46,10 +50,13 @@ const ROLE_PERMISSIONS = {
     canExportReports: false,
     canManageUsers: false,
     canConfigureFactory: false,
-    canAuditRecords: false
+    canAuditRecords: false,
+    canRequestStock: true,
+    canCoordinateStockRequests: false,
+    canFulfillPurchaseOrders: false
   },
   store_keeper: {
-    nav: ["dashboard", "inventory", "activity-log", "settings"],
+    nav: ["dashboard", "purchase-orders", "inventory", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -66,10 +73,36 @@ const ROLE_PERMISSIONS = {
     canExportReports: false,
     canManageUsers: false,
     canConfigureFactory: false,
-    canAuditRecords: false
+    canAuditRecords: false,
+    canRequestStock: false,
+    canCoordinateStockRequests: false,
+    canFulfillPurchaseOrders: true
+  },
+  admin: {
+    nav: ["dashboard", "purchase-orders", "activity-log", "settings"],
+    canViewCompanyWide: true,
+    canLogSalesReturns: false,
+    canManageProducts: false,
+    canAddStock: false,
+    canAssignStock: false,
+    canReconcileStock: false,
+    canSetCreditLimits: false,
+    canAddCustomers: false,
+    canManageCustomers: false,
+    canReviewReports: false,
+    canManageStockMovements: false,
+    canDispatchStock: false,
+    canViewFinancialReports: false,
+    canExportReports: true,
+    canManageUsers: false,
+    canConfigureFactory: false,
+    canAuditRecords: true,
+    canRequestStock: false,
+    canCoordinateStockRequests: true,
+    canFulfillPurchaseOrders: false
   },
   ceo: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "purchase-orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
@@ -86,7 +119,10 @@ const ROLE_PERMISSIONS = {
     canExportReports: true,
     canManageUsers: true,
     canConfigureFactory: true,
-    canAuditRecords: true
+    canAuditRecords: true,
+    canRequestStock: false,
+    canCoordinateStockRequests: false,
+    canFulfillPurchaseOrders: false
   }
 };
 
@@ -224,6 +260,14 @@ export function scopeStateForCurrentRole(state) {
     salesReports: (state.salesReports || []).filter((report) => {
       const repName = String(report.repName || "").trim().toLowerCase();
       return report.repUserId === userId || (actorName && repName === actorName);
+    }),
+    stockRequests: (state.stockRequests || []).filter((request) => {
+      const repName = String(request.repName || "").trim().toLowerCase();
+      return request.repUserId === userId || (actorName && repName === actorName);
+    }),
+    purchaseOrders: (state.purchaseOrders || []).filter((purchaseOrder) => {
+      const repName = String(purchaseOrder.repName || "").trim().toLowerCase();
+      return purchaseOrder.repUserId === userId || (actorName && repName === actorName);
     })
   };
 }

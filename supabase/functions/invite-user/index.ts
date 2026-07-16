@@ -11,13 +11,14 @@ type InvitePayload = {
   name: string;
   email: string;
   phoneNumber: string;
-  role: "sales_rep" | "store_keeper";
+  role: "sales_rep" | "store_keeper" | "admin";
   redirectTo?: string;
 };
 
 const validRoles = new Set([
   "sales_rep",
-  "store_keeper"
+  "store_keeper",
+  "admin"
 ]);
 const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const phonePattern = /^[+0-9().\s-]+$/;
@@ -296,7 +297,7 @@ Deno.serve(async (req) => {
 
   const { data: existingMembership, error: existingMembershipError } = await adminClient
     .from("memberships")
-    .select("id")
+    .select("id, user_id, email, phone_number, name, role, status, password_reset_required")
     .eq("client_id", clientId)
     .eq("email", normalizedEmail)
     .maybeSingle();
@@ -305,11 +306,69 @@ Deno.serve(async (req) => {
     return internalError("existing membership lookup failed", existingMembershipError);
   }
 
+  const requestDetails = {
+    displayName,
+    normalizedEmail,
+    phoneNumber,
+    role
+  };
+  const fingerprint = await invitationFingerprint({
+    clientId,
+    ...requestDetails
+  });
+  const temporaryPassword = await generateTemporaryPassword(serviceRoleKey, fingerprint);
+
   if (existingMembership) {
-    return jsonResponse({ error: "This email is already invited for this company" }, 409);
+    if (!membershipMatchesRequest(existingMembership, requestDetails)) {
+      return jsonResponse({ error: "This email is already invited for this company" }, 409);
+    }
+
+    const { error: retryUserError } = await adminClient.auth.admin.updateUserById(existingMembership.user_id, {
+      password: temporaryPassword,
+      user_metadata: {
+        full_name: displayName,
+        client_id: clientId,
+        role
+      }
+    });
+
+    if (retryUserError) {
+      return internalError("pending invite password refresh failed", retryUserError);
+    }
+
+    const retryInviteError = await ensureInviteRecord(adminClient, {
+      clientId,
+      membershipId: existingMembership.id,
+      normalizedEmail,
+      displayName,
+      role,
+      callerUserId
+    });
+
+    if (retryInviteError) {
+      return internalError("pending invite record refresh failed", retryInviteError);
+    }
+
+    return jsonResponse({
+      ok: true,
+      userId: existingMembership.user_id,
+      membershipId: existingMembership.id,
+      temporaryPassword,
+      temporaryPasswordCreated: true,
+      recovered: true
+    });
   }
 
-  const temporaryPassword = generateTemporaryPassword();
+  const { user: existingAuthUser, error: existingAuthUserError } = await findAuthUserByEmail(adminClient, normalizedEmail);
+
+  if (existingAuthUserError) {
+    return internalError("authentication user lookup failed", existingAuthUserError);
+  }
+
+  if (existingAuthUser) {
+    return jsonResponse({ error: "This email already has login access" }, 409);
+  }
+
   const { data: userData, error: createUserError } = await adminClient.auth.admin.createUser({
     email: normalizedEmail,
     password: temporaryPassword,

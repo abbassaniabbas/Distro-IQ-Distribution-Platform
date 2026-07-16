@@ -12,6 +12,11 @@ export const NAV_ITEMS = [
     icon: "orders"
   },
   {
+    id: "purchase-orders",
+    label: "Purchase Orders",
+    icon: "orders"
+  },
+  {
     id: "inventory",
     label: "Stock",
     icon: "inventory"

@@ -663,43 +663,41 @@ update public.memberships
 set role = case role
   when 'manager' then 'ceo'
   when 'owner' then 'ceo'
-  when 'admin' then 'ceo'
   when 'operations' then 'store_keeper'
   when 'finance' then 'ceo'
   when 'viewer' then 'ceo'
   when 'super_admin' then 'ceo'
   else role
 end
-where role in ('manager', 'owner', 'admin', 'operations', 'finance', 'viewer', 'super_admin');
+where role in ('manager', 'owner', 'operations', 'finance', 'viewer', 'super_admin');
 
 update public.invites
 set role = case role
   when 'manager' then 'ceo'
   when 'owner' then 'ceo'
-  when 'admin' then 'ceo'
   when 'operations' then 'store_keeper'
   when 'finance' then 'ceo'
   when 'viewer' then 'ceo'
   when 'super_admin' then 'ceo'
   else role
 end
-where role in ('manager', 'owner', 'admin', 'operations', 'finance', 'viewer', 'super_admin');
+where role in ('manager', 'owner', 'operations', 'finance', 'viewer', 'super_admin');
 
 update public.memberships
 set role = 'sales_rep'
-where role not in ('sales_rep', 'store_keeper', 'ceo');
+where role not in ('sales_rep', 'store_keeper', 'admin', 'ceo');
 
 update public.invites
 set role = 'sales_rep'
-where role not in ('sales_rep', 'store_keeper', 'ceo');
+where role not in ('sales_rep', 'store_keeper', 'admin', 'ceo');
 
 alter table public.memberships
 add constraint memberships_role_check
-check (role in ('sales_rep', 'store_keeper', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'admin', 'ceo'));
 
 alter table public.invites
 add constraint invites_role_check
-check (role in ('sales_rep', 'store_keeper', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'admin', 'ceo'));
 
 create unique index if not exists memberships_one_ceo_per_client
 on public.memberships (client_id)

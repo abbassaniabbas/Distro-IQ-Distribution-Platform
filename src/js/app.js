@@ -35,6 +35,7 @@ import {
 import { renderOrders, bindOrders } from "./views/orders.js";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
+import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js";
 import { renderRetailers, bindRetailers } from "./views/retailers.js";
 import { renderSettings, bindSettings } from "./views/settings.js";
 import { renderTeam, bindTeam } from "./views/team.js";
@@ -47,7 +48,7 @@ const routes = {
     isSetup: true
   },
   "backend-setup": {
-    title: "Setup Required",
+    title: "No Connection",
     render: renderBackendSetup,
     bind: bindBackendSetup,
     isSetup: true
@@ -90,6 +91,11 @@ const routes = {
     title: "Sales Orders",
     render: renderOrders,
     bind: bindOrders
+  },
+  "purchase-orders": {
+    title: "Purchase Orders",
+    render: renderPurchaseOrders,
+    bind: bindPurchaseOrders
   },
   inventory: {
     title: "Stock",
@@ -494,7 +500,7 @@ function render() {
   const isAuthRoute = AUTH_ROUTES.includes(routeId);
   const viewState = scopeStateForCurrentRole(scopeStateForEnabledModules(state));
 
-  document.body.dataset.appView = isAuthRoute ? "auth" : "workspace";
+  document.body.dataset.appView = isAuthRoute || routeId === "backend-setup" ? "auth" : "workspace";
   setCurrencySettings(state.client);
   renderNav(routeId, state);
   updateSidebar(state);

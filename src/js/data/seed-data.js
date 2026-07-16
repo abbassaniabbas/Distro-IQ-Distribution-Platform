@@ -13,6 +13,8 @@ const seedData = {
   productionBatches: [],
   offlineSalesQueue: [],
   correctionRequests: [],
+  stockRequests: [],
+  purchaseOrders: [],
   backend: {
     configured: false,
     status: "idle",
