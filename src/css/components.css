@@ -87,6 +87,14 @@
   height: 19px;
 }
 
+#sign-out {
+  font-weight: 950;
+}
+
+#sign-out svg {
+  stroke-width: 2.8;
+}
+
 .chip-button {
   display: inline-flex;
   align-items: center;
@@ -191,6 +199,31 @@
   font-size: 0.76rem;
   font-weight: 800;
   min-height: 1rem;
+}
+
+.field .is-required-invalid,
+.auth-field .is-required-invalid {
+  border-color: var(--coral);
+  outline: 3px solid rgba(207, 77, 67, 0.14);
+  outline-offset: 0;
+  box-shadow: 0 0 0 1px rgba(207, 77, 67, 0.15), 0 0 16px rgba(207, 77, 67, 0.12);
+}
+
+.field .is-required-invalid:focus,
+.auth-field .is-required-invalid:focus {
+  border-color: var(--coral);
+  outline-color: rgba(207, 77, 67, 0.2);
+  box-shadow: 0 0 0 1px rgba(207, 77, 67, 0.2), 0 0 18px rgba(207, 77, 67, 0.15);
+}
+
+.required-form-alert {
+  padding: 10px 12px;
+  border: 1px solid rgba(207, 77, 67, 0.26);
+  border-radius: var(--radius-sm);
+  color: #8f312b;
+  background: rgba(207, 77, 67, 0.08);
+  font-size: 0.82rem;
+  font-weight: 800;
 }
 
 .form-grid {

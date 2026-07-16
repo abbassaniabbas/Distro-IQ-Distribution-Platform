@@ -38,16 +38,9 @@ function orderDaysLate(order, today = new Date().toISOString().slice(0, 10)) {
   return Math.max(0, Math.floor((todayTime - expectedTime) / 86400000));
 }
 
-function isCreditOrder(order) {
-  const paymentType = String(order.paymentType || "").toLowerCase();
-  const paymentStatus = String(order.paymentStatus || "").toLowerCase();
-
-  return paymentType.includes("credit") && paymentStatus !== "paid";
-}
-
-function renderSummaryTiles(orders) {
+function renderSummaryTiles(orders, state) {
   const summary = buildOrderStatusSummary(orders);
-  const creditOrders = orders.filter(isCreditOrder).length;
+  const creditOrders = orders.filter((order) => getCreditGuardForOrder(order, state).status === "credit_hold").length;
   const customTiles = [
     {
       label: "Credit holds",
@@ -304,7 +297,7 @@ export function renderOrders({ state }) {
 
   return `
     <section class="view orders-view">
-      ${renderSummaryTiles(orders)}
+      ${renderSummaryTiles(orders, state)}
 
       <section class="panel orders-layout">
         <div class="toolbar">

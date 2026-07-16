@@ -188,7 +188,7 @@ export function validateAccountForm(values, existingAccounts) {
     errors.email = "This email is already invited for this company.";
   }
 
-  if (!values.role || !["sales_rep", "store_keeper", "accountant"].includes(values.role)) {
+  if (!values.role || !["sales_rep", "store_keeper"].includes(values.role)) {
     errors.role = "Choose a staff role.";
   }
 

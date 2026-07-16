@@ -4,10 +4,11 @@ import {
   recordTypeLabel
 } from "../services/activity.js";
 import { formatCurrency, formatDateTime, formatNumber } from "../services/formatters.js";
+import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { accountForUser, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { panelHeader, table } from "../ui/components.js";
+import { iconButton, panelHeader, table } from "../ui/components.js";
 import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
@@ -215,6 +216,15 @@ function renderActivityPagination() {
   `;
 }
 
+function activityTableActions() {
+  return `
+    <div class="table-document-actions" aria-label="Activity table actions">
+      ${iconButton({ iconName: "download", label: "Download activity table", className: "js-download-activity-table" })}
+      ${iconButton({ iconName: "print", label: "Print activity table", className: "js-print-activity-table" })}
+    </div>
+  `;
+}
+
 function renderSalesRepRecentActivity(state) {
   const rows = repRecentActivityRows(state);
 
@@ -222,7 +232,7 @@ function renderSalesRepRecentActivity(state) {
     <section class="view activity-log-view">
       <section class="panel">
         <div class="toolbar">
-          ${panelHeader("Recent activity", "Your logged sales, customer returns, and submitted reports")}
+          ${panelHeader("Recent activity", "Your logged sales, customer returns, and submitted reports", activityTableActions())}
           <div class="toolbar-group activity-filters">
             <label class="field">
               <span>Search</span>
@@ -246,11 +256,13 @@ function renderSalesRepRecentActivity(state) {
           </div>
         </div>
 
-        ${table(
-          ["Time", "Activity", "Snack / Report", "Customer", "Details"],
-          renderRepRecentRows(rows),
-          "No recent activity yet"
-        )}
+        <div data-activity-export-table>
+          ${table(
+            ["Time", "Activity", "Snack / Report", "Customer", "Details"],
+            renderRepRecentRows(rows),
+            "No recent activity yet"
+          )}
+        </div>
         ${renderActivityPagination()}
       </section>
     </section>
@@ -380,7 +392,7 @@ export function renderActivityLog({ state }) {
       ${activitySubnav}
       <section class="panel">
         <div class="toolbar">
-          ${panelHeader(title, subtitle)}
+          ${panelHeader(title, subtitle, activityTableActions())}
           <div class="toolbar-group activity-filters">
             <label class="field">
               <span>Search</span>
@@ -418,11 +430,13 @@ export function renderActivityLog({ state }) {
           </div>
         </div>
 
-        ${table(
-          ["Timestamp", "Action", "Record", "User", "Details"],
-          renderRows(logs),
-          "No activity has been recorded yet"
-        )}
+        <div data-activity-export-table>
+          ${table(
+            ["Timestamp", "Action", "Record", "User", "Details"],
+            renderRows(logs),
+            "No activity has been recorded yet"
+          )}
+        </div>
         ${renderActivityPagination()}
         <p class="activity-readonly-note">Activity entries are read-only and cannot be edited or deleted.</p>
       </section>
@@ -445,7 +459,24 @@ export function bindActivityLog({ root, store }) {
   const nextButton = qs('[data-activity-page="next"]', root);
   const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter, recordFilter].filter(Boolean);
 
+  function exportActivityTable(mode) {
+    const section = tableSectionFromElement(qs("[data-activity-export-table] table", root), "Activity log");
+    if (!section) return;
+
+    const options = {
+      title: "DistroIQ Activity Log",
+      subtitle: "Activity records shown by the selected filters",
+      sections: [section],
+      filename: `distroiq-activity-log-${new Date().toISOString().slice(0, 10)}.${mode === "download" ? "csv" : "html"}`
+    };
+
+    if (mode === "download") downloadTabularReport(options);
+    else printTabularReport(options);
+  }
+
   bindManagerActivitySections({ root, store });
+  qs(".js-download-activity-table", root)?.addEventListener("click", () => exportActivityTable("download"));
+  qs(".js-print-activity-table", root)?.addEventListener("click", () => exportActivityTable("print"));
   if (!searchFilter) return;
 
   function applyFilters() {
@@ -474,6 +505,7 @@ export function bindActivityLog({ root, store }) {
     const visibleRows = new Set(matchedRows.slice(pageStart, pageStart + pageSize));
 
     rows.forEach((row) => {
+      row.dataset.exportVisible = matchedRows.includes(row) ? "true" : "false";
       row.hidden = !visibleRows.has(row);
     });
 

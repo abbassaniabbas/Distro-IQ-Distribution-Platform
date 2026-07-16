@@ -9,7 +9,6 @@ import {
 import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import {
   currentUserPermissions,
-  currentUserRole,
   salesRepresentativeAccounts,
   salesRepresentativeNames
 } from "../services/rbac.js";
@@ -35,29 +34,6 @@ function financeTabHref(tabId) {
 }
 
 function financeTabs(state) {
-  if (currentUserRole(state) !== "accountant") {
-    return [
-      {
-        id: "overview",
-        label: "Overview"
-      },
-      {
-        id: "customer-balances",
-        label: "Customer balances"
-      },
-      ...(isModuleEnabled(state, "credit_control") ? [
-        {
-          id: "credit-limits",
-          label: "Credit limits"
-        },
-        {
-          id: "credit-history",
-          label: "Credit history"
-        }
-      ] : [])
-    ];
-  }
-
   return [
     {
       id: "overview",
@@ -75,10 +51,16 @@ function financeTabs(state) {
       id: "product-revenue",
       label: "Product revenue"
     },
-    ...(isModuleEnabled(state, "credit_control") ? [{
-      id: "credit-risk",
-      label: "Credit & risk"
-    }] : [])
+    ...(isModuleEnabled(state, "credit_control") ? [
+      {
+        id: "credit-limits",
+        label: "Credit limits"
+      },
+      {
+        id: "credit-history",
+        label: "Credit history"
+      }
+    ] : [])
   ];
 }
 
@@ -189,41 +171,100 @@ function renderInvoiceRows(state, permissions) {
   });
 }
 
-function renderCreditExposureRows(state) {
+function creditAccounts(state) {
   return [...(state.creditLimits || [])]
-    .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0))
-    .map((limit, index) => {
-    const usagePercent = limit.limit ? (Number(limit.balance || 0) / Number(limit.limit || 0)) * 100 : 100;
-    const remaining = Math.max(0, Number(limit.limit || 0) - Number(limit.balance || 0));
-    const status = usagePercent >= 100 ? "credit_hold" : usagePercent >= 85 ? "credit_watch" : "credit_clear";
-    const searchIndex = [
-      limit.partyName,
-      limit.partyType,
-      status
-    ].join(" ").toLowerCase();
+    .sort((a, b) => Number(b.balance || 0) - Number(a.balance || 0) || String(a.partyName || "").localeCompare(String(b.partyName || "")));
+}
 
-    return `
-      <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="credit-exposure" data-search-index="${escapeHtml(searchIndex)}">
-        <td>
-          <strong>${escapeHtml(limit.partyName)}</strong>
-          <div class="muted">${escapeHtml(limit.partyType)}</div>
-        </td>
-        <td>${statusPill(status)}</td>
-        <td>
-          <div class="stock-line">
-            <div class="stock-meta">
-              <span>${formatCurrency(limit.balance)}</span>
-              <span>${formatPercent(usagePercent)}</span>
-            </div>
-            ${progressBar(usagePercent, creditUsageTone(usagePercent))}
-          </div>
-        </td>
-        <td>${formatCurrency(limit.limit)}</td>
-        <td>${formatCurrency(remaining)}</td>
-        <td>${escapeHtml(creditTermsSummary(limit))}</td>
-      </tr>
-    `;
-  });
+function creditAccountStatus(limit) {
+  const approvedLimit = Number(limit.limit || 0);
+  const balance = Number(limit.balance || 0);
+  const usagePercent = approvedLimit ? (balance / approvedLimit) * 100 : 100;
+  return {
+    usagePercent,
+    status: usagePercent >= 100 ? "credit_hold" : usagePercent >= 85 ? "credit_watch" : "credit_clear"
+  };
+}
+
+function isRepresentativeCreditAccount(limit) {
+  return Boolean(limit.repUserId) || String(limit.partyType || "").toLowerCase().includes("representative");
+}
+
+function renderCreditAccountList(state, accountType) {
+  const limits = creditAccounts(state);
+  const matchingAccounts = limits
+    .map((limit, index) => ({ limit, index }))
+    .filter(({ limit }) => accountType === "representative"
+      ? isRepresentativeCreditAccount(limit)
+      : !isRepresentativeCreditAccount(limit));
+
+  if (!matchingAccounts.length) {
+    return `<div class="empty-state">No ${accountType === "representative" ? "sales representative" : "customer"} credit reports available</div>`;
+  }
+
+  return `
+    <div class="credit-account-list">
+      ${matchingAccounts.map(({ limit, index }) => {
+        const { usagePercent, status } = creditAccountStatus(limit);
+        return `
+          <button class="credit-account-list-item js-open-credit-account" type="button" data-credit-account-index="${index}" data-search-index="${escapeHtml(`${limit.partyName} ${limit.partyType} ${status}`.toLowerCase())}">
+            <span class="credit-account-avatar">${escapeHtml(String(limit.partyName || "AC").slice(0, 2).toUpperCase())}</span>
+            <span class="credit-account-name"><strong>${escapeHtml(limit.partyName)}</strong><small>${escapeHtml(limit.partyType || "Credit account")}</small></span>
+            <span class="credit-account-usage"><strong>${formatPercent(usagePercent)}</strong><small>used</small></span>
+            ${statusPill(status)}
+            <span class="credit-account-view" aria-hidden="true">${icon("eye")}</span>
+          </button>
+        `;
+      }).join("")}
+    </div>
+  `;
+}
+
+function renderCreditAccountDetails(limit, state) {
+  if (!limit) return "";
+  const { usagePercent, status } = creditAccountStatus(limit);
+  const approvedLimit = Number(limit.limit || 0);
+  const balance = Number(limit.balance || 0);
+  const remaining = Math.max(0, approvedLimit - balance);
+  const latestHistory = [...(state.creditLimitHistory || [])]
+    .filter((entry) => String(entry.partyName || "").trim().toLowerCase() === String(limit.partyName || "").trim().toLowerCase())
+    .sort((a, b) => String(b.changedAt || "").localeCompare(String(a.changedAt || "")))[0];
+
+  return `
+    <div class="credit-account-detail-heading">
+      <div><span class="eyebrow">${escapeHtml(limit.partyType || "Credit account")}</span><h3>${escapeHtml(limit.partyName)}</h3></div>
+      ${statusPill(status)}
+    </div>
+    <div class="credit-account-detail-grid">
+      <div><span>Current balance</span><strong>${formatCurrency(balance)}</strong></div>
+      <div><span>Approved limit</span><strong>${formatCurrency(approvedLimit)}</strong></div>
+      <div><span>Amount remaining</span><strong>${formatCurrency(remaining)}</strong></div>
+      <div><span>Limit used</span><strong>${formatPercent(usagePercent)}</strong></div>
+      <div><span>Payment period</span><strong>${formatNumber(limit.paymentPeriodDays ?? 14)} days</strong></div>
+      <div><span>Discount</span><strong>${formatTermPercent(limit.discountPercent)}</strong></div>
+      <div><span>Late penalty</span><strong>${formatTermPercent(limit.latePenaltyPercent)}</strong></div>
+      <div><span>Previous limit</span><strong>${formatCurrency(limit.previousLimit || latestHistory?.previousLimit || 0)}</strong></div>
+    </div>
+    <div class="credit-account-change-note">
+      <span>Latest change</span>
+      <strong>${escapeHtml(limit.changedBy || latestHistory?.changedBy || "Not recorded")}</strong>
+      <small>${formatDateTime(limit.changedAt || latestHistory?.changedAt)}${latestHistory?.reason ? ` · ${escapeHtml(latestHistory.reason)}` : ""}</small>
+    </div>
+  `;
+}
+
+function renderCreditAccountModal() {
+  return `
+    <div id="credit-account-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal credit-account-modal" role="dialog" aria-modal="true" aria-labelledby="credit-account-modal-title">
+        <header class="stock-modal-header">
+          <div><span class="eyebrow">Credit account</span><h2 id="credit-account-modal-title">Account details</h2></div>
+          ${iconButton({ iconName: "x", label: "Close credit account", className: "js-close-credit-account" })}
+        </header>
+        <div data-credit-account-detail></div>
+      </section>
+    </div>
+  `;
 }
 
 function renderCreditLimitManager(state, permissions) {
@@ -442,17 +483,11 @@ function getAccountantSummary(state) {
   };
 }
 
-function accountantMetricCard({ label, value, meta, iconName, summaryKey }) {
+function accountantMetricCard({ label, value, summaryKey }) {
   return `
-    <article class="metric-card">
-      <header>
-        <span class="eyebrow">${escapeHtml(label)}</span>
-        <span class="metric-icon">${icon(iconName)}</span>
-      </header>
-      <div>
-        <div class="metric-value js-accountant-summary" data-summary="${escapeHtml(summaryKey)}">${escapeHtml(value)}</div>
-        ${meta ? `<div class="metric-meta">${escapeHtml(meta)}</div>` : ""}
-      </div>
+    <article class="finance-compact-summary-card">
+      <span>${escapeHtml(label)}</span>
+      <strong class="js-accountant-summary" data-summary="${escapeHtml(summaryKey)}">${escapeHtml(value)}</strong>
     </article>
   `;
 }
@@ -461,47 +496,35 @@ function renderAccountantSummaryCards(summary, state) {
   const creditControlEnabled = isModuleEnabled(state, "credit_control");
 
   return `
-    <div class="finance-kpis accountant-kpis">
+    <div class="finance-compact-summary" aria-label="Financial summary">
       ${accountantMetricCard({
         label: "Cash in",
         value: formatCurrency(summary.cashIn),
-        meta: "",
-        iconName: "finance",
         summaryKey: "cashIn"
       })}
       ${accountantMetricCard({
         label: "Product revenue",
         value: formatCurrency(summary.revenue),
-        meta: "",
-        iconName: "orders",
         summaryKey: "revenue"
       })}
       ${accountantMetricCard({
         label: "Gross profit",
         value: formatCurrency(summary.profit),
-        meta: "",
-        iconName: "wallet",
         summaryKey: "profit"
       })}
       ${creditControlEnabled ? accountantMetricCard({
         label: "Credit owed",
         value: formatCurrency(summary.creditOwed),
-        meta: "",
-        iconName: "alert",
         summaryKey: "creditOwed"
       }) : ""}
       ${accountantMetricCard({
         label: "Returns",
         value: formatCurrency(summary.returns),
-        meta: "Customer returns reducing sales",
-        iconName: "refresh",
         summaryKey: "returns"
       })}
       ${accountantMetricCard({
         label: "Stock loss",
         value: formatCurrency(summary.stockLoss),
-        meta: "Written-off stock at cost value",
-        iconName: "package",
         summaryKey: "stockLoss"
       })}
     </div>
@@ -846,7 +869,7 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
     `;
   }
 
-  if (activeTabId === "credit-risk") {
+  if (activeTabId === "credit-reports") {
     return `
       ${renderAccountantFilters(state)}
       <section class="panel" data-export-table="true" data-export-title="Credit reports">
@@ -869,28 +892,10 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
   `;
 }
 
-function renderAccountantFinance({ state }) {
-  const summary = getAccountantSummary(state);
-  const activeTabId = activeFinanceTabId(state);
-  const permissions = currentUserPermissions(state);
-
-  return `
-    <section class="view finance-view accountant-finance">
-      ${renderFinanceSubtabs(activeTabId, state)}
-      ${activeTabId === "credit-risk" ? renderRepresentativeCreditManager(state, permissions) : ""}
-      ${activeTabId === "credit-risk" ? renderCreditLimitManager(state, permissions) : ""}
-      ${renderAccountantFinanceTab(activeTabId, state, summary)}
-    </section>
-  `;
-}
-
 export function renderFinance({ state }) {
-  if (currentUserRole(state) === "accountant") {
-    return renderAccountantFinance({ state });
-  }
-
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
+  const financialSummary = getAccountantSummary(state);
   const permissions = currentUserPermissions(state);
   const activeTabId = activeFinanceTabId(state);
   const invoiceRecords = getInvoiceRecords(state);
@@ -931,36 +936,25 @@ export function renderFinance({ state }) {
             iconName: "wallet"
           })}
         </div>
+        ${renderAccountantSummaryCards(financialSummary, state)}
         <section class="panel">
           ${panelHeader("Credit aging", "Open balances grouped by how long payment has been overdue")}
           <div class="aging-list">${renderAgingRows(state)}</div>
         </section>
       ` : ""}
 
-      ${activeTabId === "customer-balances" ? `
-        <section class="panel">
-          ${panelHeader("Customer balances", "Invoices, due dates, and payment status for every customer")}
-          ${table(
-            ["Invoice", "Customer", "Status", "Due", "Amount", ""],
-            renderInvoiceRows(state, permissions),
-            "No customer balances available"
-          )}
-          ${renderFinancePagination("invoices")}
-        </section>
-      ` : ""}
-
       ${activeTabId === "credit-limits" ? `
         ${renderRepresentativeCreditManager(state, permissions)}
         ${renderCreditLimitManager(state, permissions)}
-        <section class="panel">
-          ${panelHeader("Credit exposure", "Approved limits, current balances, and remaining amount by representative or customer")}
-          ${table(
-            ["Account", "Status", "Usage", "Limit", "Amount left", "Terms"],
-            renderCreditExposureRows(state),
-            "No credit limits available"
-          )}
-          ${renderFinancePagination("credit-exposure")}
+        <section class="panel credit-report-panel" data-credit-report-type="representative">
+          ${panelHeader("Sales representative credit reports", "Select a sales representative to view their complete credit information")}
+          ${renderCreditAccountList(state, "representative")}
         </section>
+        <section class="panel credit-report-panel" data-credit-report-type="customer">
+          ${panelHeader("Customer credit reports", "Select a customer to view their complete credit information")}
+          ${renderCreditAccountList(state, "customer")}
+        </section>
+        ${renderCreditAccountModal()}
       ` : ""}
 
       ${activeTabId === "credit-history" ? `
@@ -984,6 +978,10 @@ export function renderFinance({ state }) {
           ${renderFinancePagination("credit-history-customer")}
         </section>
       ` : ""}
+
+      ${["sales-reports", "invoices", "product-revenue"].includes(activeTabId)
+        ? renderAccountantFinanceTab(activeTabId, state, financialSummary)
+        : ""}
     </section>
   `;
 }
@@ -1203,7 +1201,7 @@ function exportAccountantReport(root, format) {
 
   if (format === "excel") {
     downloadBlob(
-      `distroiq-accountant-report-${datestamp}.xls`,
+      `distroiq-finance-report-${datestamp}.xls`,
       "application/vnd.ms-excel;charset=utf-8",
       buildExportHtml(sections)
     );
@@ -1215,7 +1213,7 @@ function exportAccountantReport(root, format) {
     const html = buildExportHtml(sections);
 
     if (!reportWindow) {
-      downloadBlob(`distroiq-accountant-report-${datestamp}.html`, "text/html;charset=utf-8", html);
+      downloadBlob(`distroiq-finance-report-${datestamp}.html`, "text/html;charset=utf-8", html);
       return;
     }
 
@@ -1236,7 +1234,7 @@ function exportAccountantReport(root, format) {
     return rows.map((row) => row.map(escapeCsvValue).join(",")).join("\n");
   }).join("\n\n");
 
-  downloadBlob(`distroiq-accountant-report-${datestamp}.csv`, "text/csv;charset=utf-8", csv);
+  downloadBlob(`distroiq-finance-report-${datestamp}.csv`, "text/csv;charset=utf-8", csv);
 }
 
 function visibleCreditHistoryRows(root) {
@@ -1365,12 +1363,37 @@ export function bindFinance({ root, store }) {
   bindFinancePagination(root);
   bindCreditHistoryFilters(root);
 
-  if (root.querySelector(".accountant-finance")) {
-    bindAccountantFinance({ root });
-  }
+  bindAccountantFinance({ root });
 
   const creditForm = qs("#credit-limit-form", root);
   const repCreditForm = qs("#rep-credit-limit-form", root);
+  const creditAccountModal = qs("#credit-account-modal", root);
+  const creditAccountDetail = qs("[data-credit-account-detail]", root);
+  const creditAccountTitle = qs("#credit-account-modal-title", root);
+
+  function closeCreditAccountModal() {
+    if (creditAccountModal) creditAccountModal.hidden = true;
+  }
+
+  qsa(".js-open-credit-account", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!creditAccountModal || !creditAccountDetail) return;
+      const limit = creditAccounts(store.getState())[Number(button.dataset.creditAccountIndex || 0)];
+      if (!limit) return;
+      creditAccountDetail.innerHTML = renderCreditAccountDetails(limit, store.getState());
+      if (creditAccountTitle) creditAccountTitle.textContent = limit.partyName || "Account details";
+      creditAccountModal.hidden = false;
+      creditAccountModal.focus();
+    });
+  });
+
+  qsa(".js-close-credit-account", root).forEach((button) => button.addEventListener("click", closeCreditAccountModal));
+  creditAccountModal?.addEventListener("click", (event) => {
+    if (event.target === creditAccountModal) closeCreditAccountModal();
+  });
+  creditAccountModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeCreditAccountModal();
+  });
 
   qsa(".js-view-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {

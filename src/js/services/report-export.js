@@ -60,6 +60,62 @@ function downloadHtml(filename, html) {
   URL.revokeObjectURL(url);
 }
 
+function normalizedCellText(cell) {
+  return String(cell?.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+function csvCell(value) {
+  const text = String(value ?? "");
+  return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
+}
+
+export function tableSectionFromElement(table, title = "") {
+  if (!table) return null;
+
+  const headerCells = [...table.querySelectorAll("thead th")];
+  const includedColumns = headerCells
+    .map((cell, index) => ({ cell, index }))
+    .filter(({ cell }) => !cell.hasAttribute("data-export-ignore"));
+  const headers = includedColumns.map(({ cell }) => normalizedCellText(cell));
+  const rows = [...table.querySelectorAll("tbody tr")]
+    .filter((row) => row.dataset.exportVisible !== "false")
+    .map((row) => {
+      const cells = [...row.querySelectorAll(":scope > td")];
+      return {
+        cells: includedColumns.map(({ index }) => normalizedCellText(cells[index]))
+      };
+    })
+    .filter((row) => row.cells.some(Boolean));
+
+  return { title, headers, rows };
+}
+
+export function downloadTabularReport({ title, sections, filename }) {
+  const availableSections = (sections || []).filter((section) => section?.rows?.length);
+  if (!availableSections.length) return false;
+
+  const csv = availableSections.map((section) => {
+    const rows = [
+      ...(section.title ? [[section.title]] : []),
+      section.headers,
+      ...section.rows.map((row) => row.cells)
+    ];
+
+    return rows.map((row) => row.map(csvCell).join(",")).join("\n");
+  }).join("\n\n");
+  const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = filename || `${String(title || "distroiq-report").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.csv`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return true;
+}
+
 export function printTabularReport({ title, subtitle, sections, filename }) {
   if (!sections?.some((section) => section.rows?.length)) return false;
 

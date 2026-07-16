@@ -8,6 +8,7 @@ import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, sco
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
+import { bindRequiredFieldValidation } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
 import {
   bindTopbarCommunications,
@@ -518,6 +519,9 @@ function render() {
     routeId,
     beginAuthFormFlow,
     signal: activeViewAbortController.signal
+  });
+  bindRequiredFieldValidation(viewRoot, {
+    scope: `${state.client?.id || "no-client"}:${state.user?.id || "anonymous"}`
   });
   applySearchFilter(viewRoot, globalSearch.value);
   updateSearchSuggestions();

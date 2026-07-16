@@ -8,6 +8,7 @@ import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } fro
 import { nextFormattedId } from "../src/js/services/tenant.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
+import { REQUIRED_FORM_ALERT_MESSAGE } from "../src/js/ui/form-validation.js";
 import { renderAuth } from "../src/js/views/auth.js";
 import { renderBackendSetup } from "../src/js/views/backend-setup.js";
 import { renderActivityLog } from "../src/js/views/activity-log.js";
@@ -35,7 +36,6 @@ const accounts = [
   { id: "membership-rep", clientId: client.id, userId: "user-rep", name: "Amina Rep", email: "amina@example.com", role: "sales_rep", status: "active" },
   { id: "membership-manager", clientId: client.id, userId: "user-manager", name: "Musa Manager", email: "musa@example.com", role: "manager", status: "active" },
   { id: "membership-ceo", clientId: client.id, userId: "user-ceo", name: "Chioma CEO", email: "chioma@example.com", role: "ceo", status: "active" },
-  { id: "membership-accountant", clientId: client.id, userId: "user-accountant", name: "Bola Accountant", email: "bola@example.com", role: "accountant", status: "active" },
   { id: "membership-store", clientId: client.id, userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" }
 ];
 const store = createStore();
@@ -49,7 +49,8 @@ assert.equal(nextFormattedId("SKU-{0000}", ["SKU-0001", "SKU-0008"], "SKU"), "SK
 assert.equal(nextFormattedId("INV-{000}", ["INV-001"], "INV"), "INV-002");
 
 const loginHtml = renderAuth({ routeId: "login" });
-assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 4, "login must show four role cards");
+assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 3, "login must show the three supported role cards");
+assert.doesNotMatch(loginHtml, /value="accountant"|>Accountant</, "the removed Accountant role must not appear at login");
 const backendErrorHtml = renderBackendSetup({ state: { backend: { error: "Temporary connection error" } } });
 assert.match(backendErrorHtml, /data-retry-workspace="true"/);
 assert.match(backendErrorHtml, /Try again/);
@@ -59,6 +60,7 @@ assert.match(passwordSetupHtml, /Use 8\+ characters/);
 assert.doesNotMatch(passwordSetupHtml, /12\+ characters/);
 assert.doesNotMatch(loginHtml, /value="manager"/, "the removed Manager role must not appear at login");
 assert.doesNotMatch(loginHtml, /<select name="role"/, "login role selection must not use a dropdown");
+assert.equal(REQUIRED_FORM_ALERT_MESSAGE, "Please complete the required fields");
 const notificationFixture = {
   client,
   user: { id: "user-manager", email: "musa@example.com" },
@@ -223,6 +225,9 @@ assert.match(productionUsage, /js-select-all-stock/);
 assert.match(productionUsage, /js-select-stock/);
 assert.match(productionUsage, /js-delete-product/);
 assert.match(productionUsage, /js-delete-selected-stock/);
+assert.match(productionUsage, /id="stock-delete-confirmation-modal"/);
+assert.match(productionUsage, /js-confirm-stock-delete/);
+assert.match(productionUsage, /Factory quantities and representative allocations/);
 
 store.dispatch({
   type: "RECORD_RAW_MATERIAL_SALE",
@@ -445,9 +450,13 @@ assert.equal((storeKeeperInventory.match(/<select name="sizeUnit"[\s\S]*?<\/sele
 assert.match(storeKeeperInventory, /data-affiliated-product-progress/);
 assert.match(storeKeeperInventory, /js-add-affiliated-product/);
 assert.match(storeKeeperInventory, /Product added successfully/);
+assert.match(storeKeeperInventory, /Recording raw materials used is optional/);
+assert.doesNotMatch(storeKeeperInventory, /name="batchMaterialId" required|name="batchMaterialQuantity"[^>]+required/);
 assert.doesNotMatch(storeKeeperInventory, /name="variantSku"/);
 assert.match(storeKeeperInventory, /<th>Product type<\/th>/);
 assert.match(storeKeeperInventory, /<th>Size<\/th>/);
+assert.match(storeKeeperInventory, /toolbar stock-health-toolbar/);
+assert.match(storeKeeperInventory, /field stock-health-type-filter/);
 
 assert.equal(effectiveOrderStatus({ status: "in_transit", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delayed");
 assert.equal(effectiveOrderStatus({ status: "delivered", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delivered");
@@ -485,7 +494,7 @@ store.dispatch({
   type: "UPDATE_ORDER_DELAY_DETAILS",
   orderId: "ORD-AUTO-DELAY",
   reason: "Vehicle issue",
-  revisedExpectedDeliveryAt: "2026-07-15",
+  revisedExpectedDeliveryAt: "2099-07-15",
   note: "Replacement van assigned"
 });
 assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delayReason, "Vehicle issue");
@@ -498,6 +507,32 @@ assert.doesNotMatch(delayedOrdersPage, /Order status and credit checks for every
 assert.doesNotMatch(delayedOrdersPage, /<span>Missed expected delivery date<\/span>|<span>Vehicle issue<\/span>/);
 assert.match(delayedOrdersPage, /data-search-suggestions="[^"]*Late Outlet/);
 assert.match(delayedOrdersPage, /Replacement van assigned|Review delay plan/);
+
+const creditHoldOrderState = {
+  ...store.getState(),
+  products: [{ id: "SKU-CREDIT-CHECK", name: "Credit Check Product", unitPrice: 1000, unitCost: 500 }],
+  retailers: [{ id: "RTL-CREDIT-CHECK", name: "Credit Check Customer", region: "Kaduna" }],
+  creditLimits: [{ id: "CRD-CREDIT-CHECK", partyName: "Credit Check Customer", limit: 10000, balance: 1000 }],
+  orders: [{
+    id: "ORD-CREDIT-CHECK",
+    retailerId: "RTL-CREDIT-CHECK",
+    customerName: "Credit Check Customer",
+    status: "in_transit",
+    paymentType: "credit",
+    paymentStatus: "open",
+    expectedDeliveryAt: "2026-07-30",
+    items: [{ productId: "SKU-CREDIT-CHECK", quantity: 1, unitPrice: 1000 }]
+  }]
+};
+const noCreditHoldPage = renderOrders({ state: creditHoldOrderState });
+assert.match(noCreditHoldPage, /<span class="eyebrow">Credit holds<\/span>\s*<strong>0<\/strong>/, "unpaid credit within its approved limit must not be counted as a hold");
+const actualCreditHoldPage = renderOrders({
+  state: {
+    ...creditHoldOrderState,
+    creditLimits: [{ id: "CRD-CREDIT-CHECK", partyName: "Credit Check Customer", limit: 10000, balance: 9500 }]
+  }
+});
+assert.match(actualCreditHoldPage, /<span class="eyebrow">Credit holds<\/span>\s*<strong>1<\/strong>/, "only a projected limit breach must be counted as a credit hold");
 
 authenticate("user-manager");
 globalThis.window.location.hash = "#/inventory?tab=assignments";
@@ -522,6 +557,8 @@ globalThis.window.location.hash = "#/activity-log?tab=recent-orders";
 const managerRecentOrders = renderActivityLog({ state: store.getState() });
 assert.match(managerRecentOrders, /Activity log pages/);
 assert.match(managerRecentOrders, /Recent sales orders/);
+assert.match(managerRecentOrders, /js-download-recent-orders/);
+assert.match(managerRecentOrders, /js-print-recent-orders/);
 globalThis.window.location.hash = "#/activity-log";
 const activityWithUserFilter = renderActivityLog({ state: store.getState() });
 const userFilterMarkup = activityWithUserFilter.match(/<select id="activity-user-filter">([\s\S]*?)<\/select>/)?.[1] || "";
@@ -532,6 +569,10 @@ globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const managerSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(managerSubmittedReports, /Submitted sales reports/);
 assert.match(managerSubmittedReports, /js-view-report-details/);
+assert.match(managerSubmittedReports, /js-download-submitted-reports/);
+assert.match(managerSubmittedReports, /js-print-submitted-reports/);
+assert.match(managerSubmittedReports, /js-download-report-details/);
+assert.match(managerSubmittedReports, /js-print-report-details/);
 
 globalThis.window.location.hash = "#/inventory?tab=overview";
 const stockJourney = renderInventory({ state: store.getState() });
@@ -569,6 +610,8 @@ const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
 assert.match(ceoSubmittedReports, /Submitted sales reports/);
 assert.match(ceoSubmittedReports, /js-view-report-details/, "CEO must be able to open the detailed report view");
+assert.match(ceoSubmittedReports, /title="Download submitted sales report"/);
+assert.match(ceoSubmittedReports, /title="Print submitted sales report"/);
 assert.match(ceoSubmittedReports, /js-review-report/, "CEO must inherit report review controls from the former Manager role");
 
 authenticate("user-store");
@@ -585,9 +628,6 @@ assert.match(storeKeeperDashboard, /name="dispatchQuantity"/);
 assert.match(storeKeeperDashboard, /data-dispatch-item-template/);
 assert.match(storeKeeperDashboard, /js-add-dispatch-item/);
 assert.doesNotMatch(storeKeeperDashboard, /href="#\/inventory\?tab=dispatch"/);
-authenticate("user-accountant");
-assert.match(renderDashboard({ state: store.getState() }), /Bola Accountant/);
-
 authenticate("user-manager");
 const ceoCustomersPage = renderRetailers({ state: store.getState() });
 assert.match(ceoCustomersPage, /Add Customer/);
@@ -676,32 +716,43 @@ store.getState().orders = [{
 }];
 globalThis.window.location.hash = "#/finance?tab=overview";
 const financeOverview = renderFinance({ state: store.getState() });
-assert.match(financeOverview, /Customer balances/);
+assert.doesNotMatch(financeOverview, /Customer balances/);
+assert.match(financeOverview, /Sales reports/);
+assert.match(financeOverview, /Invoices/);
+assert.match(financeOverview, /Product revenue/);
 assert.match(financeOverview, /Credit limits/);
 assert.match(financeOverview, /Credit history/);
+assert.match(financeOverview, /Cash in/);
+assert.match(financeOverview, /Gross profit/);
+assert.match(financeOverview, /Stock loss/);
+assert.match(financeOverview, /finance-compact-summary/);
+assert.equal((financeOverview.match(/finance-compact-summary-card/g) || []).length, 6);
+assert.ok(financeOverview.indexOf("Cash in") < financeOverview.indexOf("Credit aging"), "compact finance summary must appear above Credit aging");
+assert.doesNotMatch(financeOverview, /Customer returns reducing sales|Written-off stock at cost value/);
 assert.match(financeOverview, /Credit aging[\s\S]*₦1,500/, "open credit orders must feed the credit-aging view");
 
-globalThis.window.location.hash = "#/finance?tab=customer-balances";
-const customerBalances = renderFinance({ state: store.getState() });
-assert.match(customerBalances, /Invoices, due dates, and payment status/);
-assert.match(customerBalances, /js-view-invoice/);
-assert.match(customerBalances, /js-download-invoice/);
-assert.match(customerBalances, /js-print-invoice/);
-assert.match(customerBalances, /icon-button js-download-invoice/);
-assert.match(customerBalances, /icon-button invoice-paid-action/);
-
-authenticate("user-accountant");
 globalThis.window.location.hash = "#/finance?tab=invoices";
-const accountantInvoices = renderFinance({ state: store.getState() });
-assert.match(accountantInvoices, /Download, print, and confirm customer payments/);
-assert.match(accountantInvoices, /js-view-invoice/);
-assert.match(accountantInvoices, /js-download-invoice/);
-authenticate("user-manager");
+const ceoFinanceInvoices = renderFinance({ state: store.getState() });
+assert.match(ceoFinanceInvoices, /Download, print, and confirm customer payments/);
+assert.match(ceoFinanceInvoices, /js-view-invoice/);
+assert.match(ceoFinanceInvoices, /js-download-invoice/);
+
+globalThis.window.location.hash = "#/finance?tab=product-revenue";
+const ceoProductRevenue = renderFinance({ state: store.getState() });
+assert.match(ceoProductRevenue, /Revenue, cost, and profit/);
 
 globalThis.window.location.hash = "#/finance?tab=credit-limits";
 const financeLimits = renderFinance({ state: store.getState() });
-assert.equal((financeLimits.match(/data-finance-page-row="credit-exposure"/g) || []).length, 12);
-assert.equal((financeLimits.match(/hidden data-finance-page-row="credit-exposure"/g) || []).length, 2);
+assert.match(financeLimits, /Sales representative credit reports/);
+assert.match(financeLimits, /Customer credit reports/);
+const representativeCreditReports = financeLimits.match(/data-credit-report-type="representative"[\s\S]*?<\/section>/)?.[0] || "";
+const customerCreditReports = financeLimits.match(/data-credit-report-type="customer"[\s\S]*?<\/section>/)?.[0] || "";
+assert.equal((representativeCreditReports.match(/js-open-credit-account/g) || []).length, 1, "sales representative credit reports must be listed separately");
+assert.equal((customerCreditReports.match(/js-open-credit-account/g) || []).length, 11, "customer credit reports must be listed separately");
+assert.doesNotMatch(financeLimits, /Credit exposure/);
+assert.equal((financeLimits.match(/js-open-credit-account/g) || []).length, 12);
+assert.match(financeLimits, /id="credit-account-modal"/);
+assert.match(financeLimits, /data-credit-account-detail/);
 
 globalThis.window.location.hash = "#/finance?tab=credit-history";
 const financeHistory = renderFinance({ state: store.getState() });
@@ -710,6 +761,24 @@ assert.match(financeHistory, /Customer credit terms history/);
 assert.match(financeHistory, /credit-history-account/);
 assert.match(financeHistory, /Download CSV/);
 assert.equal((financeHistory.match(/data-finance-page-row="credit-history-representative"/g) || []).length, 12);
+
+const retiredAccountantStore = createStore();
+retiredAccountantStore.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: "cleanup-ceo" } },
+  user: { id: "cleanup-ceo", email: "cleanup@example.com" },
+  client,
+  accounts: [
+    { id: "cleanup-ceo-membership", clientId: client.id, userId: "cleanup-ceo", name: "Cleanup CEO", email: "cleanup@example.com", role: "ceo", status: "active" },
+    { id: "retired-accountant", clientId: client.id, userId: "retired-accountant-user", name: "Retired Accountant", email: "retired@example.com", role: "accountant", status: "active" }
+  ],
+  invites: [{ id: "retired-accountant-invite", role: "accountant", email: "retired@example.com" }],
+  featureModules: [],
+  messages: [],
+  activityLogs: []
+});
+assert.equal(retiredAccountantStore.getState().accounts.length, 1, "retired Accountant staff must be removed from workspace state");
+assert.equal(retiredAccountantStore.getState().invites.length, 0, "retired Accountant invitations must be removed from workspace state");
 assert.equal((financeHistory.match(/hidden data-finance-page-row="credit-history-representative"/g) || []).length, 2);
 assert.equal((financeHistory.match(/data-finance-page-row="credit-history-customer"/g) || []).length, 12);
 assert.equal((financeHistory.match(/hidden data-finance-page-row="credit-history-customer"/g) || []).length, 2);

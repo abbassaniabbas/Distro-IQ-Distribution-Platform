@@ -655,13 +655,17 @@ alter table public.platform_health_events enable row level security;
 alter table public.memberships drop constraint if exists memberships_role_check;
 alter table public.invites drop constraint if exists invites_role_check;
 
+-- Accountant access has been retired; remove its workspace membership and invite.
+delete from public.invites where role in ('accountant', 'finance');
+delete from public.memberships where role in ('accountant', 'finance');
+
 update public.memberships
 set role = case role
   when 'manager' then 'ceo'
   when 'owner' then 'ceo'
   when 'admin' then 'ceo'
   when 'operations' then 'store_keeper'
-  when 'finance' then 'accountant'
+  when 'finance' then 'ceo'
   when 'viewer' then 'ceo'
   when 'super_admin' then 'ceo'
   else role
@@ -674,7 +678,7 @@ set role = case role
   when 'owner' then 'ceo'
   when 'admin' then 'ceo'
   when 'operations' then 'store_keeper'
-  when 'finance' then 'accountant'
+  when 'finance' then 'ceo'
   when 'viewer' then 'ceo'
   when 'super_admin' then 'ceo'
   else role
@@ -683,19 +687,19 @@ where role in ('manager', 'owner', 'admin', 'operations', 'finance', 'viewer', '
 
 update public.memberships
 set role = 'sales_rep'
-where role not in ('sales_rep', 'store_keeper', 'accountant', 'ceo');
+where role not in ('sales_rep', 'store_keeper', 'ceo');
 
 update public.invites
 set role = 'sales_rep'
-where role not in ('sales_rep', 'store_keeper', 'accountant', 'ceo');
+where role not in ('sales_rep', 'store_keeper', 'ceo');
 
 alter table public.memberships
 add constraint memberships_role_check
-check (role in ('sales_rep', 'store_keeper', 'accountant', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'ceo'));
 
 alter table public.invites
 add constraint invites_role_check
-check (role in ('sales_rep', 'store_keeper', 'accountant', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'ceo'));
 
 create unique index if not exists memberships_one_ceo_per_client
 on public.memberships (client_id)
@@ -2207,10 +2211,6 @@ using (
   public.is_platform_admin()
   or public.has_client_role(client_id, array['ceo'])
   or (
-    public.has_client_role(client_id, array['accountant'])
-    and record_type in ('sale', 'invoice', 'credit_limit', 'report')
-  )
-  or (
     public.has_client_role(client_id, array['store_keeper'])
     and record_type in ('inventory', 'stock_movement', 'route')
   )
@@ -2398,7 +2398,7 @@ on public.stock_transactions
 for select
 to authenticated
 using (
-  public.has_client_role(client_id, array['ceo', 'store_keeper', 'accountant'])
+  public.has_client_role(client_id, array['ceo', 'store_keeper'])
   or (
     public.has_client_role(client_id, array['sales_rep'])
     and (
@@ -2489,9 +2489,9 @@ create policy "credit_limits_write_by_manager_roles"
 on public.credit_limits
 for all
 to authenticated
-using (public.has_client_role(client_id, array['accountant', 'ceo']))
+using (public.has_client_role(client_id, array['ceo']))
 with check (
-  public.has_client_role(client_id, array['accountant', 'ceo'])
+  public.has_client_role(client_id, array['ceo'])
   and (
     membership_id is null
     or exists (

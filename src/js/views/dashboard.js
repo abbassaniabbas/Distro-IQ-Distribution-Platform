@@ -22,6 +22,7 @@ import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { openInvoiceQuickView } from "../services/invoices.js";
+import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -70,7 +71,6 @@ function dashboardIdentity(state, role = currentUserRole(state)) {
   const roleLabels = {
     ceo: "CEO",
     store_keeper: "Store Keeper",
-    accountant: "Accountant",
     sales_rep: "Sales Representative"
   };
 
@@ -2026,7 +2026,11 @@ function renderReportDetailsModal() {
             <span class="eyebrow">Submitted sales report</span>
             <h2 id="report-details-title">Report details</h2>
           </div>
-          ${iconButton({ iconName: "x", label: "Close report details", className: "js-close-report-details" })}
+          <div class="report-modal-actions table-document-actions">
+            ${iconButton({ iconName: "download", label: "Download submitted sales report", className: "js-download-report-details" })}
+            ${iconButton({ iconName: "print", label: "Print submitted sales report", className: "js-print-report-details" })}
+            ${iconButton({ iconName: "x", label: "Close report details", className: "js-close-report-details" })}
+          </div>
         </header>
         <div id="report-details-content" class="report-details-content"></div>
       </section>
@@ -2037,8 +2041,15 @@ function renderReportDetailsModal() {
 export function renderManagerReportReview(state, { readOnly = false } = {}) {
   return `
     <section class="panel" id="manager-report-review">
-      ${panelHeader("Submitted sales reports", readOnly ? "Open any report to see its customers, products, quantities, and payment details" : "Open a report for full details, then review it or flag it for correction")}
-      <div class="table-wrap">
+      ${panelHeader(
+        "Submitted sales reports",
+        readOnly ? "Open any report to see its customers, products, quantities, and payment details" : "Open a report for full details, then review it or flag it for correction",
+        `<div class="table-document-actions" aria-label="Submitted sales report table actions">
+          ${iconButton({ iconName: "download", label: "Download submitted sales reports table", className: "js-download-submitted-reports" })}
+          ${iconButton({ iconName: "print", label: "Print submitted sales reports table", className: "js-print-submitted-reports" })}
+        </div>`
+      )}
+      <div class="table-wrap" data-submitted-reports-export-table>
         <table class="data-table">
           <thead>
             <tr>
@@ -2047,7 +2058,7 @@ export function renderManagerReportReview(state, { readOnly = false } = {}) {
               <th>Sales</th>
               <th>Payment mix</th>
               <th>Query</th>
-              <th></th>
+              <th data-export-ignore></th>
             </tr>
           </thead>
           <tbody>${renderManagerReportRows(state, { readOnly }) || '<tr><td colspan="6">No submitted reports yet</td></tr>'}</tbody>
@@ -2869,10 +2880,6 @@ export function renderDashboard({ state }) {
     return renderStoreKeeperDashboard(state, permissions);
   }
 
-  if (state.session && state.client?.id && role === "accountant") {
-    return renderAccountantDashboard(state);
-  }
-
   return `
     <section class="view dashboard-view">
       ${dashboardIdentity(state, role)}
@@ -2930,8 +2937,15 @@ export function renderManagerRecentSalesOrders(state) {
 
   return `
     <section class="panel">
-      ${panelHeader("Recent sales orders", `${formatCurrency(metrics.orderRevenue)} in cycle - ${formatNumber(metrics.openOrders)} still open - ${formatPercent(metrics.fillRate)} delivered`)}
-      <div class="table-wrap">
+      ${panelHeader(
+        "Recent sales orders",
+        `${formatCurrency(metrics.orderRevenue)} in cycle - ${formatNumber(metrics.openOrders)} still open - ${formatPercent(metrics.fillRate)} delivered`,
+        `<div class="table-document-actions" aria-label="Recent sales order table actions">
+          ${iconButton({ iconName: "download", label: "Download recent sales orders table", className: "js-download-recent-orders" })}
+          ${iconButton({ iconName: "print", label: "Print recent sales orders table", className: "js-print-recent-orders" })}
+        </div>`
+      )}
+      <div class="table-wrap" data-recent-orders-export-table>
         <table class="data-table">
           <thead>
             <tr>
@@ -2939,7 +2953,7 @@ export function renderManagerRecentSalesOrders(state) {
               <th>Region</th>
               <th>Status</th>
               <th>Value</th>
-              <th></th>
+              <th data-export-ignore></th>
             </tr>
           </thead>
           <tbody>${renderRecentOrders(state, permissions)}</tbody>
@@ -2951,6 +2965,7 @@ export function renderManagerRecentSalesOrders(state) {
 
 export function bindManagerActivitySections({ root, store }) {
   bindSubmittedReportDetails({ root, store });
+  bindManagerTableExports(root);
 
   qsa(".js-advance-order", root).forEach((button) => {
     button.addEventListener("click", () => {
@@ -2981,6 +2996,46 @@ export function bindManagerActivitySections({ root, store }) {
         message: "Report flagged"
       });
     });
+  });
+}
+
+function bindManagerTableExports(root) {
+  const configurations = [
+    {
+      selector: "[data-recent-orders-export-table] table",
+      sectionTitle: "Recent sales orders",
+      title: "DistroIQ Recent Sales Orders",
+      filename: "distroiq-recent-sales-orders",
+      downloadButton: ".js-download-recent-orders",
+      printButton: ".js-print-recent-orders"
+    },
+    {
+      selector: "[data-submitted-reports-export-table] table",
+      sectionTitle: "Submitted sales reports",
+      title: "DistroIQ Submitted Sales Reports",
+      filename: "distroiq-submitted-sales-reports",
+      downloadButton: ".js-download-submitted-reports",
+      printButton: ".js-print-submitted-reports"
+    }
+  ];
+
+  configurations.forEach((configuration) => {
+    const runExport = (mode) => {
+      const section = tableSectionFromElement(qs(configuration.selector, root), configuration.sectionTitle);
+      if (!section) return;
+      const date = new Date().toISOString().slice(0, 10);
+      const options = {
+        title: configuration.title,
+        sections: [section],
+        filename: `${configuration.filename}-${date}.${mode === "download" ? "csv" : "html"}`
+      };
+
+      if (mode === "download") downloadTabularReport(options);
+      else printTabularReport(options);
+    };
+
+    qs(configuration.downloadButton, root)?.addEventListener("click", () => runExport("download"));
+    qs(configuration.printButton, root)?.addEventListener("click", () => runExport("print"));
   });
 }
 
@@ -3056,6 +3111,7 @@ function bindSubmittedReportDetails({ root, store }) {
   const modal = qs("#report-details-modal", root);
   const content = qs("#report-details-content", root);
   const title = qs("#report-details-title", root);
+  let activeReport = null;
 
   if (!modal || !content) return;
 
@@ -3068,12 +3124,32 @@ function bindSubmittedReportDetails({ root, store }) {
       const report = (store.getState().salesReports || []).find((item) => item.id === button.dataset.reportId);
       if (!report) return;
 
+      activeReport = report;
       content.innerHTML = renderReportDetails(report, store.getState());
       if (title) title.textContent = `${report.repName || "Representative"} - ${formatDate(report.reportDate)}`;
       modal.hidden = false;
       modal.focus();
     });
   });
+
+  function exportOpenReport(mode) {
+    const section = tableSectionFromElement(qs("table", content), "Sales activity");
+    if (!section || !activeReport) return;
+    const repName = activeReport.repName || "representative";
+    const safeRepName = repName.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const options = {
+      title: `${repName} - Submitted Sales Report`,
+      subtitle: `Report date: ${formatDate(activeReport.reportDate)}`,
+      sections: [section],
+      filename: `distroiq-sales-report-${safeRepName || "representative"}-${activeReport.reportDate || todayISO()}.${mode === "download" ? "csv" : "html"}`
+    };
+
+    if (mode === "download") downloadTabularReport(options);
+    else printTabularReport(options);
+  }
+
+  qs(".js-download-report-details", modal)?.addEventListener("click", () => exportOpenReport("download"));
+  qs(".js-print-report-details", modal)?.addEventListener("click", () => exportOpenReport("print"));
 
   modal.addEventListener("click", (event) => {
     if (event.target === modal || event.target.closest(".js-close-report-details")) closeModal();

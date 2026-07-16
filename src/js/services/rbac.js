@@ -12,11 +12,6 @@ export const ROLE_OPTIONS = [
     description: "Raw materials, finished products, equipment, stock movement, and dispatch"
   },
   {
-    value: "accountant",
-    label: "Accountant",
-    description: "Sales reports, credit terms, revenue, profit, and exports"
-  },
-  {
     value: "ceo",
     label: "CEO",
     description: "Full company leadership, sales operations, stock oversight, credit control, team access, and report review"
@@ -28,7 +23,6 @@ const LEGACY_ROLE_MAP = {
   owner: "ceo",
   admin: "ceo",
   operations: "store_keeper",
-  finance: "accountant",
   viewer: "ceo",
   super_admin: "ceo"
 };
@@ -70,26 +64,6 @@ const ROLE_PERMISSIONS = {
     canDispatchStock: true,
     canViewFinancialReports: false,
     canExportReports: false,
-    canManageUsers: false,
-    canConfigureFactory: false,
-    canAuditRecords: false
-  },
-  accountant: {
-    nav: ["dashboard", "orders", "retailers", "finance", "activity-log", "settings"],
-    canViewCompanyWide: true,
-    canLogSalesReturns: false,
-    canManageProducts: false,
-    canAddStock: false,
-    canAssignStock: false,
-    canReconcileStock: false,
-    canSetCreditLimits: true,
-    canAddCustomers: false,
-    canManageCustomers: false,
-    canReviewReports: true,
-    canManageStockMovements: false,
-    canDispatchStock: false,
-    canViewFinancialReports: true,
-    canExportReports: true,
     canManageUsers: false,
     canConfigureFactory: false,
     canAuditRecords: false

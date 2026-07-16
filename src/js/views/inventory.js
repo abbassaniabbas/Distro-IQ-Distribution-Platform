@@ -466,8 +466,8 @@ function renderStockProductModal(state, permissions) {
           <div class="production-stock-update-heading">
             <div>
               <span class="eyebrow">Production stock update</span>
-              <strong>Record raw materials used</strong>
-              <p>Use this only when the finished stock quantity was produced from raw materials.</p>
+              <strong>Recording raw materials used is optional</strong>
+              <p>Complete this section only when the finished stock was produced from factory raw materials.</p>
             </div>
             ${icon("package")}
           </div>
@@ -1477,7 +1477,7 @@ function renderStockHealthPage(state, permissions) {
 
   return `
     <section class="panel inventory-layout">
-      <div class="toolbar">
+      <div class="toolbar stock-health-toolbar">
         ${panelHeader("Stock health", "Raw materials, finished products, equipment, days remaining, and low-stock warnings")}
         <div class="toolbar-group">
           ${permissions.canManageProducts
@@ -1495,7 +1495,7 @@ function renderStockHealthPage(state, permissions) {
                 className: "primary js-open-stock-modal"
               })
             : ""}
-          <label class="field">
+          <label class="field stock-health-type-filter">
             <span>Stock type</span>
             <select id="inventory-category-filter">
               <option value="all">All stock</option>
@@ -1530,6 +1530,37 @@ function renderStockHealthPage(state, permissions) {
         </table>
       </div>
     </section>
+  `;
+}
+
+function renderStockDeletionModal(permissions) {
+  if (!permissions.canManageProducts) return "";
+
+  return `
+    <div id="stock-delete-confirmation-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal stock-delete-confirmation-modal" role="alertdialog" aria-modal="true" aria-labelledby="stock-delete-confirmation-title" aria-describedby="stock-delete-confirmation-summary">
+        <header class="stock-modal-header">
+          <div class="stock-delete-confirmation-heading">
+            <span class="stock-delete-confirmation-icon" aria-hidden="true">${icon("trash")}</span>
+            <div>
+              <span class="eyebrow">Permanent deletion</span>
+              <h2 id="stock-delete-confirmation-title">Delete selected stock?</h2>
+            </div>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close deletion confirmation", className: "js-close-stock-delete-confirmation" })}
+        </header>
+        <p id="stock-delete-confirmation-summary" class="stock-delete-confirmation-summary" data-stock-delete-summary></p>
+        <div class="stock-delete-preview" data-stock-delete-preview></div>
+        <div class="stock-delete-impact">
+          ${icon("alert")}
+          <p>Factory quantities and representative allocations for these records will be removed. Historical transactions will remain in the activity records.</p>
+        </div>
+        <div class="stock-delete-confirmation-actions">
+          <button class="button subtle js-close-stock-delete-confirmation" type="button"><span>Cancel</span></button>
+          <button class="button warning js-confirm-stock-delete" type="button">${icon("trash")}<span>Delete records</span></button>
+        </div>
+      </section>
+    </div>
   `;
 }
 
@@ -1631,14 +1662,14 @@ function renderBatchMaterialRow(rawMaterials) {
     <div class="batch-material-row" data-batch-material-row>
       <label class="field">
         <span>Raw material</span>
-        <select name="batchMaterialId" required>
+        <select name="batchMaterialId">
           <option value="">Choose material</option>
           ${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
         </select>
       </label>
       <label class="field">
         <span>Quantity used</span>
-        <input name="batchMaterialQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
+        <input name="batchMaterialQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0">
       </label>
       <button class="icon-button js-remove-batch-material" type="button" title="Remove material" aria-label="Remove material">${icon("x")}</button>
     </div>
@@ -1813,6 +1844,7 @@ export function renderInventory({ state }) {
       ${renderProductionTraceabilityModal()}
       ${renderRawMaterialSaleModal(state)}
       ${renderRecordCorrectionModal(currentUserRole(state) === "ceo" ? "Save adjustment" : "Send for CEO approval")}
+      ${renderStockDeletionModal(permissions)}
     </section>
   `;
 }
@@ -1821,6 +1853,10 @@ export function bindInventory({ root, store, signal }) {
   const categoryFilter = qs("#inventory-category-filter", root);
   const selectAllStock = qs(".js-select-all-stock", root);
   const deleteSelectedStockButton = qs(".js-delete-selected-stock", root);
+  const stockDeleteConfirmationModal = qs("#stock-delete-confirmation-modal", root);
+  const stockDeleteSummary = qs("[data-stock-delete-summary]", root);
+  const stockDeletePreview = qs("[data-stock-delete-preview]", root);
+  const confirmStockDeleteButton = qs(".js-confirm-stock-delete", root);
   const stockModal = qs("#stock-product-modal", root);
   const stockModalTitle = qs("#stock-product-modal-title", root);
   const restockModal = qs("#restock-modal", root);
@@ -2298,15 +2334,35 @@ export function bindInventory({ root, store, signal }) {
     }
   }
 
-  function confirmStockDeletion(productIds) {
+  let pendingStockDeletionIds = [];
+
+  function closeStockDeletionConfirmation() {
+    if (stockDeleteConfirmationModal) stockDeleteConfirmationModal.hidden = true;
+    pendingStockDeletionIds = [];
+  }
+
+  function openStockDeletionConfirmation(productIds) {
     const products = store.getState().products.filter((product) => productIds.includes(product.id));
-    if (!products.length) return false;
-    const names = products.slice(0, 3).map((product) => product.name).join(", ");
-    const remaining = products.length > 3 ? ` and ${products.length - 3} more` : "";
-    const subject = products.length === 1 ? names : `${products.length} stock records (${names}${remaining})`;
-    return typeof window.confirm !== "function" || window.confirm(
-      `Delete ${subject} permanently? Current factory stock and representative allocations for the selected records will be removed. Historical transactions will remain in the activity records.`
-    );
+    if (!products.length || !stockDeleteConfirmationModal) return;
+
+    pendingStockDeletionIds = products.map((product) => product.id);
+    if (stockDeleteSummary) {
+      stockDeleteSummary.textContent = products.length === 1
+        ? `You are about to permanently delete ${products[0].name}.`
+        : `You are about to permanently delete ${products.length} selected stock records.`;
+    }
+    if (stockDeletePreview) {
+      stockDeletePreview.innerHTML = products.slice(0, 5).map((product) => `
+        <div class="stock-delete-preview-item">
+          <span>${escapeHtml(String(product.name || "ST").slice(0, 2).toUpperCase())}</span>
+          <div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.id)} · ${formatNumber(product.stock || 0)} available</small></div>
+        </div>
+      `).join("") + (products.length > 5
+        ? `<small class="stock-delete-preview-more">+ ${formatNumber(products.length - 5)} more selected record${products.length - 5 === 1 ? "" : "s"}</small>`
+        : "");
+    }
+    stockDeleteConfirmationModal.hidden = false;
+    qs(".js-close-stock-delete-confirmation", stockDeleteConfirmationModal)?.focus();
   }
 
   stockSelectionCheckboxes().forEach((checkbox) => {
@@ -2324,23 +2380,36 @@ export function bindInventory({ root, store, signal }) {
     const productIds = stockSelectionCheckboxes()
       .filter((checkbox) => checkbox.checked)
       .map((checkbox) => checkbox.value);
-    if (!confirmStockDeletion(productIds)) return;
-    store.dispatch({
-      type: "DELETE_PRODUCTS",
-      productIds,
-      message: `${productIds.length} stock record${productIds.length === 1 ? "" : "s"} deleted`
-    });
+    openStockDeletionConfirmation(productIds);
   });
 
   qsa(".js-delete-product", root).forEach((button) => {
     button.addEventListener("click", () => {
       const productId = button.dataset.productId;
-      if (!confirmStockDeletion([productId])) return;
-      store.dispatch({
-        type: "DELETE_PRODUCTS",
-        productIds: [productId],
-        message: "Stock record deleted"
-      });
+      openStockDeletionConfirmation([productId]);
+    });
+  });
+
+  qsa(".js-close-stock-delete-confirmation", root).forEach((button) => {
+    button.addEventListener("click", closeStockDeletionConfirmation);
+  });
+
+  stockDeleteConfirmationModal?.addEventListener("click", (event) => {
+    if (event.target === stockDeleteConfirmationModal) closeStockDeletionConfirmation();
+  });
+
+  stockDeleteConfirmationModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeStockDeletionConfirmation();
+  });
+
+  confirmStockDeleteButton?.addEventListener("click", () => {
+    if (!pendingStockDeletionIds.length) return;
+    const productIds = [...pendingStockDeletionIds];
+    closeStockDeletionConfirmation();
+    store.dispatch({
+      type: "DELETE_PRODUCTS",
+      productIds,
+      message: `${productIds.length} stock record${productIds.length === 1 ? "" : "s"} deleted`
     });
   });
 

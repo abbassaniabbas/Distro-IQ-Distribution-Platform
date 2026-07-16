@@ -477,15 +477,14 @@ export function calculateVisionMetrics(state) {
   const creditLimitTotal = creditLimits.reduce((total, limit) => total + Number(limit.limit || 0), 0);
   const creditBalanceTotal = creditLimits.reduce((total, limit) => total + Number(limit.balance || 0), 0);
   const creditExposurePercent = creditLimitTotal ? (creditBalanceTotal / creditLimitTotal) * 100 : 0;
-  const creditHoldCount = creditLimits.filter((limit) => Number(limit.balance || 0) >= Number(limit.limit || 0)).length;
+  const creditHoldCount = creditLimits.filter((limit) => (
+    Number(limit.limit || 0) > 0 && Number(limit.balance || 0) >= Number(limit.limit || 0)
+  )).length;
   const creditWatchCount = creditLimits.filter((limit) => {
     const percent = limit.limit ? (Number(limit.balance || 0) / Number(limit.limit || 0)) * 100 : 100;
     return percent >= 85 && percent < 100;
   }).length;
-  const creditHoldOrders = orders.filter((order) => (
-    String(order.paymentType || "").toLowerCase().includes("credit") &&
-    String(order.paymentStatus || "").toLowerCase() !== "paid"
-  )).length;
+  const creditHoldOrders = orders.filter((order) => getCreditGuardForOrder(order, state).status === "credit_hold").length;
   const paidTotal = invoices
     .filter((invoice) => invoice.status === "paid")
     .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);

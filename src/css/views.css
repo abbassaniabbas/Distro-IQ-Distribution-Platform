@@ -1774,6 +1774,19 @@
   overflow: visible;
 }
 
+.stock-health-toolbar .toolbar-group {
+  align-items: flex-end;
+}
+
+.stock-health-type-filter {
+  min-width: 160px;
+}
+
+.stock-health-toolbar .button,
+.stock-health-type-filter select {
+  min-height: 40px;
+}
+
 .stock-health-table {
   min-width: 940px;
 }
@@ -2205,6 +2218,113 @@
 .stock-modal-header h2 {
   margin-top: 4px;
   font-size: 1.25rem;
+}
+
+.stock-delete-confirmation-modal {
+  width: min(100%, 560px);
+  gap: 18px;
+  padding: 22px;
+  border-color: rgba(207, 77, 67, 0.22);
+}
+
+.stock-delete-confirmation-heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.stock-delete-confirmation-heading > div {
+  display: grid;
+  gap: 2px;
+}
+
+.stock-delete-confirmation-icon {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--coral);
+  background: rgba(207, 77, 67, 0.1);
+}
+
+.stock-delete-confirmation-icon svg,
+.stock-delete-impact svg {
+  width: 20px;
+  height: 20px;
+}
+
+.stock-delete-confirmation-summary {
+  color: var(--navy);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.stock-delete-preview {
+  display: grid;
+  gap: 8px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.stock-delete-preview-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.stock-delete-preview-item > span {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--navy);
+  background: var(--mint-soft);
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+.stock-delete-preview-item > div {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.stock-delete-preview-item small,
+.stock-delete-preview-more {
+  color: var(--muted);
+}
+
+.stock-delete-impact {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  color: #8f312b;
+  background: rgba(207, 77, 67, 0.08);
+}
+
+.stock-delete-impact svg {
+  flex: 0 0 20px;
+  margin-top: 1px;
+}
+
+.stock-delete-confirmation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 9px;
+}
+
+.stock-delete-confirmation-actions .button {
+  min-width: 112px;
 }
 
 .product-media {
@@ -3215,6 +3335,50 @@
   width: min(100%, 920px);
 }
 
+.table-document-actions,
+.report-modal-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+  flex: 0 0 auto;
+}
+
+.table-document-actions .icon-button {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  overflow: visible;
+}
+
+.table-document-actions .icon-button::after {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  z-index: 40;
+  width: max-content;
+  max-width: 220px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--navy);
+  color: #ffffff;
+  content: attr(aria-label);
+  font-size: 0.7rem;
+  font-weight: 800;
+  line-height: 1.3;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(3px);
+  transition: opacity 0.12s ease, transform 0.12s ease;
+}
+
+.table-document-actions .icon-button:hover::after,
+.table-document-actions .icon-button:focus-visible::after {
+  opacity: 1;
+  transform: translateY(0);
+}
+
 .report-details-content {
   display: grid;
   gap: 18px;
@@ -4207,8 +4371,176 @@
   padding-top: 2px;
 }
 
-.accountant-kpis .metric-card {
-  min-height: 136px;
+.finance-compact-summary {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  gap: 8px;
+}
+
+.finance-compact-summary-card {
+  display: grid;
+  min-height: 70px;
+  align-content: center;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+}
+
+.finance-compact-summary-card span {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.finance-compact-summary-card strong {
+  color: var(--navy);
+  font-size: 1rem;
+  line-height: 1.1;
+}
+
+.credit-account-list {
+  display: grid;
+  gap: 8px;
+}
+
+.credit-account-list-item {
+  display: grid;
+  grid-template-columns: 38px minmax(150px, 1fr) 78px auto 30px;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: inherit;
+  background: #ffffff;
+  text-align: left;
+  cursor: pointer;
+}
+
+.credit-account-list-item:hover,
+.credit-account-list-item:focus-visible {
+  border-color: rgba(25, 185, 133, 0.45);
+  outline: none;
+  background: var(--mint-soft);
+  box-shadow: 0 8px 20px rgba(7, 26, 47, 0.07);
+}
+
+.credit-account-avatar {
+  display: grid;
+  width: 36px;
+  height: 36px;
+  place-items: center;
+  border-radius: 10px;
+  color: var(--navy);
+  background: var(--mint-soft);
+  font-size: 0.72rem;
+  font-weight: 900;
+}
+
+.credit-account-name,
+.credit-account-usage {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.credit-account-name strong,
+.credit-account-name small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credit-account-name small,
+.credit-account-usage small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
+.credit-account-view {
+  display: grid;
+  place-items: center;
+  color: var(--navy);
+}
+
+.credit-account-view svg {
+  width: 18px;
+  height: 18px;
+}
+
+.credit-account-modal {
+  width: min(100%, 680px);
+}
+
+.credit-account-detail-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.credit-account-detail-heading h3 {
+  margin-top: 3px;
+}
+
+.credit-account-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.credit-account-detail-grid > div,
+.credit-account-change-note {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.credit-account-detail-grid span,
+.credit-account-change-note span,
+.credit-account-change-note small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 750;
+}
+
+.credit-account-change-note {
+  margin-top: 8px;
+}
+
+@media (max-width: 900px) {
+  .finance-compact-summary {
+    grid-template-columns: repeat(3, minmax(110px, 1fr));
+  }
+
+  .credit-account-detail-grid {
+    grid-template-columns: repeat(2, minmax(120px, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .finance-compact-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .credit-account-list-item {
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+  }
+
+  .credit-account-usage {
+    display: none;
+  }
+
+  .credit-account-view {
+    grid-column: 3;
+    grid-row: 1;
+  }
 }
 
 .platform-seed-grid,

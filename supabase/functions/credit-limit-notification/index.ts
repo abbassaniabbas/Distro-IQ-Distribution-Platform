@@ -90,7 +90,7 @@ Deno.serve(async (req) => {
     .eq("user_id", callerData.user.id)
     .maybeSingle();
 
-  const allowedRoles = new Set(["accountant", "ceo"]);
+  const allowedRoles = new Set(["ceo"]);
   if (
     membershipError ||
     !callerMembership ||

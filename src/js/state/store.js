@@ -224,13 +224,19 @@ function normalizeOrders(orders = []) {
 
 function ensureStateShape(value) {
   const state = clone(value || seedData);
+  const supportedAccounts = Array.isArray(state.accounts)
+    ? state.accounts.filter((account) => !["accountant", "finance"].includes(String(account.role || "").toLowerCase()))
+    : [];
+  const supportedInvites = Array.isArray(state.invites)
+    ? state.invites.filter((invite) => !["accountant", "finance"].includes(String(invite.role || "").toLowerCase()))
+    : [];
 
   return ensureQuickSaleOrders({
     ...clone(seedData),
     ...state,
     client: state.client || null,
-    accounts: Array.isArray(state.accounts) ? state.accounts : [],
-    invites: Array.isArray(state.invites) ? state.invites : [],
+    accounts: supportedAccounts,
+    invites: supportedInvites,
     featureModules: Array.isArray(state.featureModules) ? state.featureModules : [],
     messages: Array.isArray(state.messages) ? state.messages : [],
     notificationReadAt: String(state.notificationReadAt || ""),
@@ -780,8 +786,12 @@ function reducer(currentState, action) {
         session: state.session,
         user: state.user,
         client: action.client || null,
-        accounts: Array.isArray(action.accounts) ? action.accounts : [],
-        invites: Array.isArray(action.invites) ? action.invites : [],
+        accounts: Array.isArray(action.accounts)
+          ? action.accounts.filter((account) => !["accountant", "finance"].includes(String(account.role || "").toLowerCase()))
+          : [],
+        invites: Array.isArray(action.invites)
+          ? action.invites.filter((invite) => !["accountant", "finance"].includes(String(invite.role || "").toLowerCase()))
+          : [],
         featureModules: Array.isArray(action.featureModules) ? action.featureModules : baseState.featureModules,
         messages: Array.isArray(action.messages) ? action.messages : baseState.messages,
         notificationReadAt: action.notificationReadAt || baseState.notificationReadAt,
@@ -803,8 +813,12 @@ function reducer(currentState, action) {
         session: action.session || null,
         user: action.user || null,
         client: action.client || null,
-        accounts: Array.isArray(action.accounts) ? action.accounts : [],
-        invites: Array.isArray(action.invites) ? action.invites : [],
+        accounts: Array.isArray(action.accounts)
+          ? action.accounts.filter((account) => !["accountant", "finance"].includes(String(account.role || "").toLowerCase()))
+          : [],
+        invites: Array.isArray(action.invites)
+          ? action.invites.filter((invite) => !["accountant", "finance"].includes(String(invite.role || "").toLowerCase()))
+          : [],
         featureModules: Array.isArray(action.featureModules) ? action.featureModules : baseState.featureModules,
         messages: Array.isArray(action.messages) ? action.messages : baseState.messages,
         notificationReadAt: action.notificationReadAt || baseState.notificationReadAt,
@@ -999,7 +1013,7 @@ function reducer(currentState, action) {
     }
 
     case "CREATE_ACCOUNT": {
-      if (!state.client?.id || !["sales_rep", "store_keeper", "accountant"].includes(action.payload?.role)) return state;
+      if (!state.client?.id || !["sales_rep", "store_keeper"].includes(action.payload?.role)) return state;
       const { account, invite } = createAccountInvite({
         client: state.client,
         ...action.payload

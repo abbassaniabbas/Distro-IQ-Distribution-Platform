@@ -88,7 +88,6 @@ function renderLoginRoleSelector() {
   const roleIcons = {
     sales_rep: "retailers",
     store_keeper: "inventory",
-    accountant: "finance",
     ceo: "building"
   };
 

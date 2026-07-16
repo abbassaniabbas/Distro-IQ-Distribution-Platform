@@ -6,7 +6,7 @@ const corsHeaders = {
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 };
 
-const tenantRoles = new Set(["sales_rep", "store_keeper", "accountant", "ceo"]);
+const tenantRoles = new Set(["sales_rep", "store_keeper", "ceo"]);
 const defaultModules = [
   "raw_materials",
   "finished_products",
