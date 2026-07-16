@@ -56,7 +56,7 @@ const ROLE_PERMISSIONS = {
     canFulfillPurchaseOrders: false
   },
   store_keeper: {
-    nav: ["dashboard", "purchase-orders", "inventory", "activity-log", "settings"],
+    nav: ["dashboard", "inventory", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -76,10 +76,10 @@ const ROLE_PERMISSIONS = {
     canAuditRecords: false,
     canRequestStock: false,
     canCoordinateStockRequests: false,
-    canFulfillPurchaseOrders: true
+    canFulfillPurchaseOrders: false
   },
   admin: {
-    nav: ["dashboard", "purchase-orders", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "invoices", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -89,7 +89,7 @@ const ROLE_PERMISSIONS = {
     canSetCreditLimits: false,
     canAddCustomers: false,
     canManageCustomers: false,
-    canReviewReports: false,
+    canReviewReports: true,
     canManageStockMovements: false,
     canDispatchStock: false,
     canViewFinancialReports: false,
@@ -98,11 +98,11 @@ const ROLE_PERMISSIONS = {
     canConfigureFactory: false,
     canAuditRecords: true,
     canRequestStock: false,
-    canCoordinateStockRequests: true,
+    canCoordinateStockRequests: false,
     canFulfillPurchaseOrders: false
   },
   ceo: {
-    nav: ["dashboard", "orders", "purchase-orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
@@ -179,7 +179,7 @@ export function currentUserPermissions(state) {
 }
 
 export function canAccessRoute(state, routeId) {
-  const setupRoutes = ["loading", "backend-setup", "login", "signup", "onboarding", "onboarding-confirmation", "reset-password", "platform-admin"];
+  const setupRoutes = ["loading", "backend-setup", "login", "signup", "forgot-password", "onboarding", "onboarding-confirmation", "reset-password", "platform-admin"];
 
   if (setupRoutes.includes(routeId)) return true;
   if (routeId === "platform-console") return Boolean(state.platformAdmin);

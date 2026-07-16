@@ -366,7 +366,74 @@ Deno.serve(async (req) => {
   }
 
   if (existingAuthUser) {
-    return jsonResponse({ error: "This email already has login access" }, 409);
+    const { data: linkedMemberships, error: linkedMembershipError } = await adminClient
+      .from("memberships")
+      .select("id, client_id")
+      .eq("user_id", existingAuthUser.id)
+      .limit(1);
+
+    if (linkedMembershipError) {
+      return internalError("existing login membership lookup failed", linkedMembershipError);
+    }
+
+    if (linkedMemberships?.length) {
+      return jsonResponse({ error: "This email already has login access" }, 409);
+    }
+
+    const { error: recoverUserError } = await adminClient.auth.admin.updateUserById(existingAuthUser.id, {
+      password: temporaryPassword,
+      user_metadata: {
+        full_name: displayName,
+        client_id: clientId,
+        role
+      }
+    });
+
+    if (recoverUserError) {
+      return internalError("orphaned login recovery failed", recoverUserError);
+    }
+
+    const { data: recoveredMembership, error: recoveredMembershipError } = await adminClient
+      .from("memberships")
+      .insert({
+        client_id: clientId,
+        user_id: existingAuthUser.id,
+        email: normalizedEmail,
+        phone_number: phoneNumber,
+        name: displayName,
+        role,
+        status: "invited",
+        password_reset_required: true
+      })
+      .select("id")
+      .single();
+
+    if (recoveredMembershipError || !recoveredMembership?.id) {
+      return internalError("orphaned login membership recovery failed", recoveredMembershipError);
+    }
+
+    const recoveredInviteError = await ensureInviteRecord(adminClient, {
+      clientId,
+      membershipId: recoveredMembership.id,
+      normalizedEmail,
+      displayName,
+      role,
+      callerUserId
+    });
+
+    if (recoveredInviteError) {
+      await adminClient.from("memberships").delete().eq("id", recoveredMembership.id);
+      return internalError("orphaned login invite recovery failed", recoveredInviteError);
+    }
+
+    return jsonResponse({
+      ok: true,
+      userId: existingAuthUser.id,
+      membershipId: recoveredMembership.id,
+      temporaryPassword,
+      temporaryPasswordCreated: true,
+      recovered: true
+    });
   }
 
   const { data: userData, error: createUserError } = await adminClient.auth.admin.createUser({

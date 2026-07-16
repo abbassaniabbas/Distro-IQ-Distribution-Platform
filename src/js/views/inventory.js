@@ -1,5 +1,4 @@
 import {
-  creditUsageTone,
   getCreditLimitForParty,
   getProductMap,
   getStockHealth,
@@ -9,13 +8,11 @@ import {
   formatCurrency,
   currencySymbolFor,
   formatDate,
-  formatDateTime,
   formatNumber,
   formatPercent,
   statusText
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
-import { isModuleEnabled } from "../services/features.js";
 import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
 import { removeProductImage, saveProductImage } from "../services/product-images.js";
 import { printTabularReport } from "../services/report-export.js";
@@ -23,6 +20,18 @@ import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { bindAdjustments, renderAdjustmentContent } from "./adjustments.js";
+import {
+  enabledPackagingTypes,
+  effectivePiecePrice,
+  packagingDefaults,
+  packagingLineAmount,
+  packagingOption,
+  packagingQuantityLabel,
+  packagingUnitPrice,
+  productPackagingTypes,
+  quantityInPieces
+} from "../services/packaging.js";
 
 const DEFAULT_STOCK_TAB = "stock-health";
 const DISPATCH_PAGE_SIZE = 10;
@@ -78,12 +87,6 @@ function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
 
-function tomorrowISO() {
-  const tomorrow = new Date();
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
-  return tomorrow.toISOString().slice(0, 10);
-}
-
 function inventoryRouteParams() {
   if (typeof window === "undefined") return new URLSearchParams();
 
@@ -119,9 +122,9 @@ function stockTabsForPermissions(permissions, state) {
       id: "movement-history",
       label: "Movement history"
     },
-    ...(isModuleEnabled(state, "credit_control") ? [{
-      id: "credit",
-      label: "Credit limits"
+    ...(["ceo", "admin"].includes(currentUserRole(state)) ? [{
+      id: "adjustments",
+      label: "Adjustments"
     }] : [])
   ];
 }
@@ -159,7 +162,7 @@ function stockJourneyPayment(state, productIds) {
 
     const value = (order.items || []).reduce((total, item) => (
       productIds.has(item.productId)
-        ? total + Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)
+        ? total + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)))
         : total
     ), 0);
 
@@ -295,6 +298,10 @@ function batchMaterialDescription(material, productMap) {
 function batchOutputDescription(batch, product) {
   const name = batch.finishedProductName || product?.name || "Finished product";
   const quantity = Number(batch.quantityProduced || 0);
+  const breakdown = Array.isArray(batch.packagingBreakdown) ? batch.packagingBreakdown.filter((item) => Number(item.packagingQuantity || 0) > 0) : [];
+  if (breakdown.length) {
+    return `${breakdown.map((item) => packagingQuantityLabel(item.packagingQuantity, item.packagingType)).join(" + ")} (${formatNumber(quantity)} pieces) ${name}`;
+  }
   return quantity > 0
     ? `${formatNumber(quantity)} ${batch.outputUnit || productUnit(product || {})} ${name}`
     : name;
@@ -361,9 +368,6 @@ function renderStockProductModal(state, permissions) {
   if (!permissions.canManageProducts && !permissions.canAddStock) return "";
 
   const moneySymbol = currencySymbolFor(state.client);
-  const rawMaterials = (state.products || []).filter((product) => (
-    product.status !== "inactive" && stockCategoryIdForProduct(product) === RAW_MATERIALS_CATEGORY
-  ));
 
   return `
     <div id="stock-product-modal" class="stock-modal-backdrop" ${stockEntrySession.open ? "" : "hidden"}>
@@ -423,7 +427,7 @@ function renderStockProductModal(state, permissions) {
           </select>
         </label>
         <label class="field">
-          <span>Factory stock</span>
+          <span>Factory stock (pieces)</span>
           <input name="stock" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
         </label>
         <label class="field">
@@ -431,13 +435,21 @@ function renderStockProductModal(state, permissions) {
           <input name="reorderPoint" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
         </label>
         <label class="field">
-          <span>Cost price (${escapeHtml(moneySymbol)})</span>
+          <span>Cost price per piece (${escapeHtml(moneySymbol)})</span>
           <input name="unitCost" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
         </label>
         <label class="field">
-          <span>Selling price (${escapeHtml(moneySymbol)})</span>
+          <span>Selling price per piece (${escapeHtml(moneySymbol)})</span>
           <input name="unitPrice" type="number" min="0" step="1" inputmode="numeric" placeholder="0" required>
         </label>
+        ${(() => {
+          const packageTypes = enabledPackagingTypes(state.client).filter((type) => type !== "piece");
+          if (!packageTypes.length) return "";
+          return `<fieldset class="span-full product-packaging-conversions"><legend>Package contents and selling prices</legend>${packageTypes.map((type) => {
+            const option = packagingOption(type);
+            return `<section class="product-package-pricing"><strong>${escapeHtml(option.label)}</strong><label class="field"><span>Pieces contained</span><input name="packagingConversion-${escapeHtml(type)}" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label><label class="field"><span>Selling price per ${escapeHtml(option.singular)} (${escapeHtml(moneySymbol)})</span><input name="packagingPrice-${escapeHtml(type)}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Uses the total piece price"></label></section>`;
+          }).join("")}</fieldset>`;
+        })()}
         <label class="field">
           <span>Catalogue status</span>
           <select name="status" required>
@@ -462,43 +474,6 @@ function renderStockProductModal(state, permissions) {
             </button>
           </div>
         </div>
-        <section class="production-stock-update span-full" data-production-stock-update hidden>
-          <div class="production-stock-update-heading">
-            <div>
-              <span class="eyebrow">Production stock update</span>
-              <strong>Recording raw materials used is optional</strong>
-              <p>Complete this section only when the finished stock was produced from factory raw materials.</p>
-            </div>
-            ${icon("package")}
-          </div>
-          <div class="manager-form-grid production-stock-update-fields">
-            <label class="field">
-              <span>Production date</span>
-              <input name="productionBatchDate" type="date" value="${escapeHtml(todayISO())}">
-            </label>
-            <label class="field">
-              <span>Batch name or number</span>
-              <input name="productionBatchReference" placeholder="BATCH-1001">
-            </label>
-            <label class="field">
-              <span>Quantity produced</span>
-              <input name="productionQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0">
-            </label>
-            <label class="field">
-              <span>Production note (optional)</span>
-              <input name="productionNotes" maxlength="500" placeholder="Shift, quality note, or reference">
-            </label>
-            <div class="span-full batch-material-list" data-batch-material-list>
-              ${renderBatchMaterialRow(rawMaterials)}
-            </div>
-            <div class="span-full manager-form-actions">
-              <button class="button" type="button" data-add-batch-material ${rawMaterials.length ? "" : "disabled"}>${icon("plus")}<span>Add another material</span></button>
-            </div>
-            <span class="field-help span-full" data-production-stock-help>${rawMaterials.length
-              ? "Leave these production fields empty for a normal stock-record update."
-              : "Add raw materials before recording production usage."}</span>
-          </div>
-        </section>
         <div class="manager-form-actions span-full">
           ${textButton({
             iconName: "check",
@@ -923,6 +898,12 @@ function renderDispatchItemRow(state, recipientType, { removable = false } = {})
         <input name="dispatchQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="0" required>
       </label>
       <label class="field">
+        <span>Packaging</span>
+        <select name="dispatchPackagingType" data-dispatch-packaging-select required>
+          <option value="piece">Pieces</option>
+        </select>
+      </label>
+      <label class="field">
         <span>Unit price</span>
         <input data-dispatch-unit-price value="0" readonly aria-label="Selected product unit price">
       </label>
@@ -1006,7 +987,7 @@ function renderDispatchForm(state, permissions) {
         </label>
         <label class="field">
           <span>Expected delivery date</span>
-          <input name="expectedDeliveryAt" type="date" min="${escapeHtml(todayISO())}" value="${escapeHtml(tomorrowISO())}" required>
+          <input name="expectedDeliveryAt" type="date" min="${escapeHtml(todayISO())}" value="${escapeHtml(todayISO())}" required>
         </label>
         <label class="field span-full">
           <span>Staff responsible</span>
@@ -1053,14 +1034,15 @@ function renderDashboardDispatchModal(state, permissions) {
   `;
 }
 
-export function renderRecordCorrectionModal(submitLabel = "Send for CEO approval") {
+export function renderRecordCorrectionModal(submitLabel = "Send for approval") {
+  const isDirectAdjustment = submitLabel === "Save adjustment";
   return `
     <div id="record-correction-modal" class="stock-modal-backdrop" hidden>
       <section class="stock-modal compact-record-modal" role="dialog" aria-modal="true" aria-labelledby="record-correction-title">
         <header class="stock-modal-header">
           <div>
-            <span class="eyebrow">Controlled adjustment</span>
-            <h2 id="record-correction-title">Request a correction</h2>
+            <span class="eyebrow">${isDirectAdjustment ? "CEO adjustment" : "Controlled adjustment"}</span>
+            <h2 id="record-correction-title">${isDirectAdjustment ? "Adjust saved dispatch" : "Request a correction"}</h2>
           </div>
           ${iconButton({ iconName: "x", label: "Close correction request", className: "js-close-record-correction" })}
         </header>
@@ -1073,6 +1055,7 @@ export function renderRecordCorrectionModal(submitLabel = "Send for CEO approval
           <label class="field">
             <span>Correct quantity</span>
             <input name="requestedQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" required>
+            <small class="field-help" data-correction-quantity-limit hidden></small>
           </label>
           <label class="field span-full">
             <span>Reason for adjustment</span>
@@ -1161,7 +1144,11 @@ function renderDispatchRows(state) {
           <strong>${escapeHtml(product?.name || transaction.productId)}</strong>
           <div class="muted">${escapeHtml(transaction.id)}</div>
         </td>
-        <td>${formatNumber(transaction.quantity)}</td>
+        <td>
+          ${transaction.packagingType && transaction.packagingType !== "piece" && transaction.packagingQuantity
+            ? `<strong>${escapeHtml(packagingQuantityLabel(transaction.packagingQuantity, transaction.packagingType))}</strong><div class="muted">${formatNumber(transaction.quantity)} pieces</div>`
+            : formatNumber(transaction.quantity)}
+        </td>
         <td>
           ${escapeHtml(statusText(transaction.paymentType || "none"))}
           <div class="muted">${escapeHtml(transaction.invoiceId || transaction.dispatchId || "Internal movement")}</div>
@@ -1175,8 +1162,8 @@ function renderDispatchRows(state) {
         <td>${escapeHtml(destination)}</td>
         <td>${escapeHtml(staff)}</td>
         <td>
-          ${!isAdjustableDispatch ? '<span class="muted">—</span>' : pendingTransactionIds.has(transaction.id)
-            ? iconButton({ iconName: "clock", label: "Correction awaiting CEO approval", disabled: true })
+          ${!isAdjustableDispatch ? '<span class="muted">—</span>' : pendingTransactionIds.has(transaction.id) && role !== "ceo"
+            ? iconButton({ iconName: "clock", label: "Correction awaiting approval", disabled: true })
             : iconButton({
                 iconName: "refresh",
                 label: role === "ceo" ? "Adjust dispatch" : "Request dispatch correction",
@@ -1208,7 +1195,6 @@ function renderMovementRows(state) {
     .map((transaction, index) => {
       const product = productMap.get(transaction.productId);
       const direction = movementDirection(transaction);
-      const unit = transaction.unit || productUnit(product || {});
       const searchIndex = [
         transaction.type,
         direction,
@@ -1227,7 +1213,7 @@ function renderMovementRows(state) {
             <strong>${escapeHtml(product?.name || transaction.productId)}</strong>
             <div class="muted">${escapeHtml(transaction.id)}</div>
           </td>
-          <td>${formatNumber(transaction.quantity)} ${escapeHtml(unit)}</td>
+          <td>${formatNumber(transaction.quantity)}</td>
           <td>${formatDate(transaction.date)}</td>
           <td>
             ${escapeHtml(transaction.partyName || transaction.recipientName || "Factory")}
@@ -1430,45 +1416,6 @@ function renderTransactionRows(state) {
   });
 }
 
-function isRepresentativeCreditLimit(limit) {
-  return Boolean(limit.repUserId) || String(limit.partyType || "").toLowerCase().includes("representative");
-}
-
-function renderCreditRows(limits) {
-  return limits.map((limit) => {
-    const percent = limit.limit ? (limit.balance / limit.limit) * 100 : 0;
-    const searchIndex = [
-      limit.partyName,
-      limit.partyType,
-      limit.changedBy
-    ].join(" ").toLowerCase();
-
-    return `
-      <tr data-search-index="${escapeHtml(searchIndex)}">
-        <td>
-          <strong>${escapeHtml(limit.partyName)}</strong>
-          <div class="muted">${escapeHtml(limit.partyType)}</div>
-        </td>
-        <td>${formatCurrency(limit.limit)}</td>
-        <td>
-          <div class="stock-line">
-            <div class="stock-meta">
-              <span>${formatCurrency(limit.balance)}</span>
-              <span>${formatPercent(percent)}</span>
-            </div>
-            ${progressBar(percent, creditUsageTone(percent))}
-          </div>
-        </td>
-        <td>${formatCurrency(limit.previousLimit)} -> ${formatCurrency(limit.limit)}</td>
-        <td>
-          ${escapeHtml(limit.changedBy)}
-          <div class="muted">${formatDateTime(limit.changedAt)}</div>
-        </td>
-      </tr>
-    `;
-  });
-}
-
 function renderStockHealthPage(state, permissions) {
   const canAddStock = permissions.canManageProducts || permissions.canAddStock;
   const visibleProducts = permissions.canManageProducts
@@ -1629,30 +1576,6 @@ function renderTransactionsPage(state) {
         <span data-movement-page-status>Page 1 of 1</span>
         <button class="button" type="button" data-movement-page="next">Next</button>
       </div>
-    </section>
-  `;
-}
-
-function renderCreditPage(state) {
-  const representativeLimits = (state.creditLimits || []).filter(isRepresentativeCreditLimit);
-  const customerLimits = (state.creditLimits || []).filter((limit) => !isRepresentativeCreditLimit(limit));
-
-  return `
-    <section class="panel inventory-layout">
-      ${panelHeader("Sales representative credit limits", "Daily credit allowance and current usage for each representative")}
-      ${table(
-        ["Sales representative", "Daily limit", "Balance usage", "Last change", "Changed by"],
-        renderCreditRows(representativeLimits),
-        "No sales representative credit limits recorded"
-      )}
-    </section>
-    <section class="panel inventory-layout">
-      ${panelHeader("Customer credit limits", "Approved credit terms and running balance for each customer")}
-      ${table(
-        ["Customer", "Credit limit", "Balance usage", "Last change", "Changed by"],
-        renderCreditRows(customerLimits),
-        "No customer credit limits recorded"
-      )}
     </section>
   `;
 }
@@ -1825,7 +1748,7 @@ function renderStockTabPage({ activeTabId, state, permissions }) {
   if (activeTabId === "overview") return renderOverviewPage(state);
   if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
   if (activeTabId === "movement-history") return renderTransactionsPage(state);
-  if (activeTabId === "credit") return renderCreditPage(state);
+  if (activeTabId === "adjustments") return renderAdjustmentContent(state);
   return renderStockHealthPage(state, permissions);
 }
 
@@ -1843,13 +1766,14 @@ export function renderInventory({ state }) {
       ${renderAssignmentDetailsModal()}
       ${renderProductionTraceabilityModal()}
       ${renderRawMaterialSaleModal(state)}
-      ${renderRecordCorrectionModal(currentUserRole(state) === "ceo" ? "Save adjustment" : "Send for CEO approval")}
+      ${renderRecordCorrectionModal(currentUserRole(state) === "ceo" ? "Save adjustment" : "Send for approval")}
       ${renderStockDeletionModal(permissions)}
     </section>
   `;
 }
 
 export function bindInventory({ root, store, signal }) {
+  bindAdjustments({ root, store });
   const categoryFilter = qs("#inventory-category-filter", root);
   const selectAllStock = qs(".js-select-all-stock", root);
   const deleteSelectedStockButton = qs(".js-delete-selected-stock", root);
@@ -1964,25 +1888,19 @@ export function bindInventory({ root, store, signal }) {
     }
 
     const actorRole = currentUserRole(store.getState());
-    store.dispatch({
+    store.dispatch(actorRole === "ceo" ? {
+      type: "DIRECT_RECORD_CORRECTION",
+      transactionId,
+      requestedQuantity,
+      reason,
+      message: "Dispatch adjustment saved"
+    } : {
       type: "REQUEST_RECORD_CORRECTION",
       transactionId,
       requestedQuantity,
       reason,
-      message: "Correction sent for CEO approval"
+      message: "Correction sent for approval"
     });
-    if (actorRole === "ceo") {
-      const request = (store.getState().correctionRequests || []).find((item) => (
-        item.transactionId === transactionId && item.status === "pending"
-      ));
-      if (request) {
-        store.dispatch({
-          type: "APPROVE_RECORD_CORRECTION",
-          requestId: request.id,
-          message: "Dispatch adjustment saved"
-        });
-      }
-    }
     correctionModal.hidden = true;
   });
 
@@ -2569,8 +2487,12 @@ export function bindInventory({ root, store, signal }) {
     "productionBatchReference",
     "productionBatchDate",
     "productionQuantity",
-    "productionNotes"
-  ];
+    "productionNotes",
+    ...enabledPackagingTypes(store.getState().client).filter((type) => type !== "piece").flatMap((type) => [
+    `packagingConversion-${type}`,
+    `packagingPrice-${type}`,
+    `productionPackageQuantity-${type}`
+  ])];
 
   function captureStockEditDraft() {
     if (!productForm?.elements.productId?.value) return;
@@ -2597,16 +2519,40 @@ export function bindInventory({ root, store, signal }) {
   }
 
   function resetProductionStockFields() {
-    if (!productForm) return;
+    if (!productForm || !batchMaterialList) return;
 
     ["productionBatchReference", "productionQuantity", "productionNotes"].forEach((name) => {
       if (productForm.elements[name]) productForm.elements[name].value = "";
+    });
+    enabledPackagingTypes(store.getState().client).filter((type) => type !== "piece").forEach((type) => {
+      const input = productForm.elements[`productionPackageQuantity-${type}`];
+      if (input) input.value = "";
     });
     if (productForm.elements.productionBatchDate) productForm.elements.productionBatchDate.value = todayISO();
     const rows = qsa("[data-batch-material-row]", batchMaterialList);
     rows.slice(1).forEach((row) => row.remove());
     rows[0]?.querySelectorAll("input, select").forEach((control) => { control.value = ""; });
+    updateProductionOutputTotal();
   }
+
+  function updateProductionOutputTotal() {
+    if (!productForm) return;
+    const totalTarget = qs("[data-production-output-total]", productForm);
+    if (!totalTarget) return;
+    let totalPieces = Math.max(0, Number(productForm.elements.productionQuantity?.value || 0));
+    enabledPackagingTypes(store.getState().client).filter((type) => type !== "piece").forEach((type) => {
+      const packageQuantity = Math.max(0, Number(productForm.elements[`productionPackageQuantity-${type}`]?.value || 0));
+      const piecesPerPackage = Math.max(0, Number(productForm.elements[`packagingConversion-${type}`]?.value || 0));
+      totalPieces += packageQuantity * piecesPerPackage;
+    });
+    totalTarget.textContent = `${formatNumber(totalPieces)} pieces`;
+  }
+
+  productForm?.addEventListener("input", (event) => {
+    if (event.target.name === "productionQuantity" || String(event.target.name || "").startsWith("productionPackageQuantity-") || String(event.target.name || "").startsWith("packagingConversion-")) {
+      updateProductionOutputTotal();
+    }
+  });
 
   function resetProductForm() {
     if (!productForm) return;
@@ -2867,20 +2813,40 @@ export function bindInventory({ root, store, signal }) {
     const productionBatchDate = String(formData.get("productionBatchDate") || "");
     const productionBatchReferenceValue = String(formData.get("productionBatchReference") || "").trim();
     const productionQuantityRaw = String(formData.get("productionQuantity") || "").trim();
-    const productionQuantity = Number(productionQuantityRaw || 0);
+    const looseProductionQuantity = Number(productionQuantityRaw || 0);
+    const productionPackageQuantities = Object.fromEntries(enabledPackagingTypes(store.getState().client)
+      .filter((type) => type !== "piece")
+      .map((type) => [type, Math.max(0, Number(formData.get(`productionPackageQuantity-${type}`) || 0))]));
     const productionNotes = String(formData.get("productionNotes") || "").trim();
     const productionMaterialIds = formData.getAll("batchMaterialId").map((value) => String(value || ""));
     const productionMaterialQuantities = formData.getAll("batchMaterialQuantity").map((value) => Number(value || 0));
     const productionMaterials = productionMaterialIds.map((materialId, index) => ({
       productId: materialId,
       quantity: productionMaterialQuantities[index]
-    }));
+    })).filter((material) => material.productId || material.quantity > 0);
     const hasProductionUsage = Boolean(
       productionBatchReferenceValue || productionQuantityRaw || productionNotes ||
+      Object.values(productionPackageQuantities).some((quantity) => quantity > 0) ||
       productionMaterialIds.some(Boolean) || productionMaterialQuantities.some((quantity) => quantity > 0)
     );
     const state = store.getState();
     const existingProduct = state.products.find((product) => product.id === existingProductId);
+    const packagingConversions = Object.fromEntries(enabledPackagingTypes(state.client)
+      .filter((type) => type !== "piece")
+      .map((type) => [type, Math.max(0, Number(formData.get(`packagingConversion-${type}`) || 0))])
+      .filter(([, multiplier]) => multiplier > 0));
+    const packagingPrices = Object.fromEntries(enabledPackagingTypes(state.client)
+      .filter((type) => type !== "piece")
+      .map((type) => [type, Math.max(0, Number(formData.get(`packagingPrice-${type}`) || 0))])
+      .filter(([, price]) => price > 0));
+    const productionQuantity = looseProductionQuantity + Object.entries(productionPackageQuantities)
+      .reduce((total, [type, packageQuantity]) => total + packageQuantity * Number(packagingConversions[type] || 0), 0);
+    const productionPackagingBreakdown = [
+      ...(looseProductionQuantity > 0 ? [{ packagingType: "piece", packagingQuantity: looseProductionQuantity, quantity: looseProductionQuantity }] : []),
+      ...Object.entries(productionPackageQuantities)
+        .filter(([, packageQuantity]) => packageQuantity > 0)
+        .map(([type, packageQuantity]) => ({ packagingType: type, packagingQuantity: packageQuantity, quantity: packageQuantity * Number(packagingConversions[type] || 0) }))
+    ];
 
     if (productMessage) productMessage.textContent = "";
 
@@ -3016,6 +2982,8 @@ export function bindInventory({ root, store, signal }) {
       reorderPoint: Number(formData.get("reorderPoint") || 0),
       unitCost: Number(formData.get("unitCost") || 0),
       unitPrice: Number(formData.get("unitPrice") || 0),
+      packagingConversions,
+      packagingPrices,
       status: formData.get("status"),
       imageUrl: imageUrlForState,
       imageStorageKey,
@@ -3029,6 +2997,7 @@ export function bindInventory({ root, store, signal }) {
         batchReference: productionBatchReferenceValue,
         finishedProductId: productId,
         quantityProduced: productionQuantity,
+        packagingBreakdown: productionPackagingBreakdown,
         purpose: "Stock production",
         notes: productionNotes,
         materials: productionMaterials,
@@ -3073,8 +3042,15 @@ export function bindInventory({ root, store, signal }) {
     productForm.elements.reorderPoint.value = product.reorderPoint || 0;
     productForm.elements.unitCost.value = product.unitCost || 0;
     productForm.elements.unitPrice.value = product.unitPrice || 0;
+    enabledPackagingTypes(store.getState().client).filter((type) => type !== "piece").forEach((type) => {
+      const input = productForm.elements[`packagingConversion-${type}`];
+      if (input) input.value = product.packagingConversions?.[type] || "";
+      const priceInput = productForm.elements[`packagingPrice-${type}`];
+      if (priceInput) priceInput.value = product.packagingPrices?.[type] || "";
+    });
     productForm.elements.status.value = product.status || "active";
     resetProductionStockFields();
+    updateProductionOutputTotal();
     if (restoreDraft) restoreStockEditDraft();
     updateProductionStockVisibility();
     updateCustomSizeUnitVisibility();
@@ -3255,8 +3231,16 @@ export function bindInventory({ root, store, signal }) {
     if (!row) return;
     const productId = qs("[data-dispatch-product-select]", row)?.value;
     const product = store.getState().products.find((item) => item.id === productId);
+    const packagingSelect = qs("[data-dispatch-packaging-select]", row);
+    const selectedPackaging = packagingSelect?.value || "piece";
+    if (packagingSelect) {
+      packagingSelect.innerHTML = productPackagingTypes(store.getState().client, product)
+        .map((type) => `<option value="${escapeHtml(type)}" ${type === selectedPackaging ? "selected" : ""}>${escapeHtml(packagingOption(type).label)}</option>`)
+        .join("");
+      if (![...packagingSelect.options].some((option) => option.value === selectedPackaging)) packagingSelect.value = "piece";
+    }
     const priceInput = qs("[data-dispatch-unit-price]", row);
-    if (priceInput) priceInput.value = product ? formatCurrency(product.unitPrice || 0) : formatCurrency(0);
+    if (priceInput) priceInput.value = product ? formatCurrency(packagingUnitPrice(product, packagingSelect?.value || "piece", store.getState().client)) : formatCurrency(0);
   }
 
   function syncDispatchItemRemoveButtons() {
@@ -3308,7 +3292,7 @@ export function bindInventory({ root, store, signal }) {
     qsa("[data-dispatch-item-row]", dispatchItemList).at(-1)?.querySelector("select")?.focus();
   });
   dispatchItemList?.addEventListener("change", (event) => {
-    if (event.target.matches("[data-dispatch-product-select]")) {
+    if (event.target.matches("[data-dispatch-product-select], [data-dispatch-packaging-select]")) {
       updateDispatchItemPrice(event.target.closest("[data-dispatch-item-row]"));
     }
   });
@@ -3323,10 +3307,21 @@ export function bindInventory({ root, store, signal }) {
     event.preventDefault();
     const state = store.getState();
     const formData = new FormData(dispatchForm);
-    const items = qsa("[data-dispatch-item-row]", dispatchForm).map((row) => ({
-      productId: String(qs("[data-dispatch-product-select]", row)?.value || "").trim(),
-      quantity: Number(qs('input[name="dispatchQuantity"]', row)?.value || 0)
-    }));
+    const items = qsa("[data-dispatch-item-row]", dispatchForm).map((row) => {
+      const productId = String(qs("[data-dispatch-product-select]", row)?.value || "").trim();
+      const product = state.products.find((candidate) => candidate.id === productId);
+      const packagingType = String(qs("[data-dispatch-packaging-select]", row)?.value || "piece");
+      const packagingQuantity = Number(qs('input[name="dispatchQuantity"]', row)?.value || 0);
+      return {
+        productId,
+        quantity: quantityInPieces(product, packagingQuantity, packagingType, state.client),
+        packagingType,
+        packagingQuantity,
+        packagingUnitPrice: packagingUnitPrice(product, packagingType, state.client),
+        unitPrice: effectivePiecePrice(product, packagingType, state.client),
+        amount: packagingLineAmount(product, packagingQuantity, packagingType, state.client)
+      };
+    });
     const recipientType = String(formData.get("recipientType") || "");
     const isInternalDispatch = recipientType.toLowerCase().includes("internal");
     const paymentType = isInternalDispatch ? "none" : String(formData.get("paymentType") || "");
@@ -3339,15 +3334,15 @@ export function bindInventory({ root, store, signal }) {
 
     if (message) message.textContent = "";
 
-    if (!items.length || items.some((item) => !item.productId || !item.quantity || item.quantity <= 0) || !recipientName || !formData.get("destination") || !dispatchDate || !expectedDeliveryAt || (!isInternalDispatch && !paymentType)) {
+    if (!items.length || items.some((item) => !item.productId || !item.packagingQuantity || item.packagingQuantity <= 0 || !item.quantity || item.quantity <= 0) || !recipientName || !formData.get("destination") || !dispatchDate || !expectedDeliveryAt || (!isInternalDispatch && !paymentType)) {
       if (message) message.textContent = "Complete every product, quantity, recipient, payment method, destination, and delivery date.";
       return;
     }
 
-    const duplicateProductId = items.find((item, index) => items.findIndex((candidate) => candidate.productId === item.productId) !== index)?.productId;
-    if (duplicateProductId) {
-      const duplicateProduct = state.products.find((product) => product.id === duplicateProductId);
-      if (message) message.textContent = `${duplicateProduct?.name || "A product"} is selected more than once. Combine it into one quantity.`;
+    const duplicateLine = items.find((item, index) => items.findIndex((candidate) => candidate.productId === item.productId && candidate.packagingType === item.packagingType) !== index);
+    if (duplicateLine) {
+      const duplicateProduct = state.products.find((product) => product.id === duplicateLine.productId);
+      if (message) message.textContent = `${duplicateProduct?.name || "A product"} with ${packagingOption(duplicateLine.packagingType).label.toLowerCase()} is selected more than once. Combine it into one quantity.`;
       return;
     }
 
@@ -3356,9 +3351,10 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
+    const requestedByProduct = items.reduce((totals, item) => totals.set(item.productId, Number(totals.get(item.productId) || 0) + item.quantity), new Map());
     const unavailableItem = items.find((item) => {
       const product = state.products.find((candidate) => candidate.id === item.productId);
-      return !product || item.quantity > Number(product.stock || 0);
+      return !product || Number(requestedByProduct.get(item.productId) || 0) > Number(product.stock || 0);
     });
     if (unavailableItem) {
       const product = state.products.find((candidate) => candidate.id === unavailableItem.productId);
@@ -3396,7 +3392,7 @@ export function bindInventory({ root, store, signal }) {
 
     dispatchForm.reset();
     dispatchForm.elements.dispatchDate.value = todayISO();
-    dispatchForm.elements.expectedDeliveryAt.value = tomorrowISO();
+    dispatchForm.elements.expectedDeliveryAt.value = todayISO();
     dispatchForm.elements.staffName.value = currentStaffName(store.getState());
     if (dispatchItemList) dispatchItemList.innerHTML = renderDispatchItemRow(store.getState(), "Sales Representative");
     syncExpectedDeliveryDate();

@@ -15,6 +15,7 @@ const seedData = {
   correctionRequests: [],
   stockRequests: [],
   purchaseOrders: [],
+  procurementOrders: [],
   backend: {
     configured: false,
     status: "idle",

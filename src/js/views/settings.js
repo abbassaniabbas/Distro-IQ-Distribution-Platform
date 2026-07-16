@@ -3,7 +3,10 @@ import {
   deleteWorkspace,
   loadWorkspace,
   recordActivity,
+  requestPackagingSettingsChange,
+  reviewPackagingSettingsChange,
   updateMyMembershipProfile,
+  updatePackagingSettings,
   updateWorkspaceSettings
 } from "../services/backend.js";
 import {
@@ -20,10 +23,12 @@ import {
   validateClientForm
 } from "../services/tenant.js";
 import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js";
+import { enabledPackagingTypes, packagingDefaults, PACKAGING_OPTIONS } from "../services/packaging.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
-import { panelHeader, textButton } from "../ui/components.js";
+import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
+import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
 
 function getCurrentAccount(state) {
   return getScopedAccounts(state).find((account) => account.userId === state.user?.id);
@@ -35,6 +40,10 @@ function canEditCompanySettings(state) {
 
 function canDeleteFactoryAccount(state) {
   return currentUserRole(state) === "ceo";
+}
+
+function canViewPackagingSettings(state) {
+  return ["ceo", "admin", "store_keeper"].includes(currentUserRole(state));
 }
 
 function renderFieldError(name) {
@@ -204,6 +213,72 @@ function renderFactoryDeletion(state) {
   `;
 }
 
+function renderPackagingSettings(state) {
+  if (!canViewPackagingSettings(state)) return "";
+  const role = currentUserRole(state);
+  const requiresApproval = role === "store_keeper";
+  const selected = new Set(enabledPackagingTypes(state.client));
+  const requests = state.packagingChangeRequests || [];
+  const pendingRequest = requests.find((request) => (
+    request.status === "pending" && request.requestedByUserId === state.user?.id
+  ));
+  const pendingApprovals = role === "ceo" ? requests.filter((request) => request.status === "pending") : [];
+  const packageSummary = (request) => (request.packagingTypes || []).map((type) => {
+    const option = PACKAGING_OPTIONS.find((item) => item.value === type);
+    return option?.label || type;
+  }).join(" · ");
+
+  return `
+    <section class="panel settings-packaging-panel">
+      ${panelHeader("Sales packaging", "")}
+      ${requiresApproval && pendingRequest ? `
+        <article class="packaging-approval-status">
+          <div><strong>Awaiting CEO approval</strong><span>${escapeHtml(packageSummary(pendingRequest))}</span></div>
+          ${statusPill("pending")}
+        </article>
+      ` : ""}
+      ${pendingApprovals.length ? `
+        <div class="packaging-approval-queue">
+          <span class="eyebrow">Pending approval</span>
+          ${pendingApprovals.map((request) => `
+            <article class="packaging-approval-request">
+              <div>
+                <strong>${escapeHtml(request.requestedBy || "Store Keeper")}</strong>
+                <span>${escapeHtml(packageSummary(request))}</span>
+              </div>
+              <div class="row-actions">
+                ${iconButton({ iconName: "check", label: "Approve packaging change", className: "js-approve-packaging-request", data: { "request-id": request.id } })}
+                ${iconButton({ iconName: "x", label: "Reject packaging change", className: "js-reject-packaging-request warning", data: { "request-id": request.id } })}
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
+      <form id="packaging-settings-form" class="form-grid" novalidate>
+        <fieldset class="span-full packaging-settings-options">
+          <legend>Packaging used by the factory</legend>
+          ${PACKAGING_OPTIONS.map((option) => `
+            <label class="packaging-setting-option">
+              <input type="checkbox" name="packagingTypes" value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""} ${option.value === "piece" ? "disabled" : ""}>
+              <span><strong>${escapeHtml(option.label)}</strong><small>${option.value === "piece" ? "Base stock unit" : "Set the quantity inside each stock item"}</small></span>
+            </label>
+          `).join("")}
+        </fieldset>
+        <span id="packaging-settings-message" class="field-error span-full"></span>
+        <div class="span-full manager-form-actions">
+          ${textButton({
+            iconName: requiresApproval ? "arrowRight" : "package",
+            label: requiresApproval ? (pendingRequest ? "Awaiting CEO approval" : "Send for approval") : "Save packaging",
+            className: "primary",
+            type: "submit",
+            disabled: Boolean(requiresApproval && pendingRequest)
+          })}
+        </div>
+      </form>
+    </section>
+  `;
+}
+
 function renderProfileSettings(state, account) {
   const name = account?.name || state.user?.user_metadata?.full_name || "";
   const email = account?.email || state.user?.email || "";
@@ -297,13 +372,20 @@ export function renderSettings({ state }) {
 
   const account = getCurrentAccount(state);
   const showFactorySettings = canEditCompanySettings(state);
+  const packagingUnderFactory = showFactorySettings && currentUserRole(state) === "ceo";
 
   return `
     <section class="view settings-view">
       <div class="settings-layout ${showFactorySettings ? "" : "personal-settings-layout"}">
-        ${showFactorySettings ? renderCompanySettings(state, account) : ""}
+        ${showFactorySettings ? `
+          <div class="settings-primary">
+            ${renderCompanySettings(state, account)}
+            ${packagingUnderFactory ? renderPackagingSettings(state) : ""}
+          </div>
+        ` : ""}
         <div class="settings-side">
           ${renderProfileSettings(state, account)}
+          ${packagingUnderFactory ? "" : renderPackagingSettings(state)}
           ${renderFactoryDeletion(state)}
         </div>
       </div>
@@ -393,11 +475,122 @@ export function bindSettings({ root, store }) {
   const state = store.getState();
   const companyForm = qs("#company-settings-form", root);
   const profileForm = qs("#profile-settings-form", root);
+  const packagingForm = qs("#packaging-settings-form", root);
   const passwordForm = qs("#password-settings-form", root);
   const deleteFactoryForm = qs("#delete-factory-form", root);
   const passwordModal = qs("#password-settings-modal", root);
   const deleteFactoryModal = qs("#delete-factory-modal", root);
   const logoUpload = companyForm ? bindCompanyLogoUpload({ root, form: companyForm, state }) : null;
+
+  packagingForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const currentState = store.getState();
+    const requiresApproval = currentUserRole(currentState) === "store_keeper";
+    const packagingTypes = ["piece", ...new FormData(packagingForm).getAll("packagingTypes").map(String)];
+    const savedDefaults = packagingDefaults(currentState.client);
+    const packagingDefaults = Object.fromEntries(packagingTypes.map((type) => [
+      type,
+      type === "piece" ? 1 : Math.max(1, Math.floor(Number(savedDefaults[type] || 1)))
+    ]));
+    const message = qs("#packaging-settings-message", packagingForm);
+    const submitButton = qs('button[type="submit"]', packagingForm);
+    if (message) message.textContent = "";
+    submitButton.disabled = true;
+
+    try {
+      if (requiresApproval && isBackendConfigured()) {
+        const workspace = await requestPackagingSettingsChange({
+          clientId: currentState.client.id,
+          packagingTypes,
+          packagingDefaults
+        });
+        store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Packaging change sent for CEO approval" });
+      } else if (requiresApproval) {
+        store.dispatch({
+          type: "REQUEST_PACKAGING_SETTINGS_CHANGE",
+          packagingTypes,
+          packagingDefaults,
+          message: "Packaging change sent for CEO approval"
+        });
+      } else if (isBackendConfigured()) {
+        const workspace = await updatePackagingSettings({
+          clientId: currentState.client.id,
+          packagingTypes,
+          packagingDefaults
+        });
+        store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Packaging settings updated" });
+      } else {
+        store.dispatch({
+          type: "UPDATE_CLIENT_SETTINGS",
+          payload: { packagingTypes, packagingDefaults },
+          message: "Packaging settings updated"
+        });
+      }
+    } catch (error) {
+      if (message) message.textContent = error.message;
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  root.querySelectorAll(".js-approve-packaging-request").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const confirmed = await confirmActionDialog({
+        title: "Approve Sales Packaging change",
+        message: "This will apply the requested packaging options across stock, dispatch, sales and production.",
+        confirmLabel: "Approve change"
+      });
+      if (!confirmed) return;
+      button.disabled = true;
+      const currentState = store.getState();
+      try {
+        if (isBackendConfigured()) {
+          const workspace = await reviewPackagingSettingsChange({
+            clientId: currentState.client.id,
+            requestId: button.dataset.requestId,
+            decision: "approved"
+          });
+          store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Packaging change approved" });
+        } else {
+          store.dispatch({ type: "APPROVE_PACKAGING_SETTINGS_CHANGE", requestId: button.dataset.requestId, message: "Packaging change approved" });
+        }
+      } catch (error) {
+        const message = qs("#packaging-settings-message", root);
+        if (message) message.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  });
+
+  root.querySelectorAll(".js-reject-packaging-request").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const note = await requestTextDialog({
+        title: "Reject Sales Packaging change",
+        message: "Give the Store Keeper a clear reason for rejecting this request.",
+        confirmLabel: "Reject request"
+      });
+      if (note === null) return;
+      button.disabled = true;
+      const currentState = store.getState();
+      try {
+        if (isBackendConfigured()) {
+          const workspace = await reviewPackagingSettingsChange({
+            clientId: currentState.client.id,
+            requestId: button.dataset.requestId,
+            decision: "rejected",
+            note
+          });
+          store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Packaging change rejected" });
+        } else {
+          store.dispatch({ type: "REJECT_PACKAGING_SETTINGS_CHANGE", requestId: button.dataset.requestId, note, message: "Packaging change rejected" });
+        }
+      } catch (error) {
+        const message = qs("#packaging-settings-message", root);
+        if (message) message.textContent = error.message;
+        button.disabled = false;
+      }
+    });
+  });
 
   qs("[data-open-password-modal]", root)?.addEventListener("click", () => {
     passwordModal.hidden = false;

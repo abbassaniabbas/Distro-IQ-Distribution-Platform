@@ -9,6 +9,7 @@ import {
 import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js";
+import { effectivePiecePrice, packagingLineAmount, packagingUnitPrice, quantityInPieces } from "../services/packaging.js";
 
 function clone(value) {
   if (typeof structuredClone === "function") {
@@ -131,6 +132,26 @@ function boundedPercent(value) {
   return Math.max(0, Math.min(100, Number(value || 0)));
 }
 
+function matchingTransactionItem(items, transaction) {
+  return (items || []).find((item) => item.transactionId && item.transactionId === transaction.id) ||
+    (items || []).find((item) => item.productId === transaction.productId && String(item.packagingType || "piece") === String(transaction.packagingType || "piece"));
+}
+
+function syncPackagingQuantity(record, nextQuantity) {
+  if (!record) return;
+  const previousBaseQuantity = Number(record.quantity || 0);
+  const previousPackagingQuantity = Number(record.packagingQuantity || 0);
+  const multiplier = previousPackagingQuantity > 0 ? previousBaseQuantity / previousPackagingQuantity : 1;
+  record.quantity = nextQuantity;
+  record.packagingQuantity = String(record.packagingType || "piece") === "piece"
+    ? nextQuantity
+    : multiplier > 0 ? nextQuantity / multiplier : previousPackagingQuantity;
+  record.lineAmount = String(record.packagingType || "piece") !== "piece" && Number(record.packagingUnitPrice || 0) > 0
+    ? Number(record.packagingQuantity || 0) * Number(record.packagingUnitPrice || 0)
+    : nextQuantity * Number(record.unitPrice || 0);
+  if (Object.prototype.hasOwnProperty.call(record, "amount")) record.amount = record.lineAmount;
+}
+
 function normalizedPaymentPeriod(value, fallback = 14) {
   const nextValue = Number(value ?? fallback);
   return Math.max(0, Number.isFinite(nextValue) ? Math.round(nextValue) : fallback);
@@ -177,6 +198,9 @@ function orderFromSaleTransaction(transaction, state) {
         productId: transaction.productId,
         productName: transaction.productName || product?.name || transaction.productId,
         quantity,
+        packagingType: transaction.packagingType || "piece",
+        packagingQuantity: Number(transaction.packagingQuantity || quantity),
+        packagingUnitPrice: Number(transaction.packagingUnitPrice || unitPrice),
         unitPrice,
         unitCost
       }
@@ -247,9 +271,11 @@ function ensureStateShape(value) {
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
     productionBatches: Array.isArray(state.productionBatches) ? state.productionBatches : [],
     offlineSalesQueue: Array.isArray(state.offlineSalesQueue) ? state.offlineSalesQueue : [],
+    packagingChangeRequests: Array.isArray(state.packagingChangeRequests) ? state.packagingChangeRequests : [],
     correctionRequests: Array.isArray(state.correctionRequests) ? state.correctionRequests : [],
     stockRequests: Array.isArray(state.stockRequests) ? state.stockRequests : [],
     purchaseOrders: Array.isArray(state.purchaseOrders) ? state.purchaseOrders : [],
+    procurementOrders: Array.isArray(state.procurementOrders) ? state.procurementOrders : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
     orders: normalizeOrders(mergeSeedRecords(state.orders, seedData.orders)),
     routes: mergeSeedRecords(state.routes, seedData.routes),
@@ -561,10 +587,14 @@ function createQuickSaleOrder(state, {
   customerName,
   customerType,
   quantity,
+  packagingType = "piece",
+  packagingQuantity = quantity,
   paymentType,
   repName,
   saleDate = todayISO(),
-  unitPrice = Number(product?.unitPrice || 0)
+  unitPrice = Number(product?.unitPrice || 0),
+  items = [],
+  transactionIds = []
 }) {
   const paymentLabel = String(paymentType || "cash").toLowerCase();
   const today = dateOnly(saleDate) || todayISO();
@@ -577,7 +607,29 @@ function createQuickSaleOrder(state, {
   const dueDate = new Date(`${today}T12:00:00`);
   dueDate.setDate(dueDate.getDate() + Number(customerLimit?.paymentPeriodDays ?? 14));
   const dueAt = dueDate.toISOString().slice(0, 10);
-  const amount = quantity * Number(unitPrice || 0);
+  const saleItems = items.length ? items : [{
+    product,
+    quantity,
+    packagingType,
+    packagingQuantity,
+    packagingUnitPrice: packagingUnitPrice(product, packagingType, state.client),
+    unitPrice,
+    transactionId
+  }];
+  const resolvedTransactionIds = transactionIds.length ? transactionIds : saleItems.map((item) => item.transactionId).filter(Boolean);
+  const amount = saleItems.reduce((total, item) => total + Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0);
+  const invoiceItems = saleItems.map((item) => ({
+    transactionId: item.transactionId || "",
+    productId: item.product.id,
+    productName: item.product.name,
+    quantity: Number(item.quantity || 0),
+    packagingType: item.packagingType || "piece",
+    packagingQuantity: Number(item.packagingQuantity || item.quantity || 0),
+    packagingUnitPrice: Number(item.packagingUnitPrice || packagingUnitPrice(item.product, item.packagingType, state.client)),
+    lineAmount: Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))),
+    unitPrice: Number(item.unitPrice || 0),
+    unitCost: Number(item.product.unitCost || 0)
+  }));
 
   state.orders = [
     {
@@ -585,6 +637,7 @@ function createQuickSaleOrder(state, {
       clientId: state.client?.id || "",
       source: "quick_sale",
       transactionId,
+      transactionIds: resolvedTransactionIds,
       invoiceId,
       retailerId: customer?.id || "",
       customerName: customer?.name || customerName || "Walk-in customer",
@@ -599,15 +652,7 @@ function createQuickSaleOrder(state, {
       updatedAt: today,
       repName,
       repUserId: state.user?.id || "",
-      items: [
-        {
-          productId: product.id,
-          productName: product.name,
-          quantity,
-          unitPrice: Number(unitPrice || 0),
-          unitCost: Number(product.unitCost || 0)
-        }
-      ]
+      items: invoiceItems
     },
     ...(state.orders || [])
   ];
@@ -618,6 +663,7 @@ function createQuickSaleOrder(state, {
       clientId: state.client?.id || "",
       orderId,
       transactionId,
+      transactionIds: resolvedTransactionIds,
       retailerId: customer?.id || "",
       customerName: customer?.name || customerName || "Customer",
       customerAddress: customer?.address || "",
@@ -629,13 +675,7 @@ function createQuickSaleOrder(state, {
       paymentType,
       repName,
       repUserId: state.user?.id || "",
-      items: [{
-        productId: product.id,
-        productName: product.name,
-        quantity,
-        unitPrice: Number(unitPrice || 0),
-        unitCost: Number(product.unitCost || 0)
-      }]
+      items: invoiceItems
     },
     ...(state.invoices || [])
   ];
@@ -677,11 +717,16 @@ function createDispatchSalesOrder(state, {
   const dueDate = new Date(`${dispatchDate}T12:00:00`);
   dueDate.setDate(dueDate.getDate() + Number(creditLimit?.paymentPeriodDays ?? 14));
   const dueAt = isCredit ? dueDate.toISOString().slice(0, 10) : dispatchDate;
-  const amount = items.reduce((total, item) => total + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0);
+  const amount = items.reduce((total, item) => total + Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0);
   const invoiceItems = items.map((item) => ({
+    transactionId: item.transactionId || "",
     productId: item.product.id,
     productName: item.product.name,
     quantity: item.quantity,
+    packagingType: item.packagingType || "piece",
+    packagingQuantity: Number(item.packagingQuantity || item.quantity || 0),
+    packagingUnitPrice: Number(item.packagingUnitPrice || packagingUnitPrice(item.product, item.packagingType, state.client)),
+    lineAmount: Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))),
     unitPrice: Number(item.unitPrice || 0),
     unitCost: Number(item.product.unitCost || 0)
   }));
@@ -798,6 +843,7 @@ function reducer(currentState, action) {
         messages: Array.isArray(action.messages) ? action.messages : baseState.messages,
         notificationReadAt: action.notificationReadAt || baseState.notificationReadAt,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : baseState.activityLogs,
+        packagingChangeRequests: Array.isArray(action.packagingChangeRequests) ? action.packagingChangeRequests : baseState.packagingChangeRequests,
         creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(baseState.creditLimits, action.creditLimits) : baseState.creditLimits,
         creditLimitHistory: Array.isArray(action.creditLimitHistory)
           ? mergeCreditHistoryRecords(baseState.creditLimitHistory, action.creditLimitHistory)
@@ -825,6 +871,7 @@ function reducer(currentState, action) {
         messages: Array.isArray(action.messages) ? action.messages : baseState.messages,
         notificationReadAt: action.notificationReadAt || baseState.notificationReadAt,
         activityLogs: Array.isArray(action.activityLogs) ? action.activityLogs : baseState.activityLogs,
+        packagingChangeRequests: Array.isArray(action.packagingChangeRequests) ? action.packagingChangeRequests : baseState.packagingChangeRequests,
         creditLimits: Array.isArray(action.creditLimits) ? mergeCreditLimitRecords(baseState.creditLimits, action.creditLimits) : baseState.creditLimits,
         creditLimitHistory: Array.isArray(action.creditLimitHistory)
           ? mergeCreditHistoryRecords(baseState.creditLimitHistory, action.creditLimitHistory)
@@ -952,6 +999,78 @@ function reducer(currentState, action) {
       };
     }
 
+    case "REQUEST_PACKAGING_SETTINGS_CHANGE": {
+      if (!state.client?.id || currentUserRole(state) !== "store_keeper") return state;
+      const allowedTypes = new Set(["piece", "carton", "pack", "tray", "pouch", "sachet", "jar", "display_box"]);
+      const packagingTypes = [...new Set(["piece", ...(action.packagingTypes || [])])].filter((type) => allowedTypes.has(type));
+      const packagingDefaults = Object.fromEntries(packagingTypes.map((type) => [
+        type,
+        type === "piece" ? 1 : Math.floor(Number(action.packagingDefaults?.[type] || 0))
+      ]));
+      const alreadyPending = (state.packagingChangeRequests || []).some((request) => (
+        request.status === "pending" && request.requestedByUserId === state.user?.id
+      ));
+      if (alreadyPending || packagingTypes.some((type) => packagingDefaults[type] < 1)) return state;
+
+      const request = {
+        id: createId("PKG"),
+        clientId: state.client.id,
+        requestedByUserId: state.user?.id || "",
+        requestedBy: currentActorName(state),
+        packagingTypes,
+        packagingDefaults,
+        status: "pending",
+        requestedAt: new Date().toISOString()
+      };
+      state.packagingChangeRequests = [request, ...(state.packagingChangeRequests || [])];
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "requested",
+        recordType: "packaging_settings",
+        recordLabel: request.id,
+        summary: `${request.requestedBy} requested a Sales Packaging change`
+      });
+      return state;
+    }
+
+    case "APPROVE_PACKAGING_SETTINGS_CHANGE": {
+      if (currentUserRole(state) !== "ceo") return state;
+      const request = (state.packagingChangeRequests || []).find((item) => item.id === action.requestId);
+      if (!request || request.status !== "pending") return state;
+      request.status = "approved";
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      state.client.packagingTypes = [...request.packagingTypes];
+      state.client.packagingDefaults = { ...request.packagingDefaults };
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "approved",
+        recordType: "packaging_settings",
+        recordLabel: request.id,
+        summary: `CEO approved the Sales Packaging change requested by ${request.requestedBy}`
+      });
+      return state;
+    }
+
+    case "REJECT_PACKAGING_SETTINGS_CHANGE": {
+      if (currentUserRole(state) !== "ceo") return state;
+      const request = (state.packagingChangeRequests || []).find((item) => item.id === action.requestId);
+      const note = String(action.note || "").trim();
+      if (!request || request.status !== "pending" || !note) return state;
+      request.status = "rejected";
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      request.reviewNote = note.slice(0, 500);
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "rejected",
+        recordType: "packaging_settings",
+        recordLabel: request.id,
+        summary: `CEO rejected the Sales Packaging change requested by ${request.requestedBy}`
+      });
+      return state;
+    }
+
     case "DELETE_CLIENT_ACCOUNT": {
       return {
         ...state,
@@ -967,9 +1086,11 @@ function reducer(currentState, action) {
         creditLimitHistory: [],
         productionBatches: [],
         offlineSalesQueue: [],
+        packagingChangeRequests: [],
         correctionRequests: [],
         stockRequests: [],
         purchaseOrders: [],
+        procurementOrders: [],
         retailers: [],
         orders: [],
         routes: [],
@@ -1049,6 +1170,29 @@ function reducer(currentState, action) {
         recordType: "account",
         recordLabel: account.email,
         summary: `${action.active ? "Activated" : "Deactivated"} ${account.name}`
+      });
+      return state;
+    }
+
+    case "SET_ACCOUNT_ROLE": {
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
+      const account = state.accounts.find((item) => item.id === action.accountId && item.clientId === state.client.id);
+      const nextRole = normalizeRole(action.role);
+      if (
+        !account ||
+        account.userId === state.user?.id ||
+        normalizeRole(account.role) === "ceo" ||
+        !["sales_rep", "store_keeper", "admin"].includes(nextRole)
+      ) return state;
+
+      const previousRole = normalizeRole(account.role);
+      account.role = nextRole;
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "updated",
+        recordType: "account",
+        recordLabel: account.email,
+        summary: `Changed ${account.name} from ${textLabel(previousRole)} to ${textLabel(nextRole)}`
       });
       return state;
     }
@@ -1353,7 +1497,6 @@ function reducer(currentState, action) {
         purpose &&
         purpose.length <= 160 &&
         !duplicateReference &&
-        productRows.length &&
         materialIds.length === productRows.length &&
         uniqueMaterialIds.size === materialIds.length &&
         finishedProduct &&
@@ -1400,6 +1543,11 @@ function reducer(currentState, action) {
         finishedProductId: finishedProduct.id,
         finishedProductName: finishedProduct.name,
         quantityProduced,
+        packagingBreakdown: Array.isArray(action.packagingBreakdown) ? action.packagingBreakdown.map((item) => ({
+          packagingType: String(item.packagingType || "piece"),
+          packagingQuantity: Number(item.packagingQuantity || 0),
+          quantity: Number(item.quantity || 0)
+        })).filter((item) => item.packagingQuantity > 0 && item.quantity > 0) : [],
         outputUnit: finishedProduct.unit || "unit",
         purpose,
         notes: String(action.notes || "").trim().slice(0, 500),
@@ -1439,6 +1587,7 @@ function reducer(currentState, action) {
           productId: finishedProduct.id,
           productName: finishedProduct.name,
           quantity: quantityProduced,
+          packagingBreakdown: Array.isArray(action.packagingBreakdown) ? action.packagingBreakdown : [],
           unit: finishedProduct.unit || "unit",
           amount: 0,
           partyType: "Production batch",
@@ -1458,7 +1607,9 @@ function reducer(currentState, action) {
         actionType: "used",
         recordType: "production_batch",
         recordLabel: batchReference,
-        summary: `${recordedBy} used ${recordedMaterials.length} stock material${recordedMaterials.length === 1 ? "" : "s"} to produce ${quantityProduced} ${finishedProduct.name} for ${purpose}`
+        summary: recordedMaterials.length
+          ? `${recordedBy} used ${recordedMaterials.length} stock material${recordedMaterials.length === 1 ? "" : "s"} to produce ${quantityProduced} ${finishedProduct.name} for ${purpose}`
+          : `${recordedBy} produced ${quantityProduced} ${finishedProduct.name} for ${purpose}`
       });
       return state;
     }
@@ -1619,6 +1770,138 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "LOG_REP_SALE": {
+      const repName = action.repName || currentActorName(state);
+      const customer = state.retailers.find((item) => item.id === action.customerId);
+      const customerName = customer?.name || action.customerName || "Walk-in customer";
+      const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
+      const paymentType = normalized(action.paymentType || "cash");
+      const isWalkInSale = !customer && normalized(customerName) === "walk-in customer";
+      const requestedItems = Array.isArray(action.items) ? action.items : [];
+      const saleItems = requestedItems.map((item) => {
+        const product = state.products.find((candidate) => candidate.id === item.productId);
+        const packagingType = String(item.packagingType || "piece");
+        const packagingQuantity = Number(item.packagingQuantity || 0);
+        return {
+          product,
+          packagingType,
+          packagingQuantity,
+          quantity: quantityInPieces(product, packagingQuantity, packagingType, state.client),
+          packagingUnitPrice: packagingUnitPrice(product, packagingType, state.client),
+          unitPrice: effectivePiecePrice(product, packagingType, state.client),
+          amount: packagingLineAmount(product, packagingQuantity, packagingType, state.client),
+          transactionId: createId("TXN")
+        };
+      });
+      const lineKeys = saleItems.map((item) => `${item.product?.id || ""}:${item.packagingType}`);
+      const requestedByProduct = saleItems.reduce((totals, item) => {
+        if (item.product) totals.set(item.product.id, Number(totals.get(item.product.id) || 0) + item.quantity);
+        return totals;
+      }, new Map());
+      const eligibleAssignmentsForProduct = (productId) => (state.stockAssignments || [])
+        .filter((assignment) => assignment.productId === productId)
+        .filter((assignment) => normalized(assignment.repName) === normalized(repName))
+        .filter((assignment) => assignmentOutstanding(assignment) > 0)
+        .sort((a, b) => String(a.assignedAt || "").localeCompare(String(b.assignedAt || "")));
+      const invalid = (
+        !saleItems.length ||
+        new Set(lineKeys).size !== lineKeys.length ||
+        saleItems.some((item) => !item.product || item.product.status === "inactive" || !Number.isFinite(item.packagingQuantity) || item.packagingQuantity <= 0 || !Number.isFinite(item.quantity) || item.quantity <= 0 || item.unitPrice < 0) ||
+        [...requestedByProduct].some(([productId, quantity]) => quantity > eligibleAssignmentsForProduct(productId).reduce((total, assignment) => total + assignmentOutstanding(assignment), 0)) ||
+        !customerName ||
+        !["cash", "credit"].includes(paymentType) ||
+        (isWalkInSale && paymentType !== "cash")
+      );
+      if (invalid) return state;
+
+      const transactions = saleItems.map((item) => {
+        let remaining = item.quantity;
+        const assignmentAllocations = [];
+        eligibleAssignmentsForProduct(item.product.id).forEach((assignment) => {
+          if (remaining <= 0) return;
+          const allocatedQuantity = Math.min(assignmentOutstanding(assignment), remaining);
+          assignment.sold = Number(assignment.sold || 0) + allocatedQuantity;
+          assignment.updatedAt = todayISO();
+          refreshAssignmentCompletion(state, assignment);
+          assignmentAllocations.push({ assignmentId: assignment.id, quantity: allocatedQuantity });
+          remaining -= allocatedQuantity;
+        });
+        return {
+          id: item.transactionId,
+          type: "sale",
+          productId: item.product.id,
+          productName: item.product.name,
+          quantity: item.quantity,
+          packagingType: item.packagingType,
+          packagingQuantity: item.packagingQuantity,
+          packagingUnitPrice: item.packagingUnitPrice,
+          amount: item.amount,
+          unitPrice: item.unitPrice,
+          unitCost: Number(item.product.unitCost || 0),
+          paymentType,
+          partyType: customerType,
+          partyName: customerName,
+          customerId: customer?.id || action.customerId || "",
+          date: todayISO(),
+          createdAt: new Date().toISOString(),
+          recordedBy: repName,
+          creditImpact: paymentType === "credit" ? item.amount : 0,
+          repUserId: state.user?.id || "",
+          assignmentId: assignmentAllocations[0]?.assignmentId || "",
+          assignmentIds: assignmentAllocations.map((allocation) => allocation.assignmentId),
+          assignmentAllocations,
+          syncStatus: action.offline ? "pending" : "synced"
+        };
+      });
+      const totalAmount = transactions.reduce((total, transaction) => total + transaction.amount, 0);
+      const orderId = createQuickSaleOrder(state, {
+        transactionId: transactions[0].id,
+        transactionIds: transactions.map((transaction) => transaction.id),
+        product: saleItems[0].product,
+        customer,
+        customerName,
+        customerType,
+        quantity: saleItems[0].quantity,
+        paymentType,
+        repName,
+        items: saleItems
+      });
+      transactions.forEach((transaction) => { transaction.orderId = orderId; });
+      state.stockTransactions = [...transactions, ...(state.stockTransactions || [])];
+      if (paymentType === "credit") updateCreditBalance(state, customerName, totalAmount);
+
+      if (action.offline) {
+        state.offlineSalesQueue = [
+          ...transactions.map((transaction) => ({
+            id: `OFFLINE-${transaction.id}`,
+            transactionId: transaction.id,
+            clientId: state.client?.id || "",
+            repUserId: state.user?.id || "",
+            createdAt: new Date().toISOString(),
+            status: "pending"
+          })),
+          ...(state.offlineSalesQueue || [])
+        ];
+      }
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "sold",
+        recordType: "sale",
+        recordLabel: orderId,
+        summary: `${repName} sold ${transactions.reduce((total, transaction) => total + transaction.quantity, 0)} pieces across ${transactions.length} line${transactions.length === 1 ? "" : "s"} to ${customerName} for ${totalAmount} (${paymentType})`
+      });
+      const invoice = state.invoices.find((item) => item.orderId === orderId);
+      if (invoice) appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "created",
+        recordType: "invoice",
+        recordLabel: invoice.id,
+        summary: `${invoice.id} created for ${customerName} by ${repName}`
+      });
+      return state;
+    }
+
     case "LOG_REP_TRANSACTION": {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const quantity = Math.max(0, Number(action.quantity || 0));
@@ -1651,7 +1934,15 @@ function reducer(currentState, action) {
       const availableQuantity = eligibleAssignments.reduce((total, assignment) => (
         total + (transactionType === "return" ? Number(assignment.sold || 0) : assignmentOutstanding(assignment))
       ), 0);
-      const amount = quantity * Number(product?.unitPrice || 0);
+      const transactionPackagingType = transactionType === "sale" ? String(action.packagingType || "piece") : "piece";
+      const transactionPackagingQuantity = Number(action.packagingQuantity || quantity);
+      const transactionUnitPrice = transactionType === "sale"
+        ? effectivePiecePrice(product, transactionPackagingType, state.client)
+        : Number(product?.unitPrice || 0);
+      const transactionPackagingUnitPrice = transactionType === "sale"
+        ? packagingUnitPrice(product, transactionPackagingType, state.client)
+        : Number(product?.unitPrice || 0);
+      const amount = quantity * transactionUnitPrice;
       const isCreditImpact = String(paymentType).toLowerCase().includes("credit");
       const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
       const customerName = customer?.name || action.customerName || "Walk-in customer";
@@ -1717,8 +2008,11 @@ function reducer(currentState, action) {
             customerName,
             customerType,
             quantity,
+            packagingType: transactionPackagingType,
+            packagingQuantity: transactionPackagingQuantity,
             paymentType,
-            repName
+            repName,
+            unitPrice: transactionUnitPrice
           })
         : "";
 
@@ -1729,8 +2023,11 @@ function reducer(currentState, action) {
           productId,
           productName: product.name,
           quantity,
+          packagingType: transactionPackagingType,
+          packagingQuantity: transactionPackagingQuantity,
+          packagingUnitPrice: transactionPackagingUnitPrice,
           amount,
-          unitPrice: Number(product.unitPrice || 0),
+          unitPrice: transactionUnitPrice,
           unitCost: Number(product.unitCost || 0),
           paymentType,
           partyType: customerType,
@@ -1750,7 +2047,8 @@ function reducer(currentState, action) {
           assignmentId: assignmentAllocations[0]?.assignmentId || "",
           assignmentIds: assignmentAllocations.map((allocation) => allocation.assignmentId),
           assignmentAllocations,
-          syncStatus: action.offline ? "pending" : "synced"
+          syncStatus: action.offline ? "pending" : "synced",
+          returnReviewStatus: transactionType === "return" ? "pending" : ""
         },
         ...(state.stockTransactions || [])
       ];
@@ -1815,6 +2113,43 @@ function reducer(currentState, action) {
         });
       }
 
+      return state;
+    }
+
+    case "REVIEW_REP_RETURN": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
+      const transaction = (state.stockTransactions || []).find((item) => item.id === action.transactionId && normalized(item.type) === "return");
+      if (!transaction || transaction.returnReviewStatus !== "pending") return state;
+      transaction.returnReviewStatus = "reviewed";
+      transaction.returnReviewedAt = new Date().toISOString();
+      transaction.returnReviewedBy = currentActorLabel(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "customer_return",
+        recordLabel: transaction.id,
+        summary: `${transaction.quantity} ${transaction.productName || "product"} return from ${transaction.partyName || "customer"} reviewed`
+      });
+      return state;
+    }
+
+    case "FLAG_REP_RETURN": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
+      const transaction = (state.stockTransactions || []).find((item) => item.id === action.transactionId && normalized(item.type) === "return");
+      const note = String(action.note || "").trim();
+      if (!transaction || transaction.returnReviewStatus !== "pending" || !note) return state;
+      transaction.returnReviewStatus = "flagged";
+      transaction.returnReviewNote = note.slice(0, 500);
+      transaction.returnReviewedAt = new Date().toISOString();
+      transaction.returnReviewedBy = currentActorLabel(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "flagged",
+        recordType: "customer_return",
+        recordLabel: transaction.id,
+        summary: `${transaction.partyName || "Customer"} return flagged for clarification`,
+        details: transaction.returnReviewNote
+      });
       return state;
     }
 
@@ -1915,6 +2250,12 @@ function reducer(currentState, action) {
         dailyVelocity: Math.max(0, Number(action.dailyVelocity ?? existingProduct?.dailyVelocity ?? 0)),
         unitCost: Math.max(0, Number(action.unitCost ?? existingProduct?.unitCost ?? 0)),
         unitPrice: Math.max(0, Number(action.unitPrice ?? existingProduct?.unitPrice ?? 0)),
+        packagingConversions: action.packagingConversions && typeof action.packagingConversions === "object"
+          ? { ...action.packagingConversions }
+          : { ...(existingProduct?.packagingConversions || {}) },
+        packagingPrices: action.packagingPrices && typeof action.packagingPrices === "object"
+          ? { ...action.packagingPrices }
+          : { ...(existingProduct?.packagingPrices || {}) },
         imageUrl: String(action.imageUrl ?? existingProduct?.imageUrl ?? "").trim(),
         imageStorageKey: String(action.imageStorageKey ?? existingProduct?.imageStorageKey ?? "").trim(),
         status,
@@ -2149,6 +2490,133 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "CREATE_PROCUREMENT_ORDER": {
+      if (!state.client?.id || currentUserRole(state) !== "admin") return state;
+
+      const product = state.products.find((item) => item.id === action.productId);
+      const quantity = Number(action.quantity || 0);
+      const unitCost = Number(action.unitCost || 0);
+      const supplierName = String(action.supplierName || "").trim();
+      const expectedAt = dateOnly(action.expectedAt);
+
+      if (
+        !product ||
+        stockCategoryIdForProduct(product) !== "raw_materials" ||
+        !supplierName ||
+        !Number.isFinite(quantity) || quantity <= 0 ||
+        !Number.isFinite(unitCost) || unitCost < 0 ||
+        !isValidISODate(expectedAt) || expectedAt < todayISO()
+      ) return state;
+
+      const procurementOrder = {
+        id: nextFormattedId("PROC-{0000}", (state.procurementOrders || []).map((item) => item.id), "PROC"),
+        clientId: state.client.id,
+        supplierName,
+        supplierContact: String(action.supplierContact || "").trim(),
+        productId: product.id,
+        productName: product.name,
+        sku: product.id,
+        quantity,
+        unit: product.unit || "unit",
+        unitCost,
+        expectedAt,
+        notes: String(action.notes || "").trim(),
+        status: "requested",
+        preparedBy: currentActorLabel(state),
+        preparedAt: new Date().toISOString()
+      };
+
+      state.procurementOrders = [procurementOrder, ...(state.procurementOrders || [])];
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "created",
+        recordType: "procurement_order",
+        recordLabel: procurementOrder.id,
+        summary: `${procurementOrder.id} prepared for ${supplierName}`,
+        details: `${quantity} ${procurementOrder.unit} ${product.name}`
+      });
+      return state;
+    }
+
+    case "MARK_PROCUREMENT_ORDERED": {
+      if (currentUserRole(state) !== "admin") return state;
+      const order = (state.procurementOrders || []).find((item) => item.id === action.procurementOrderId);
+      if (!order || order.status !== "requested") return state;
+      order.status = "ordered";
+      order.orderedAt = new Date().toISOString();
+      order.orderedBy = currentActorLabel(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "forwarded",
+        recordType: "procurement_order",
+        recordLabel: order.id,
+        summary: `${order.id} sent to ${order.supplierName}`
+      });
+      return state;
+    }
+
+    case "CANCEL_PROCUREMENT_ORDER": {
+      if (currentUserRole(state) !== "admin") return state;
+      const order = (state.procurementOrders || []).find((item) => item.id === action.procurementOrderId);
+      const reason = String(action.reason || "").trim();
+      if (!order || !["requested", "ordered"].includes(order.status) || !reason) return state;
+      order.status = "cancelled";
+      order.cancelReason = reason.slice(0, 500);
+      order.cancelledAt = new Date().toISOString();
+      order.cancelledBy = currentActorLabel(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "cancelled",
+        recordType: "procurement_order",
+        recordLabel: order.id,
+        summary: `${order.id} cancelled`,
+        details: order.cancelReason
+      });
+      return state;
+    }
+
+    case "RECEIVE_PROCUREMENT_ORDER": {
+      if (currentUserRole(state) !== "store_keeper") return state;
+      const order = (state.procurementOrders || []).find((item) => item.id === action.procurementOrderId);
+      const product = state.products.find((item) => item.id === order?.productId);
+      const receivedQuantity = Number(action.receivedQuantity || 0);
+      if (!order || order.status !== "ordered" || !product || !Number.isFinite(receivedQuantity) || receivedQuantity <= 0) return state;
+
+      product.stock = Number(product.stock || 0) + receivedQuantity;
+      product.updatedAt = todayISO();
+      product.soldOutAt = "";
+      order.status = "received";
+      order.receivedQuantity = receivedQuantity;
+      order.receivedBy = currentActorLabel(state);
+      order.receivedAt = new Date().toISOString();
+      order.receiptNote = String(action.receiptNote || "").trim();
+      state.stockTransactions = [{
+        id: createId("TXN"),
+        clientId: state.client?.id || "",
+        type: "supplier intake",
+        movementDirection: "in",
+        productId: product.id,
+        productName: product.name,
+        quantity: receivedQuantity,
+        amount: receivedQuantity * Number(order.unitCost || 0),
+        partyType: "Supplier",
+        partyName: order.supplierName,
+        recordedBy: currentActorLabel(state),
+        procurementOrderId: order.id,
+        date: todayISO(),
+        createdAt: new Date().toISOString()
+      }, ...(state.stockTransactions || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "received",
+        recordType: "procurement_order",
+        recordLabel: order.id,
+        summary: `${receivedQuantity} ${order.unit} ${product.name} received into factory stock`,
+        details: `${order.supplierName} · ${order.id}`
+      });
+      return state;
+    }
+
     case "RECORD_STOCK_DISPATCH": {
       if (!["ceo", "store_keeper"].includes(currentUserRole(state))) return state;
 
@@ -2175,28 +2643,38 @@ function reducer(currentState, action) {
         : [{ productId: action.productId, quantity: action.quantity }];
       const dispatchItems = requestedItems.map((item) => {
         const product = state.products.find((candidate) => candidate.id === item.productId);
+        const packagingType = String(item.packagingType || "piece");
+        const packagingQuantity = Number(item.packagingQuantity || item.quantity || 0);
         return {
           product,
-          quantity: Number(item.quantity || 0),
-          unitPrice: Number(product?.unitPrice || 0),
+          quantity: quantityInPieces(product, packagingQuantity, packagingType, state.client),
+          packagingType,
+          packagingQuantity,
+          packagingUnitPrice: packagingUnitPrice(product, packagingType, state.client),
+          unitPrice: effectivePiecePrice(product, packagingType, state.client),
+          amount: packagingLineAmount(product, packagingQuantity, packagingType, state.client),
           transactionId: createId("TXN")
         };
       });
-      const productIds = dispatchItems.map((item) => item.product?.id).filter(Boolean);
-      const hasDuplicateProducts = new Set(productIds).size !== productIds.length;
+      const lineKeys = dispatchItems.map((item) => `${item.product?.id || ""}:${item.packagingType}`);
+      const hasDuplicateLines = new Set(lineKeys).size !== lineKeys.length;
+      const requestedByProduct = dispatchItems.reduce((totals, item) => {
+        if (item.product) totals.set(item.product.id, Number(totals.get(item.product.id) || 0) + item.quantity);
+        return totals;
+      }, new Map());
       let orderId = "";
       let invoiceId = "";
 
       if (
         !dispatchItems.length ||
-        hasDuplicateProducts ||
+        hasDuplicateLines ||
         dispatchItems.some(({ product, quantity }) => (
           !product ||
           product.status === "inactive" ||
           !Number.isFinite(quantity) ||
           quantity <= 0 ||
           !Number.isFinite(Number(product.stock)) ||
-          Number(product.stock || 0) < quantity ||
+          Number(product.stock || 0) < Number(requestedByProduct.get(product.id) || 0) ||
           (isRepresentativeDispatch && stockCategoryIdForProduct(product) !== "finished_products")
         )) ||
         !isValidISODate(dispatchDate) ||
@@ -2231,7 +2709,7 @@ function reducer(currentState, action) {
         invoiceId = dispatchRecords.invoiceId;
       }
 
-      const transactions = dispatchItems.map(({ product, quantity, unitPrice, transactionId }) => {
+      const transactions = dispatchItems.map(({ product, quantity, packagingType, packagingQuantity, packagingUnitPrice: packagePrice, unitPrice, amount, transactionId }) => {
         product.stock = Math.max(0, Number(product.stock || 0) - quantity);
         product.updatedAt = dispatchDate;
         product.soldOutAt = product.stock <= 0 ? dispatchDate : "";
@@ -2269,8 +2747,11 @@ function reducer(currentState, action) {
           productId: product.id,
           productName: product.name,
           quantity,
+          packagingType,
+          packagingQuantity,
+          packagingUnitPrice: packagePrice,
           unit: product.unit || "unit",
-          amount: quantity * unitPrice,
+          amount,
           unitPrice,
           unitCost: Number(product.unitCost || 0),
           paymentType,
@@ -2283,7 +2764,7 @@ function reducer(currentState, action) {
           recordedBy: staffName,
           recordedByUserId: state.user?.id || "",
           movementDirection: "out",
-          creditImpact: paymentType === "credit" ? quantity * unitPrice : 0,
+          creditImpact: paymentType === "credit" ? amount : 0,
           orderId,
           invoiceId,
           expectedDeliveryAt: isInternalDispatch ? "" : expectedDeliveryAt,
@@ -2322,6 +2803,79 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "DIRECT_RECORD_CORRECTION": {
+      if (currentUserRole(state) !== "ceo") return state;
+
+      const transaction = (state.stockTransactions || []).find((item) => item.id === action.transactionId);
+      const product = state.products.find((item) => item.id === transaction?.productId);
+      const nextQuantity = Number(action.requestedQuantity || 0);
+      const previousQuantity = Number(transaction?.quantity || 0);
+      const previousAmount = Number(transaction?.amount || 0);
+      const reason = String(action.reason || "").trim();
+      const transactionType = normalized(transaction?.type);
+      const isDispatch = transaction?.movementDirection === "out" && ["supply", "internal movement"].includes(transactionType);
+      const delta = nextQuantity - previousQuantity;
+
+      if (!transaction || !product || !isDispatch || !reason || !Number.isFinite(nextQuantity) || nextQuantity <= 0 || delta === 0) return state;
+
+      const assignment = (state.stockAssignments || []).find((item) => (
+        item.transactionId === transaction.id || (
+          item.productId === transaction.productId &&
+          normalized(item.repName) === normalized(transaction.partyName) &&
+          dateOnly(item.assignedAt) === dateOnly(transaction.date)
+        )
+      ));
+      const nextAssigned = assignment ? Number(assignment.assigned || 0) + delta : 0;
+      const committed = assignment ? Number(assignment.sold || 0) + Number(assignment.returned || 0) : 0;
+
+      if (delta > Number(product.stock || 0) || (assignment && nextAssigned < committed)) return state;
+
+      product.stock = Number(product.stock || 0) - delta;
+      product.updatedAt = todayISO();
+      product.soldOutAt = product.stock <= 0 ? todayISO() : "";
+      syncPackagingQuantity(transaction, nextQuantity);
+      transaction.amount = transaction.lineAmount;
+      transaction.correctedAt = new Date().toISOString();
+      transaction.correctionReason = reason.slice(0, 500);
+      transaction.correctedBy = currentActorName(state);
+      if (assignment) assignment.assigned = nextAssigned;
+
+      const order = (state.orders || []).find((item) => item.id === transaction.orderId);
+      const orderItem = matchingTransactionItem(order?.items, transaction);
+      if (orderItem) syncPackagingQuantity(orderItem, nextQuantity);
+      const invoice = (state.invoices || []).find((item) => (
+        item.id === transaction.invoiceId ||
+        item.orderId === transaction.orderId ||
+        (item.transactionIds || []).includes(transaction.id)
+      ));
+      const invoiceItem = matchingTransactionItem(invoice?.items, transaction);
+      if (invoiceItem) syncPackagingQuantity(invoiceItem, nextQuantity);
+      if (invoice) invoice.amount = invoice.items.reduce((total, item) => (
+        total + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0)))
+      ), 0);
+      if (String(transaction.paymentType || "").toLowerCase().includes("credit")) {
+        updateCreditBalance(state, transaction.partyName, transaction.amount - previousAmount);
+      }
+
+      (state.correctionRequests || []).forEach((request) => {
+        if (request.transactionId !== transaction.id || request.status !== "pending") return;
+        request.status = "superseded";
+        request.reviewedAt = new Date().toISOString();
+        request.reviewedBy = currentActorName(state);
+        request.reviewNote = "CEO saved a direct adjustment for this record.";
+      });
+
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "updated",
+        recordType: "record_correction",
+        recordLabel: transaction.id,
+        summary: `CEO adjusted ${transaction.id} from ${previousQuantity} to ${nextQuantity}`,
+        details: reason.slice(0, 500)
+      });
+      return state;
+    }
+
     case "REQUEST_RECORD_CORRECTION": {
       const role = currentUserRole(state);
       const transaction = (state.stockTransactions || []).find((item) => item.id === action.transactionId);
@@ -2336,7 +2890,7 @@ function reducer(currentState, action) {
       const ownsDispatch = transaction?.recordedByUserId
         ? transaction.recordedByUserId === state.user?.id
         : normalized(transaction?.recordedBy) === normalized(actorName);
-      const mayRequest = (role === "store_keeper" && isDispatch && ownsDispatch) || (role === "sales_rep" && isRepSale) || (role === "ceo" && (isDispatch || isRepSale));
+      const mayRequest = (role === "store_keeper" && isDispatch && ownsDispatch) || (role === "sales_rep" && isRepSale);
       const alreadyPending = (state.correctionRequests || []).some((request) => (
         request.transactionId === transaction?.id && request.status === "pending"
       ));
@@ -2373,7 +2927,7 @@ function reducer(currentState, action) {
     }
 
     case "APPROVE_RECORD_CORRECTION": {
-      if (currentUserRole(state) !== "ceo") return state;
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
 
       const request = (state.correctionRequests || []).find((item) => item.id === action.requestId);
       if (!request || request.status !== "pending") return state;
@@ -2382,6 +2936,7 @@ function reducer(currentState, action) {
       const product = state.products.find((item) => item.id === transaction?.productId);
       const nextQuantity = Number(request.requestedQuantity || 0);
       const previousQuantity = Number(transaction?.quantity || 0);
+      const previousAmount = Number(transaction?.amount || 0);
       const delta = nextQuantity - previousQuantity;
       let applied = false;
 
@@ -2400,26 +2955,26 @@ function reducer(currentState, action) {
           product.stock = Number(product.stock || 0) - delta;
           product.updatedAt = todayISO();
           product.soldOutAt = product.stock <= 0 ? todayISO() : "";
-          transaction.quantity = nextQuantity;
-          transaction.amount = nextQuantity * Number(transaction.unitPrice || product.unitPrice || 0);
+          syncPackagingQuantity(transaction, nextQuantity);
+          transaction.amount = transaction.lineAmount;
           transaction.correctedAt = new Date().toISOString();
           transaction.correctionReason = request.reason;
           if (assignment) assignment.assigned = nextAssigned;
           const order = (state.orders || []).find((item) => item.id === transaction.orderId);
-          const orderItem = order?.items?.find((item) => item.productId === transaction.productId);
-          if (orderItem) orderItem.quantity = nextQuantity;
+          const orderItem = matchingTransactionItem(order?.items, transaction);
+          if (orderItem) syncPackagingQuantity(orderItem, nextQuantity);
           const invoice = (state.invoices || []).find((item) => (
             item.id === transaction.invoiceId ||
             item.orderId === transaction.orderId ||
             (item.transactionIds || []).includes(transaction.id)
           ));
-          const invoiceItem = invoice?.items?.find((item) => item.productId === transaction.productId);
-          if (invoiceItem) invoiceItem.quantity = nextQuantity;
+          const invoiceItem = matchingTransactionItem(invoice?.items, transaction);
+          if (invoiceItem) syncPackagingQuantity(invoiceItem, nextQuantity);
           if (invoice) invoice.amount = invoice.items.reduce((total, item) => (
-            total + Number(item.quantity || 0) * Number(item.unitPrice || 0)
+            total + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0)))
           ), 0);
           if (String(transaction.paymentType || "").toLowerCase().includes("credit")) {
-            updateCreditBalance(state, transaction.partyName, delta * Number(transaction.unitPrice || product.unitPrice || 0));
+            updateCreditBalance(state, transaction.partyName, transaction.amount - previousAmount);
           }
           applied = true;
         }
@@ -2446,22 +3001,24 @@ function reducer(currentState, action) {
             remaining -= change;
           });
 
-          transaction.quantity = nextQuantity;
-          transaction.amount = nextQuantity * Number(transaction.unitPrice || 0);
+          syncPackagingQuantity(transaction, nextQuantity);
+          transaction.amount = transaction.lineAmount;
           transaction.assignmentAllocations = [...recordedAllocations.entries()]
             .filter(([, quantity]) => quantity > 0)
             .map(([assignmentId, quantity]) => ({ assignmentId, quantity }));
           transaction.correctedAt = new Date().toISOString();
           transaction.correctionReason = request.reason;
           const order = (state.orders || []).find((item) => item.id === transaction.orderId);
-          const orderItem = order?.items?.find((item) => item.productId === transaction.productId);
-          if (orderItem) orderItem.quantity = nextQuantity;
-          const invoice = (state.invoices || []).find((item) => item.transactionId === transaction.id);
-          const invoiceItem = invoice?.items?.find((item) => item.productId === transaction.productId);
-          if (invoiceItem) invoiceItem.quantity = nextQuantity;
-          if (invoice) invoice.amount = nextQuantity * Number(transaction.unitPrice || 0);
+          const orderItem = matchingTransactionItem(order?.items, transaction);
+          if (orderItem) syncPackagingQuantity(orderItem, nextQuantity);
+          const invoice = (state.invoices || []).find((item) => item.transactionId === transaction.id || (item.transactionIds || []).includes(transaction.id));
+          const invoiceItem = matchingTransactionItem(invoice?.items, transaction);
+          if (invoiceItem) syncPackagingQuantity(invoiceItem, nextQuantity);
+          if (invoice) invoice.amount = invoice.items.reduce((total, item) => (
+            total + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0)))
+          ), 0);
           if (String(transaction.paymentType || "").toLowerCase().includes("credit")) {
-            updateCreditBalance(state, transaction.partyName, delta * Number(transaction.unitPrice || 0));
+            updateCreditBalance(state, transaction.partyName, transaction.amount - previousAmount);
           }
           applied = true;
         }
@@ -2483,7 +3040,7 @@ function reducer(currentState, action) {
     }
 
     case "REJECT_RECORD_CORRECTION": {
-      if (currentUserRole(state) !== "ceo") return state;
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const request = (state.correctionRequests || []).find((item) => item.id === action.requestId);
       if (!request || request.status !== "pending") return state;
       request.status = "rejected";
@@ -2741,6 +3298,7 @@ function reducer(currentState, action) {
     }
 
     case "REVIEW_SALES_REPORT": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const report = state.salesReports.find((item) => item.id === action.reportId);
       if (report) {
         report.status = "reviewed";
@@ -2758,6 +3316,7 @@ function reducer(currentState, action) {
     }
 
     case "FLAG_SALES_REPORT": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const report = state.salesReports.find((item) => item.id === action.reportId);
       if (report) {
         report.status = "flagged";

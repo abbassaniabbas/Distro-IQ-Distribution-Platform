@@ -8,6 +8,8 @@ import {
 import { escapeHtml } from "./dom.js";
 
 let activeNotificationPopover = null;
+const EMPTY_NOTIFICATIONS_MARKUP = '<div class="topbar-empty-state">No notifications yet</div>';
+const NOTIFICATION_DISMISS_DURATION_MS = 260;
 
 export { getUnreadMessageCount } from "../services/messages.js";
 
@@ -77,6 +79,26 @@ function notificationRow(item) {
   `;
 }
 
+function showEmptyNotifications(popover) {
+  const list = popover.querySelector(".topbar-notification-list");
+  if (list) list.innerHTML = EMPTY_NOTIFICATIONS_MARKUP;
+  popover.querySelector(".topbar-clear-notifications")?.remove();
+}
+
+function dismissNotificationRow(row, onComplete) {
+  let completed = false;
+  const complete = () => {
+    if (completed) return;
+    completed = true;
+    onComplete();
+  };
+
+  row.classList.add("is-dismissing");
+  row.setAttribute("aria-hidden", "true");
+  row.addEventListener("animationend", complete, { once: true });
+  window.setTimeout(complete, NOTIFICATION_DISMISS_DURATION_MS);
+}
+
 function openNotificationPopover({ store, trigger }) {
   if (activeNotificationPopover) {
     closeNotificationPopover();
@@ -99,7 +121,7 @@ function openNotificationPopover({ store, trigger }) {
     <div class="topbar-notification-list">
       ${items.length
         ? items.map(notificationRow).join("")
-        : '<div class="topbar-empty-state">No notifications yet</div>'}
+        : EMPTY_NOTIFICATIONS_MARKUP}
     </div>
   `;
 
@@ -108,23 +130,45 @@ function openNotificationPopover({ store, trigger }) {
   positionPopover(popover, trigger);
   store.dispatch({ type: "MARK_NOTIFICATIONS_READ" });
 
-  popover.querySelector(".topbar-clear-notifications")?.addEventListener("click", () => {
-    store.dispatch({ type: "DISMISS_ALL_NOTIFICATIONS" });
-    const list = popover.querySelector(".topbar-notification-list");
-    if (list) list.innerHTML = '<div class="topbar-empty-state">No notifications yet</div>';
-    popover.querySelector(".topbar-clear-notifications")?.remove();
+  popover.addEventListener("click", (event) => event.stopPropagation());
+
+  popover.querySelector(".topbar-clear-notifications")?.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const clearButton = event.currentTarget;
+    const rows = [...popover.querySelectorAll("[data-notification-id]")];
+    clearButton.disabled = true;
+
+    if (!rows.length) {
+      store.dispatch({ type: "DISMISS_ALL_NOTIFICATIONS" });
+      showEmptyNotifications(popover);
+      return;
+    }
+
+    let remaining = rows.length;
+    rows.forEach((row) => dismissNotificationRow(row, () => {
+      row.remove();
+      remaining -= 1;
+      if (remaining > 0) return;
+      store.dispatch({ type: "DISMISS_ALL_NOTIFICATIONS" });
+      showEmptyNotifications(popover);
+    }));
   });
 
   popover.querySelectorAll(".topbar-dismiss-notification").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       const row = button.closest("[data-notification-id]");
-      if (!row) return;
-      store.dispatch({ type: "DISMISS_NOTIFICATIONS", notificationIds: [row.dataset.notificationId] });
-      row.remove();
-      if (!popover.querySelector("[data-notification-id]")) {
-        popover.querySelector(".topbar-notification-list").innerHTML = '<div class="topbar-empty-state">No notifications yet</div>';
-        popover.querySelector(".topbar-clear-notifications")?.remove();
-      }
+      if (!row || row.classList.contains("is-dismissing")) return;
+      button.disabled = true;
+      const notificationId = row.dataset.notificationId;
+
+      dismissNotificationRow(row, () => {
+        store.dispatch({ type: "DISMISS_NOTIFICATIONS", notificationIds: [notificationId] });
+        row.remove();
+        if (!popover.querySelector("[data-notification-id]")) showEmptyNotifications(popover);
+      });
     });
   });
 }

@@ -1,4 +1,5 @@
 import { currencySymbolFor, formatDate, statusText } from "./formatters.js";
+import { packagingQuantityLabel } from "./packaging.js";
 import { escapeHtml } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 
@@ -15,7 +16,7 @@ function addDays(value, days) {
 
 function orderTotal(order) {
   return (order?.items || []).reduce((total, item) => (
-    total + Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)
+    total + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)))
   ), 0);
 }
 
@@ -95,12 +96,30 @@ function invoiceLogo(client, companyName) {
     : `<span class="invoice-modal-logo-fallback">${escapeHtml(companyName.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "DI")}</span>`;
 }
 
+function invoiceQuantityMarkup(item) {
+  const baseQuantity = Number(item?.quantity || 0);
+  const packagingType = item?.packagingType || "piece";
+  const packagingQuantity = Number(item?.packagingQuantity || 0);
+  if (packagingType === "piece" || !packagingQuantity) {
+    return escapeHtml(baseQuantity);
+  }
+
+  return `${escapeHtml(packagingQuantityLabel(packagingQuantity, packagingType))}<br><span class="muted">${escapeHtml(baseQuantity)} pieces</span>`;
+}
+
+function invoiceUnitPrice(item) {
+  if (item?.packagingType && item.packagingType !== "piece" && Number(item.packagingUnitPrice || 0) > 0) {
+    return Number(item.packagingUnitPrice);
+  }
+  return Number(item?.unitPrice ?? item?.unitPriceAtSale ?? 0);
+}
+
 export function buildInvoicePreviewContent(invoice, state) {
   const client = state.client || {};
   const companyName = client.documentBusinessName || client.companyName || "DistroIQ Company";
   const items = invoice.items || [];
   const total = Number(invoice.amount ?? items.reduce((sum, item) => (
-    sum + Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)
+    sum + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)))
   ), 0));
 
   return `
@@ -144,12 +163,12 @@ export function buildInvoicePreviewContent(invoice, state) {
           <tbody>
             ${items.map((item) => {
               const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? 0);
-              const lineTotal = Number(item.quantity || 0) * unitPrice;
+              const lineTotal = Number(item.lineAmount ?? (Number(item.quantity || 0) * unitPrice));
               return `
                 <tr>
                   <td><strong>${escapeHtml(item.productName || item.productId || "Product")}</strong></td>
-                  <td>${escapeHtml(item.quantity)}</td>
-                  <td>${escapeHtml(money(unitPrice, client))}</td>
+                  <td>${invoiceQuantityMarkup(item)}</td>
+                  <td>${escapeHtml(money(invoiceUnitPrice(item), client))}</td>
                   <td>${escapeHtml(money(lineTotal, client))}</td>
                 </tr>
               `;
@@ -175,7 +194,7 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
   const client = state.client || {};
   const companyName = client.documentBusinessName || client.companyName || "DistroIQ Company";
   const items = invoice.items || [];
-  const total = Number(invoice.amount ?? items.reduce((sum, item) => sum + Number(item.quantity || 0) * Number(item.unitPrice || 0), 0));
+  const total = Number(invoice.amount ?? items.reduce((sum, item) => sum + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0));
   const logo = client.logoDataUrl
     ? `<img src="${escapeHtml(client.logoDataUrl)}" alt="${escapeHtml(companyName)} logo">`
     : `<div class="logo-fallback">${escapeHtml(companyName.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "DI")}</div>`;
@@ -230,8 +249,8 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
             <section><h2>Sale details</h2><strong>Sold by ${escapeHtml(invoice.repName || "Sales Representative")}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p><p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p></section>
           </div>
           <table><thead><tr><th>Product</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map((item) => {
-            const lineTotal = Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0);
-            return `<tr><td>${escapeHtml(item.productName || item.productId || "Product")}</td><td>${escapeHtml(item.quantity)}</td><td>${escapeHtml(money(item.unitPrice ?? item.unitPriceAtSale, client))}</td><td>${escapeHtml(money(lineTotal, client))}</td></tr>`;
+            const lineTotal = Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)));
+            return `<tr><td>${escapeHtml(item.productName || item.productId || "Product")}</td><td>${invoiceQuantityMarkup(item)}</td><td>${escapeHtml(money(invoiceUnitPrice(item), client))}</td><td>${escapeHtml(money(lineTotal, client))}</td></tr>`;
           }).join("") || '<tr><td colspan="4">No product lines recorded</td></tr>'}</tbody></table>
           <div class="total"><div><strong>Total</strong><strong>${escapeHtml(money(total, client))}</strong></div></div>
           <footer><span>Generated by DistroIQ</span><span>${escapeHtml(companyName)}</span></footer>

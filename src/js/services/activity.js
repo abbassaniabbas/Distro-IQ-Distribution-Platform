@@ -20,7 +20,15 @@ export const ACTION_LABELS = {
   dispatched: "Dispatched",
   reconciled: "Reconciled",
   flagged: "Flagged",
-  deactivated: "Deactivated"
+  deactivated: "Deactivated",
+  approved: "Approved",
+  rejected: "Rejected",
+  declined: "Declined",
+  forwarded: "Forwarded",
+  issued: "Issued",
+  received: "Received",
+  cancelled: "Cancelled",
+  requested: "Requested"
 };
 
 export const RECORD_LABELS = {
@@ -34,7 +42,12 @@ export const RECORD_LABELS = {
   invoice: "Invoice",
   credit_limit: "Credit Limit",
   sale: "Sale",
-  report: "Sales Report"
+  report: "Sales Report",
+  stock_request: "Stock Request",
+  purchase_order: "Purchase Order",
+  procurement_order: "Procurement Order",
+  record_correction: "Record Correction",
+  customer_return: "Customer Return"
 };
 
 export function actionTypeLabel(actionType) {

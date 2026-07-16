@@ -4,6 +4,7 @@ import { openInvoiceQuickView } from "../services/invoices.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { requestTextDialog } from "../ui/action-dialog.js";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -166,8 +167,14 @@ export function bindPurchaseOrders({ root, store }) {
     }));
     qsa(".js-close-prepare-purchase-order", root).forEach((button) => button.addEventListener("click", close));
     modal?.addEventListener("click", (event) => { if (event.target === modal) close(); });
-    qsa(".js-decline-stock-request", root).forEach((button) => button.addEventListener("click", () => {
-      const reason = window.prompt("Enter the reason this stock request cannot be approved:", "");
+    qsa(".js-decline-stock-request", root).forEach((button) => button.addEventListener("click", async () => {
+      const reason = await requestTextDialog({
+        title: "Decline stock request",
+        message: "Enter the reason this stock request cannot be approved. The Sales Representative will see this decision.",
+        label: "Reason for declining",
+        placeholder: "Explain why the request cannot be approved",
+        confirmLabel: "Decline request"
+      });
       if (!reason?.trim()) return;
       store.dispatch({ type: "DECLINE_STOCK_REQUEST", requestId: button.dataset.requestId, reason, message: "Stock request declined" });
     }));

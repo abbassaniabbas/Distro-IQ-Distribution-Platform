@@ -35,6 +35,12 @@ alter table public.clients
 add column if not exists invoice_format text not null default 'INV-{0000}';
 
 alter table public.clients
+add column if not exists packaging_types jsonb not null default '["piece"]'::jsonb;
+
+alter table public.clients
+add column if not exists packaging_defaults jsonb not null default '{"piece":1}'::jsonb;
+
+alter table public.clients
 drop column if exists inventory_format;
 
 do $$ begin
@@ -811,6 +817,52 @@ as $$
       and not password_reset_required
       and role = any(p_roles)
   );
+$$;
+
+create or replace function public.update_packaging_settings(
+  p_client_id uuid,
+  p_packaging_types text[],
+  p_packaging_defaults jsonb default '{}'::jsonb
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_types text[];
+begin
+  if not public.has_client_role(p_client_id, array['ceo', 'admin']) then
+    raise exception 'CEO or Admin access required';
+  end if;
+
+  select array_agg(option_name order by option_order)
+  into v_types
+  from (
+    select value as option_name,
+      case value
+        when 'piece' then 1 when 'carton' then 2 when 'pack' then 3 when 'tray' then 4
+        when 'pouch' then 5 when 'sachet' then 6 when 'jar' then 7 when 'display_box' then 8
+      end as option_order
+    from unnest(array['piece'] || coalesce(p_packaging_types, array[]::text[])) value
+    where value = any(array['piece', 'carton', 'pack', 'tray', 'pouch', 'sachet', 'jar', 'display_box'])
+    group by value
+  ) allowed_types;
+
+  update public.clients
+  set packaging_types = to_jsonb(coalesce(v_types, array['piece'])),
+      packaging_defaults = (
+        select jsonb_object_agg(package_type, piece_count)
+        from (
+          select package_type,
+            case when package_type = 'piece' then 1
+              else greatest(1, floor(coalesce((p_packaging_defaults ->> package_type)::numeric, 1)))::integer
+            end as piece_count
+          from unnest(coalesce(v_types, array['piece'])) package_type
+        ) configured_defaults
+      )
+  where id = p_client_id;
+end;
 $$;
 
 create or replace function public.record_production_batch(
@@ -1840,12 +1892,12 @@ begin
     raise exception 'Authentication required';
   end if;
 
-  if char_length(v_new_password) < 12
+  if char_length(v_new_password) < 8
     or v_new_password !~ '[a-z]'
     or v_new_password !~ '[A-Z]'
     or v_new_password !~ '[0-9]'
     or v_new_password !~ '[^A-Za-z0-9]' then
-    raise exception 'Use 12 or more characters with uppercase, lowercase, a number, and a symbol';
+    raise exception 'Use 8 or more characters with uppercase, lowercase, a number, and a symbol';
   end if;
 
   select memberships.*
@@ -2007,16 +2059,66 @@ begin
 end;
 $$;
 
+create or replace function public.set_membership_role(
+  p_client_id uuid,
+  p_membership_id uuid,
+  p_role text
+)
+returns public.memberships
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_membership public.memberships;
+  v_role text := lower(trim(coalesce(p_role, '')));
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  if not public.has_client_role(p_client_id, array['ceo']) then
+    raise exception 'CEO access required';
+  end if;
+
+  if v_role not in ('sales_rep', 'store_keeper', 'admin') then
+    raise exception 'Choose a valid staff role';
+  end if;
+
+  select * into v_membership
+  from public.memberships
+  where id = p_membership_id
+    and client_id = p_client_id;
+
+  if v_membership.id is null then
+    raise exception 'Staff account not found';
+  end if;
+
+  if v_membership.user_id = auth.uid() or v_membership.role = 'ceo' then
+    raise exception 'The CEO role cannot be changed here';
+  end if;
+
+  update public.memberships
+  set role = v_role
+  where id = p_membership_id
+  returning * into v_membership;
+
+  return v_membership;
+end;
+$$;
+
 grant execute on function public.create_client_workspace(text, text, text, text, text, text) to authenticated;
 grant execute on function public.record_activity(uuid, text, text, text, text) to authenticated;
 grant execute on function public.activate_my_membership(uuid, text) to authenticated;
 grant execute on function public.update_my_membership_profile(uuid, text, text) to authenticated;
 grant execute on function public.set_membership_active_status(uuid, uuid, boolean) to authenticated;
+grant execute on function public.set_membership_role(uuid, uuid, text) to authenticated;
 grant execute on function public.is_client_member(uuid) to authenticated;
 grant execute on function public.get_my_pending_workspace_identity(uuid) to authenticated;
 grant execute on function public.is_client_admin(uuid) to authenticated;
 grant execute on function public.is_platform_admin() to authenticated;
 grant execute on function public.has_client_role(uuid, text[]) to authenticated;
+grant execute on function public.update_packaging_settings(uuid, text[], jsonb) to authenticated;
 revoke all on function public.record_production_batch(uuid, text, date, uuid, numeric, text, text, jsonb) from public, anon, authenticated;
 grant execute on function public.record_production_batch(uuid, text, date, uuid, numeric, text, text, jsonb) to authenticated;
 grant execute on function public.get_my_workspace_messages(uuid) to authenticated;
@@ -2028,6 +2130,7 @@ grant execute on function public.get_platform_console() to authenticated;
 revoke all on function public.activate_my_membership(uuid, text) from public, anon;
 revoke all on function public.update_my_membership_profile(uuid, text, text) from public, anon;
 revoke all on function public.set_membership_active_status(uuid, uuid, boolean) from public, anon;
+revoke all on function public.set_membership_role(uuid, uuid, text) from public, anon;
 revoke all on function public.has_pending_membership_setup(uuid) from public, anon, authenticated;
 revoke all on function public.get_my_pending_workspace_identity(uuid) from public, anon;
 revoke all on function public.stamp_membership_password_reset_requested_at() from public, anon, authenticated;

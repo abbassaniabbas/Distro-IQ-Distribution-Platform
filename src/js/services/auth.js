@@ -78,6 +78,18 @@ export async function signOut() {
   }
 }
 
+export async function requestPasswordReset(email, redirectTo) {
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.auth.resetPasswordForEmail(
+    String(email || "").trim().toLowerCase(),
+    { redirectTo }
+  );
+
+  if (error) {
+    throw new Error(messageFromError(error));
+  }
+}
+
 export async function getAuthenticatorAssuranceLevel() {
   const supabase = await getSupabaseClient();
 
@@ -216,8 +228,9 @@ export async function onAuthStateChange(callback) {
   if (!isBackendConfigured()) return () => {};
 
   const supabase = await getSupabaseClient();
-  const { data } = supabase.auth.onAuthStateChange((_event, session) => {
+  const { data } = supabase.auth.onAuthStateChange((event, session) => {
     callback({
+      event,
       session,
       user: session?.user || null
     });

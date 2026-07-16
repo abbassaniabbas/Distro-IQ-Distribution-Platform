@@ -1,5 +1,6 @@
 import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
+import { currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table } from "../ui/components.js";
 
@@ -15,7 +16,7 @@ function invoiceProductSummary(invoice) {
 
 function renderInvoiceRows(invoices) {
   return invoices.map((invoice, index) => `
-    <tr ${index >= INVOICE_PAGE_SIZE ? "hidden " : ""}data-rep-invoice-row data-search-index="${escapeHtml(`${invoice.id} ${invoice.customerName} ${invoice.repName} ${invoice.paymentType} ${invoiceProductSummary(invoice)}`.toLowerCase())}">
+    <tr ${index >= INVOICE_PAGE_SIZE ? "hidden " : ""}data-rep-invoice-row data-invoice-status="${escapeHtml(invoice.status || "open")}" data-search-index="${escapeHtml(`${invoice.id} ${invoice.customerName} ${invoice.repName} ${invoice.paymentType} ${invoice.status} ${invoiceProductSummary(invoice)}`.toLowerCase())}">
       <td><strong>${escapeHtml(invoice.id)}</strong><div class="muted">${formatDate(invoice.issuedAt)}</div></td>
       <td>${escapeHtml(invoice.customerName || "Customer")}</td>
       <td>${escapeHtml(invoiceProductSummary(invoice))}</td>
@@ -35,6 +36,8 @@ function renderInvoiceRows(invoices) {
 
 export function renderInvoices({ state }) {
   const invoices = getInvoiceRecords(state);
+  const isRepresentative = currentUserRole(state) === "sales_rep";
+  const heading = isRepresentative ? "My invoices" : "Invoices";
   const today = new Date().toISOString().slice(0, 10);
   const todayInvoices = invoices.filter((invoice) => invoice.issuedAt === today);
   const totalValue = invoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
@@ -43,13 +46,28 @@ export function renderInvoices({ state }) {
   return `
     <section class="view invoices-view">
       <div class="metric-grid invoice-metrics">
-        ${metricCard({ label: "My invoices", value: formatNumber(invoices.length), meta: "Cash and credit sales", iconName: "orders" })}
+        ${metricCard({ label: heading, value: formatNumber(invoices.length), meta: "Cash and credit sales", iconName: "orders" })}
         ${metricCard({ label: "Today", value: formatNumber(todayInvoices.length), meta: "Invoices created today", iconName: "clock" })}
         ${metricCard({ label: "Total sales", value: formatCurrency(totalValue), meta: "Value on all my invoices", iconName: "finance" })}
         ${metricCard({ label: "Still unpaid", value: formatCurrency(openValue), meta: "Credit invoices awaiting payment", iconName: "wallet" })}
       </div>
       <section class="panel">
-        ${panelHeader("My invoices", "Download or print a customer invoice after recording a sale")}
+        ${panelHeader(heading, "Download or print a customer invoice after recording a sale")}
+        <div class="invoice-simple-filters" aria-label="Invoice filters">
+          <label class="field">
+            <span>Find invoice</span>
+            <input type="search" data-invoice-filter placeholder="Invoice, customer, product or representative" autocomplete="off">
+          </label>
+          <label class="field">
+            <span>Status</span>
+            <select data-invoice-status-filter>
+              <option value="all">All statuses</option>
+              <option value="paid">Paid</option>
+              <option value="open">Open</option>
+              <option value="overdue">Overdue</option>
+            </select>
+          </label>
+        </div>
         ${table(
           ["Invoice", "Customer", "Products", "Payment", "Total", "Status", "Actions"],
           renderInvoiceRows(invoices),
@@ -95,14 +113,25 @@ export function bindInvoices({ root, store, signal }) {
   const status = qs("[data-rep-invoice-page-status]", root);
   const previous = qs('[data-rep-invoice-page="prev"]', root);
   const next = qs('[data-rep-invoice-page="next"]', root);
+  const localSearch = qs("[data-invoice-filter]", root);
+  const statusFilter = qs("[data-invoice-status-filter]", root);
   const globalSearch = qs("#global-search", document);
   let currentPage = 1;
 
   if (!rows.length || !pagination || !status) return;
 
   function applyPage() {
-    const query = String(globalSearch?.value || "").trim().toLowerCase();
-    const visibleRows = rows.filter((row) => !query || String(row.dataset.searchIndex || "").includes(query));
+    const globalQuery = String(globalSearch?.value || "").trim().toLowerCase();
+    const localQuery = String(localSearch?.value || "").trim().toLowerCase();
+    const selectedStatus = String(statusFilter?.value || "all");
+    const visibleRows = rows.filter((row) => {
+      const searchIndex = String(row.dataset.searchIndex || "");
+      return (
+        (!globalQuery || searchIndex.includes(globalQuery)) &&
+        (!localQuery || searchIndex.includes(localQuery)) &&
+        (selectedStatus === "all" || row.dataset.invoiceStatus === selectedStatus)
+      );
+    });
     const totalPages = Math.max(1, Math.ceil(visibleRows.length / INVOICE_PAGE_SIZE));
     currentPage = Math.min(Math.max(1, currentPage), totalPages);
     rows.forEach((row) => { row.hidden = true; });
@@ -115,6 +144,8 @@ export function bindInvoices({ root, store, signal }) {
 
   previous?.addEventListener("click", () => { currentPage -= 1; applyPage(); });
   next?.addEventListener("click", () => { currentPage += 1; applyPage(); });
+  localSearch?.addEventListener("input", () => { currentPage = 1; applyPage(); }, { signal });
+  statusFilter?.addEventListener("change", () => { currentPage = 1; applyPage(); }, { signal });
   globalSearch?.addEventListener("input", () => { currentPage = 1; applyPage(); }, { signal });
   window.setTimeout(applyPage, 0);
 }

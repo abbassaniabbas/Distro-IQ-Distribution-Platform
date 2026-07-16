@@ -1,7 +1,7 @@
 import { CURRENCY_OPTIONS } from "./tenant.js";
 import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
 
-const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, sku_format, invoice_format, created_at)";
+const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, sku_format, invoice_format, packaging_types, packaging_defaults, created_at)";
 const CLIENT_SELECT_LEGACY = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, timezone, currency, currency_symbol, created_at)";
 
 function mapClient(row) {
@@ -19,6 +19,8 @@ function mapClient(row) {
     creditLimitSmsEnabled: row.credit_limit_sms_enabled === true,
     skuFormat: row.sku_format || "SKU-{0000}",
     invoiceFormat: row.invoice_format || "INV-{0000}",
+    packagingTypes: Array.isArray(row.packaging_types) ? row.packaging_types : ["piece"],
+    packagingDefaults: row.packaging_defaults && typeof row.packaging_defaults === "object" ? row.packaging_defaults : { piece: 1 },
     createdAt: row.created_at
   };
 }
@@ -97,6 +99,22 @@ function mapFeatureModule(row) {
     moduleKey: row.module_key,
     enabled: row.enabled !== false,
     updatedAt: row.updated_at
+  };
+}
+
+function mapPackagingChangeRequest(row) {
+  return {
+    id: row.id,
+    clientId: row.client_id,
+    requestedByUserId: row.requested_by_user_id || "",
+    requestedBy: row.requested_by_name || "Store Keeper",
+    packagingTypes: Array.isArray(row.packaging_types) ? row.packaging_types : ["piece"],
+    packagingDefaults: row.packaging_defaults && typeof row.packaging_defaults === "object" ? row.packaging_defaults : { piece: 1 },
+    status: row.status || "pending",
+    reviewNote: row.review_note || "",
+    reviewedBy: row.reviewed_by_name || "",
+    requestedAt: row.requested_at,
+    reviewedAt: row.reviewed_at || ""
   };
 }
 
@@ -297,7 +315,7 @@ async function loadMembershipRows(supabase, userId) {
     return result;
   }
 
-  if (!["brand_color", "sku_format", "invoice_format"].some((field) => isSchemaCacheError(result.error, field))) {
+  if (!["brand_color", "sku_format", "invoice_format", "packaging_types", "packaging_defaults"].some((field) => isSchemaCacheError(result.error, field))) {
     return result;
   }
 
@@ -378,6 +396,7 @@ export async function loadWorkspace() {
     { data: activityRows, error: activityError },
     { data: creditLimitRows, error: creditLimitError },
     { data: creditHistoryRows, error: creditHistoryError },
+    { data: packagingRequestRows, error: packagingRequestError },
     { data: messageRows, error: messageError }
   ] = await Promise.all([
     supabase
@@ -409,6 +428,11 @@ export async function loadWorkspace() {
       .select("id, client_id, credit_limit_id, party_type, party_name, previous_limit_amount, new_limit_amount, discount_percent, payment_period_days, late_penalty_percent, changed_by_name, changed_at")
       .eq("client_id", client.id)
       .order("changed_at", { ascending: false }),
+    supabase
+      .from("packaging_change_requests")
+      .select("id, client_id, requested_by_user_id, requested_by_name, packaging_types, packaging_defaults, status, review_note, reviewed_by_name, requested_at, reviewed_at")
+      .eq("client_id", client.id)
+      .order("requested_at", { ascending: false }),
     supabase.rpc("get_my_workspace_messages", {
       p_client_id: client.id
     })
@@ -438,6 +462,10 @@ export async function loadWorkspace() {
     console.warn("Credit limit history could not be loaded:", creditHistoryError.message);
   }
 
+  if (packagingRequestError) {
+    console.warn("Packaging approval requests could not be loaded:", packagingRequestError.message);
+  }
+
   if (messageError) {
     console.warn("Messages could not be loaded:", messageError.message);
   }
@@ -453,6 +481,7 @@ export async function loadWorkspace() {
     activityLogs: activityError ? [] : (activityRows || []).map(mapActivityLog),
     creditLimits: creditLimitError ? undefined : (creditLimitRows || []).map((row) => mapCreditLimit(row, accountByMembershipId)),
     creditLimitHistory: creditHistoryError ? undefined : (creditHistoryRows || []).map(mapCreditLimitHistory),
+    packagingChangeRequests: packagingRequestError ? undefined : (packagingRequestRows || []).map(mapPackagingChangeRequest),
     messages: messageError ? [] : (messageRows || []).map(mapWorkspaceMessage)
   };
 }
@@ -653,6 +682,51 @@ export async function updateWorkspaceSettings({ client, payload }) {
   return loadWorkspace();
 }
 
+export async function updatePackagingSettings({ clientId, packagingTypes, packagingDefaults }) {
+  throwIfBackendMissing();
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("update_packaging_settings", {
+    p_client_id: clientId,
+    p_packaging_types: packagingTypes,
+    p_packaging_defaults: packagingDefaults
+  });
+  if (error) throw new Error(error.message);
+
+  await recordWorkspaceActivity({
+    clientId,
+    actionType: "updated",
+    recordType: "company",
+    recordLabel: "Sales packaging",
+    summary: "Updated factory packaging options"
+  });
+  return loadWorkspace();
+}
+
+export async function requestPackagingSettingsChange({ clientId, packagingTypes, packagingDefaults }) {
+  throwIfBackendMissing();
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("request_packaging_settings_change", {
+    p_client_id: clientId,
+    p_packaging_types: packagingTypes,
+    p_packaging_defaults: packagingDefaults
+  });
+  if (error) throw new Error(error.message);
+  return loadWorkspace();
+}
+
+export async function reviewPackagingSettingsChange({ clientId, requestId, decision, note = "" }) {
+  throwIfBackendMissing();
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("review_packaging_settings_change", {
+    p_client_id: clientId,
+    p_request_id: requestId,
+    p_decision: decision,
+    p_review_note: note
+  });
+  if (error) throw new Error(error.message);
+  return loadWorkspace();
+}
+
 export async function deleteWorkspace({ clientId }) {
   throwIfBackendMissing();
 
@@ -775,6 +849,31 @@ export async function setMembershipActiveStatus({ clientId, membershipId, active
     recordType: "account",
     recordLabel: membershipId,
     summary: active ? "Activated team account" : "Deactivated team account"
+  });
+
+  return loadWorkspace();
+}
+
+export async function setMembershipRole({ clientId, membershipId, role }) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("set_membership_role", {
+    p_client_id: clientId,
+    p_membership_id: membershipId,
+    p_role: role
+  });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  await recordWorkspaceActivity({
+    clientId,
+    actionType: "updated",
+    recordType: "account",
+    recordLabel: membershipId,
+    summary: `Changed staff role to ${role}`
   });
 
   return loadWorkspace();

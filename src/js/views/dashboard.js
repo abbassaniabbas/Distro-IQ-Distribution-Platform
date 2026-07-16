@@ -21,11 +21,13 @@ import {
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
-import { openInvoiceQuickView } from "../services/invoices.js";
+import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { requestNumberDialog } from "../ui/action-dialog.js";
+import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
 import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
@@ -257,7 +259,7 @@ function salesValueFromOrder(order, productMap) {
   return (order.items || []).reduce((total, item) => {
     const product = productMap.get(item.productId);
     const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0);
-    return total + unitPrice * Number(item.quantity || 0);
+    return total + Number(item.lineAmount ?? (unitPrice * Number(item.quantity || 0)));
   }, 0);
 }
 
@@ -335,7 +337,7 @@ function buildCeoProductPerformance(state) {
       const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product.unitPrice ?? 0);
       row.orderedUnits += quantity;
       row.supermarketUnits += quantity;
-      row.salesValue += quantity * unitPrice;
+      row.salesValue += Number(item.lineAmount ?? (quantity * unitPrice));
       row.latestActivity = latestDate([row.latestActivity, order.createdAt || order.dueAt]);
     });
   });
@@ -746,7 +748,7 @@ function addDays(date, days) {
   return nextDate.toISOString().slice(0, 10);
 }
 
-function buildCeoSalesTrend(state) {
+function buildCeoSalesTrend(state, dayCount = 7) {
   const productMap = getProductMap(state.products || []);
   const anchorDate = latestDate([
     ...(state.orders || []).map((order) => order.createdAt || order.dueAt),
@@ -754,7 +756,8 @@ function buildCeoSalesTrend(state) {
     ...(state.salesReports || []).map((report) => report.submittedAt || report.reportDate)
   ]) || todayISO();
   const anchor = new Date(`${dateKey(anchorDate || todayISO())}T12:00:00`);
-  const days = Array.from({ length: 7 }, (_, index) => addDays(anchor, index - 6));
+  const normalizedDayCount = Math.max(1, Math.floor(Number(dayCount || 7)));
+  const days = Array.from({ length: normalizedDayCount }, (_, index) => addDays(anchor, index - (normalizedDayCount - 1)));
   const totals = new Map(days.map((day) => [day, 0]));
 
   (state.orders || []).forEach((order) => {
@@ -775,7 +778,7 @@ function buildCeoSalesTrend(state) {
 
 function renderCeoSalesChart(trend) {
   return `
-    <div class="ceo-chart" aria-label="Sales trend for the last seven days">
+    <div class="ceo-chart${trend.length === 4 ? " admin-sales-chart" : ""}" aria-label="Sales trend for the last ${escapeHtml(trend.length)} days">
       ${trend.map((point) => `
         <div class="ceo-chart-column" data-search-index="${escapeHtml(`${point.label} ${point.value}`.toLowerCase())}">
           <div class="ceo-chart-track">
@@ -784,6 +787,56 @@ function renderCeoSalesChart(trend) {
           <strong>${escapeHtml(point.label)}</strong>
           <span>${formatCurrency(point.value)}</span>
         </div>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderAdminOperationalAttention(state) {
+  const delayedOrders = (state.orders || []).filter((order) => effectiveOrderStatus(order) === "delayed");
+  const lowStockProducts = getLowStockProducts(activeStockProducts(state.products));
+  const pendingCorrections = (state.correctionRequests || []).filter((request) => request.status === "pending");
+  const overdueInvoices = getInvoiceRecords(state).filter((invoice) => invoice.status === "overdue");
+  const overdueValue = overdueInvoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const attentionItems = [
+    {
+      label: "Delayed deliveries",
+      value: formatNumber(delayedOrders.length),
+      meta: delayedOrders.length ? "Need delivery follow-up" : "Deliveries are on schedule",
+      iconName: "alert",
+      href: "#/orders"
+    },
+    {
+      label: "Low stock",
+      value: formatNumber(lowStockProducts.length),
+      meta: lowStockProducts.length ? "At or below reorder point" : "Stock levels are stable",
+      iconName: "package",
+      href: "#/inventory?tab=stock-health"
+    },
+    {
+      label: "Correction approvals",
+      value: formatNumber(pendingCorrections.length),
+      meta: pendingCorrections.length ? "Waiting for review" : "No pending corrections",
+      iconName: "check",
+      href: "#/inventory?tab=adjustments"
+    },
+    {
+      label: "Overdue invoices",
+      value: formatNumber(overdueInvoices.length),
+      meta: overdueInvoices.length ? `${formatCurrency(overdueValue)} outstanding` : "No overdue invoices",
+      iconName: "wallet",
+      href: "#/invoices"
+    }
+  ];
+
+  return `
+    <div class="admin-attention-grid">
+      ${attentionItems.map((item) => `
+        <a class="admin-attention-card" href="${item.href}" data-search-index="${escapeHtml(`${item.label} ${item.meta}`.toLowerCase())}">
+          <span class="admin-attention-icon">${icon(item.iconName)}</span>
+          <span><strong>${escapeHtml(item.label)}</strong><small>${escapeHtml(item.meta)}</small></span>
+          <b>${escapeHtml(item.value)}</b>
+        </a>
       `).join("")}
     </div>
   `;
@@ -985,7 +1038,7 @@ function productSalesTimeline(state, productId) {
   (state.orders || []).forEach((order) => {
     if (order.transactionId) linkedTransactionIds.add(order.transactionId);
     (order.items || []).filter((item) => item.productId === productId).forEach((item) => {
-      add(order.createdAt || order.orderDate || order.dueAt, item.quantity, Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0));
+      add(order.createdAt || order.orderDate || order.dueAt, item.quantity, Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0))));
     });
   });
   (state.stockTransactions || [])
@@ -1223,33 +1276,6 @@ function renderCeoProductStock(state) {
   `;
 }
 
-function renderCorrectionApprovals(state) {
-  const pending = (state.correctionRequests || []).filter((request) => request.status === "pending");
-  if (!pending.length) return "";
-
-  return `
-    <section class="panel correction-approval-panel">
-      ${panelHeader("Correction approvals", `${formatNumber(pending.length)} saved record${pending.length === 1 ? "" : "s"} waiting for CEO review`)}
-      <div class="correction-approval-list">
-        ${pending.map((request) => `
-          <article class="correction-approval-row">
-            <div>
-              <span class="eyebrow">${escapeHtml(request.recordType)} · ${escapeHtml(request.transactionId)}</span>
-              <strong>${escapeHtml(request.productName)}</strong>
-              <p>${formatNumber(request.originalQuantity)} → ${formatNumber(request.requestedQuantity)} · ${escapeHtml(request.reason)}</p>
-              <small>Requested by ${escapeHtml(request.requestedBy)}</small>
-            </div>
-            <div class="correction-approval-actions">
-              ${iconButton({ iconName: "check", label: "Approve correction", className: "js-approve-record-correction", data: { "request-id": request.id } })}
-              ${iconButton({ iconName: "x", label: "Reject correction", className: "js-reject-record-correction", data: { "request-id": request.id } })}
-            </div>
-          </article>
-        `).join("")}
-      </div>
-    </section>
-  `;
-}
-
 function renderCeoDashboard(state) {
   const metrics = calculateMetrics(state);
   const vision = calculateVisionMetrics(state);
@@ -1298,8 +1324,6 @@ function renderCeoDashboard(state) {
         })}
       </div>
 
-      ${renderCorrectionApprovals(state)}
-
       <div class="ceo-dashboard-layout">
         <section class="panel ceo-chart-panel">
           ${panelHeader("Sales trend", "Last 7 days")}
@@ -1312,9 +1336,16 @@ function renderCeoDashboard(state) {
         ${renderCeoProductStock(state)}
       </section>
 
-      <section class="panel">
-        ${panelHeader("Today's factory stock", "Added stock and dispatched products are recorded against each product")}
-        ${renderDailyStockMovementTable(state)}
+      <section class="panel ceo-factory-stock-dropdown">
+        <details>
+          <summary>
+            <span><strong>Today's factory stock</strong><small>Added stock and dispatched products recorded against each product</small></span>
+            <span class="ceo-stock-dropdown-icon">${icon("arrowRight")}</span>
+          </summary>
+          <div class="ceo-factory-stock-dropdown-content">
+            ${renderDailyStockMovementTable(state)}
+          </div>
+        </details>
       </section>
 
       <section class="panel">
@@ -1447,7 +1478,7 @@ function renderStoreKeeperDispatchRows(state) {
               ${statusPill(dispatch.movementDirection === "in" ? "in_stock" : "dispatched")}
               <span class="muted">${formatDate(dispatch.date)}</span>
               ${!isAdjustableDispatch ? "" : pendingTransactionIds.has(dispatch.id)
-                ? iconButton({ iconName: "clock", label: "Correction awaiting CEO approval", disabled: true })
+                ? iconButton({ iconName: "clock", label: "Correction awaiting approval", disabled: true })
                 : iconButton({
                     iconName: "refresh",
                     label: "Request dispatch correction",
@@ -1504,27 +1535,16 @@ function renderStoreKeeperDashboard(state, permissions) {
         })}
       </div>
 
-      <section class="panel">
-        ${panelHeader("Today's factory stock", "Every stock addition and product dispatch is kept against the product for the day")}
-        ${renderDailyStockMovementTable(state)}
-      </section>
-
-      <section class="panel purchase-order-dashboard-panel">
-        ${panelHeader(
-          "Forwarded Purchase Orders",
-          "Approved representative requests waiting for allocation",
-          `<a class="button primary" href="#/purchase-orders">${icon("arrowRight")}<span>Open queue</span></a>`
-        )}
-        <div class="dashboard-po-list">
-          ${(state.purchaseOrders || []).filter((purchaseOrder) => purchaseOrder.status === "forwarded").slice(0, 4).map((purchaseOrder) => `
-            <a href="#/purchase-orders" class="dashboard-po-row" data-search-index="${escapeHtml(`${purchaseOrder.id} ${purchaseOrder.repName}`.toLowerCase())}">
-              <span><strong>${escapeHtml(purchaseOrder.id)}</strong><small>${escapeHtml(purchaseOrder.repName)}</small></span>
-              <span><strong>${formatNumber(purchaseOrder.items?.length || 0)} products</strong><small>Needed ${formatDate(purchaseOrder.neededBy)}</small></span>
-              ${statusPill(purchaseOrder.priority || "normal")}
-              ${icon("arrowRight")}
-            </a>
-          `).join("") || '<div class="empty-state">No Purchase Orders are waiting for allocation</div>'}
-        </div>
+      <section class="panel ceo-factory-stock-dropdown storekeeper-factory-stock-dropdown">
+        <details>
+          <summary>
+            <span><strong>Today's factory stock</strong><small>Every stock addition and product dispatch is kept against the product for the day</small></span>
+            <span class="ceo-stock-dropdown-icon">${icon("arrowRight")}</span>
+          </summary>
+          <div class="ceo-factory-stock-dropdown-content">
+            ${renderDailyStockMovementTable(state)}
+          </div>
+        </details>
       </section>
 
       <div class="dashboard-layout">
@@ -2359,6 +2379,18 @@ function renderRepReturnCustomerField() {
   `;
 }
 
+function renderRepSaleItemRow(assignments, { removable = false } = {}) {
+  return `
+    <div class="rep-sale-item-row" data-rep-sale-item-row>
+      <label class="field"><span>Product</span><select name="saleAssignmentId" data-rep-sale-product required><option value="">Pick product</option>${renderRepAssignmentOptions(assignments, "sale")}</select></label>
+      <label class="field"><span>Quantity</span><input name="saleQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
+      <label class="field"><span>Packaging</span><select name="salePackagingType" data-rep-sale-packaging required><option value="piece">Pieces</option></select></label>
+      <label class="field"><span>Price</span><input data-rep-sale-package-price value="0" readonly aria-label="Selected package selling price"></label>
+      <div class="rep-sale-item-remove">${iconButton({ iconName: "trash", label: "Remove sale item", className: "js-remove-rep-sale-item warning-icon", disabled: !removable })}</div>
+    </div>
+  `;
+}
+
 function renderRepQuickLog(state, assignments) {
   const customers = (state.retailers || []).filter((customer) => customer.status !== "inactive");
 
@@ -2372,18 +2404,11 @@ function renderRepQuickLog(state, assignments) {
             <strong>Sale</strong>
           </div>
 
-          <label class="field">
-            <span>Product</span>
-            <select name="saleAssignmentId" data-rep-assignment-select required>
-              <option value="">Pick product</option>
-              ${renderRepAssignmentOptions(assignments, "sale")}
-            </select>
-          </label>
-
-          <label class="field">
-            <span>How many?</span>
-            <input name="saleQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
-          </label>
+          <section class="rep-sale-items-builder">
+            <header><strong>Products sold</strong>${iconButton({ iconName: "plus", label: "Add another sale item", className: "js-add-rep-sale-item" })}</header>
+            <div class="rep-sale-item-list" data-rep-sale-item-list>${renderRepSaleItemRow(assignments)}</div>
+            <template data-rep-sale-item-template>${renderRepSaleItemRow(assignments, { removable: true })}</template>
+          </section>
 
           ${renderRepCustomerField(customers, "sale", true)}
 
@@ -2506,7 +2531,7 @@ function renderRepReportLines(transactions, state) {
             <strong>${formatNumber(line.quantity)}</strong>
             <span>${escapeHtml([line.type, formatCurrency(line.amount), line.returnDisposition].filter(Boolean).join(" - "))}</span>
             ${line.type === "Sale" ? (pendingTransactionIds.has(line.transactionId)
-              ? iconButton({ iconName: "clock", label: "Correction awaiting CEO approval", disabled: true })
+              ? iconButton({ iconName: "clock", label: "Correction awaiting approval", disabled: true })
               : iconButton({
                   iconName: "refresh",
                   label: "Request sale correction",
@@ -2729,36 +2754,71 @@ function renderSalesRepDashboard(state) {
 }
 
 function renderAdminDashboard(state) {
-  const requests = state.stockRequests || [];
-  const purchaseOrders = state.purchaseOrders || [];
-  const pending = requests.filter((request) => request.status === "submitted");
-  const forwarded = purchaseOrders.filter((purchaseOrder) => purchaseOrder.status === "forwarded");
-  const issued = purchaseOrders.filter((purchaseOrder) => purchaseOrder.status === "issued");
+  const metrics = calculateMetrics(state);
+  const vision = calculateVisionMetrics(state);
+  const productRows = buildCeoProductPerformance(state);
+  const trend = buildCeoSalesTrend(state, 4);
+  const orders = getOrdersWithTotals(state);
+  const delayedOrders = orders.filter((order) => effectiveOrderStatus(order) === "delayed");
+  const reports = state.salesReports || [];
+  const latestReport = [...reports]
+    .sort((a, b) => toTimestamp(b.submittedAt || b.reportDate) - toTimestamp(a.submittedAt || a.reportDate))[0];
+  const permissions = currentUserPermissions(state);
+  const recentOrderRows = renderRecentOrders(state, permissions);
 
   return `
-    <section class="view dashboard-view admin-dashboard">
+    <section class="view dashboard-view admin-dashboard ceo-dashboard">
       ${dashboardIdentity(state, "admin")}
-      <section class="admin-command-strip">
-        <div><span class="eyebrow">Admin portal</span><h2>Sales documentation and stock coordination</h2><p>Review representative requests, prepare Purchase Orders, and forward them for factory allocation.</p></div>
-        <a class="button primary" href="#/purchase-orders">${icon("orders")}<span>Open Purchase Orders</span></a>
-      </section>
-      <div class="metric-grid">
-        ${metricCard({ label: "Requests to review", value: formatNumber(pending.length), meta: "Submitted by representatives", iconName: "orders" })}
-        ${metricCard({ label: "Awaiting allocation", value: formatNumber(forwarded.length), meta: "Forwarded to Store Keeper", iconName: "arrowRight" })}
-        ${metricCard({ label: "Issued orders", value: formatNumber(issued.length), meta: "Allocated and dispatched", iconName: "check" })}
-      </div>
-      <section class="panel">
-        ${panelHeader("Latest stock requests", "Requests are handled in the order and priority received", `<a class="button" href="#/purchase-orders">${icon("arrowRight")}<span>View all</span></a>`)}
-        <div class="dashboard-po-list">
-          ${pending.slice(0, 6).map((request) => `
-            <a href="#/purchase-orders" class="dashboard-po-row" data-search-index="${escapeHtml(`${request.id} ${request.repName} ${request.priority}`.toLowerCase())}">
-              <span><strong>${escapeHtml(request.id)}</strong><small>${escapeHtml(request.repName)}</small></span>
-              <span><strong>${formatNumber(request.items?.length || 0)} products</strong><small>Needed ${formatDate(request.neededBy)}</small></span>
-              ${statusPill(request.priority || "normal")}
-              ${icon("arrowRight")}
-            </a>
-          `).join("") || '<div class="empty-state">No representative stock requests are waiting</div>'}
+      <section class="ceo-command-strip admin-command-strip">
+        <div>
+          <span class="eyebrow">Admin portal</span>
+          <h2>Company overview</h2>
         </div>
+      </section>
+
+      <div class="metric-grid ceo-minimal-metrics">
+        ${renderCeoMetricCard({ label: "Sales", value: formatCurrency(metrics.orderRevenue), meta: "Total order value", iconName: "orders" })}
+        ${renderCeoMetricCard({ label: "Stock", value: formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits), meta: "Factory plus representative custody", iconName: "package" })}
+        ${renderCeoMetricCard({ label: "Sales orders", value: formatNumber(orders.length), meta: delayedOrders.length ? `${formatNumber(delayedOrders.length)} delayed` : "No delayed orders", iconName: "truck" })}
+        ${renderCeoMetricCard({ label: "Reports", value: formatNumber(reports.length), meta: latestReport ? `Latest: ${latestReport.repName}` : "No submitted reports yet", iconName: "dashboard" })}
+      </div>
+
+      <div class="admin-dashboard-insight-row">
+        <section class="panel ceo-chart-panel">
+          ${panelHeader("Sales trend", "Last 4 days")}
+          ${renderCeoSalesChart(trend)}
+        </section>
+        <section class="panel admin-attention-panel">
+          ${panelHeader("Operational attention", "Items that may need action now")}
+          ${renderAdminOperationalAttention(state)}
+        </section>
+      </div>
+
+      <section class="panel">
+        ${panelHeader("Recent sales orders", "Latest company sales activity", `<a class="button" href="#/orders">${icon("arrowRight")}<span>View all</span></a>`)}
+        ${table(["Order", "Location", "Status", "Value", "Control"], recentOrderRows ? [recentOrderRows] : [], "No sales orders recorded yet")}
+      </section>
+
+      <section class="panel ceo-product-stock-panel">
+        ${panelHeader("Products", "Select a product to view its types, sizes, and available stock")}
+        ${renderCeoProductStock(state)}
+      </section>
+
+      <section class="panel ceo-factory-stock-dropdown admin-factory-stock-dropdown">
+        <details>
+          <summary>
+            <span><strong>Today's factory stock</strong><small>Added stock and dispatched products recorded against each product</small></span>
+            <span class="ceo-stock-dropdown-icon">${icon("arrowRight")}</span>
+          </summary>
+          <div class="ceo-factory-stock-dropdown-content">
+            ${renderDailyStockMovementTable(state)}
+          </div>
+        </details>
+      </section>
+
+      <section class="panel">
+        ${panelHeader("Stock split", "Where finished stock currently sits")}
+        ${renderCeoStockSplit(vision, productRows)}
       </section>
     </section>
   `;
@@ -3171,9 +3231,15 @@ export function bindDashboard({ root, store, signal }) {
   }
 
   qsa(".js-restock-product", root).forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const product = store.getState().products.find((item) => item.id === button.dataset.productId);
-      const rawQuantity = window.prompt(`How many ${product?.unit || "units"} do you want to add to ${product?.name || "this stock item"}?`, "");
+      const rawQuantity = await requestNumberDialog({
+        title: "Add factory stock",
+        message: `How many ${product?.unit || "units"} do you want to add to ${product?.name || "this stock item"}?`,
+        label: `Quantity (${product?.unit || "units"})`,
+        placeholder: "0",
+        confirmLabel: "Add stock"
+      });
       if (rawQuantity === null) return;
 
       const quantity = Number(rawQuantity);
@@ -3336,29 +3402,6 @@ function bindCeoDashboard({ root, store }) {
     if (event.target === productSizeModal) closeProductSizeModal();
   });
 
-  qsa(".js-approve-record-correction", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      store.dispatch({
-        type: "APPROVE_RECORD_CORRECTION",
-        requestId: button.dataset.requestId,
-        message: "Correction approved and stock records updated"
-      });
-    });
-  });
-
-  qsa(".js-reject-record-correction", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      const note = window.prompt("Why is this correction being rejected?", "Correction not approved");
-      if (note === null || !note.trim()) return;
-      store.dispatch({
-        type: "REJECT_RECORD_CORRECTION",
-        requestId: button.dataset.requestId,
-        note,
-        message: "Correction rejected"
-      });
-    });
-  });
-
   function closeDetailModal() {
     if (detailModal) detailModal.hidden = true;
   }
@@ -3450,7 +3493,8 @@ function bindSalesRepDashboard({ root, store }) {
   const saleForm = qs("#rep-sale-form", root);
   const returnForm = qs("#rep-return-form", root);
   const factoryReturnForm = qs("#rep-factory-return-form", root);
-  const assignmentSelects = qsa("[data-rep-assignment-select]", root);
+  const saleItemList = qs("[data-rep-sale-item-list]", root);
+  const saleItemTemplate = qs("[data-rep-sale-item-template]", root);
   const saleCustomerSelect = qs("[data-rep-sale-customer]", root);
   const salePaymentSelect = qs("[data-rep-sale-payment]", root);
   const walkInPaymentNote = qs("[data-walk-in-payment-note]", root);
@@ -3560,9 +3604,26 @@ function bindSalesRepDashboard({ root, store }) {
   qsa(".js-open-rep-record-correction", root).forEach((button) => {
     button.addEventListener("click", () => {
       if (!correctionModal || !correctionForm) return;
+      const state = store.getState();
+      const transaction = (state.stockTransactions || []).find((item) => item.id === button.dataset.transactionId);
+      const assignmentIds = new Set([
+        ...(transaction?.assignmentIds || []),
+        transaction?.assignmentId,
+        ...(transaction?.assignmentAllocations || []).map((allocation) => allocation.assignmentId)
+      ].filter(Boolean));
+      const stockInHand = (state.stockAssignments || [])
+        .filter((assignment) => assignmentIds.has(assignment.id))
+        .reduce((total, assignment) => total + assignmentOutstanding(assignment), 0);
+      const maximumCorrectQuantity = Number(transaction?.quantity || 0) + stockInHand;
       correctionForm.reset();
       correctionForm.elements.transactionId.value = button.dataset.transactionId || "";
       correctionForm.elements.requestedQuantity.value = button.dataset.quantity || "";
+      correctionForm.elements.requestedQuantity.max = String(maximumCorrectQuantity);
+      const quantityLimit = qs("[data-correction-quantity-limit]", correctionModal);
+      if (quantityLimit) {
+        quantityLimit.hidden = false;
+        quantityLimit.textContent = `Maximum ${formatNumber(maximumCorrectQuantity)} total units based on the stock still in your hand.`;
+      }
       const label = qs("[data-correction-record-label]", correctionModal);
       if (label) label.textContent = button.dataset.recordLabel || "Saved sale";
       if (correctionMessage) correctionMessage.textContent = "";
@@ -3583,7 +3644,14 @@ function bindSalesRepDashboard({ root, store }) {
     const requestedQuantity = Number(formData.get("requestedQuantity") || 0);
     const reason = String(formData.get("reason") || "").trim();
     const transaction = (store.getState().stockTransactions || []).find((item) => item.id === transactionId);
+    const maximumCorrectQuantity = Number(correctionForm.elements.requestedQuantity.max || 0);
     if (correctionMessage) correctionMessage.textContent = "";
+    if (maximumCorrectQuantity > 0 && requestedQuantity > maximumCorrectQuantity) {
+      if (correctionMessage) correctionMessage.textContent = `The corrected quantity cannot exceed ${formatNumber(maximumCorrectQuantity)} units available for this sale.`;
+      correctionForm.elements.requestedQuantity.value = String(maximumCorrectQuantity);
+      correctionForm.elements.requestedQuantity.focus();
+      return;
+    }
     if (!transaction || !requestedQuantity || requestedQuantity <= 0 || requestedQuantity === Number(transaction.quantity || 0) || !reason) {
       if (correctionMessage) correctionMessage.textContent = "Enter a different quantity and explain the reason for the adjustment.";
       return;
@@ -3593,9 +3661,17 @@ function bindSalesRepDashboard({ root, store }) {
       transactionId,
       requestedQuantity,
       reason,
-      message: "Correction sent for CEO approval"
+      message: "Correction sent for approval"
     });
     correctionModal.hidden = true;
+  });
+
+  correctionForm?.elements.requestedQuantity?.addEventListener("input", () => {
+    const input = correctionForm.elements.requestedQuantity;
+    const maximum = Number(input.max || 0);
+    if (!maximum || Number(input.value || 0) <= maximum) return;
+    input.value = String(maximum);
+    if (correctionMessage) correctionMessage.textContent = `You cannot enter more than ${formatNumber(maximum)} units available for this sale.`;
   });
 
   function applyWalkInPaymentRule() {
@@ -3610,6 +3686,48 @@ function bindSalesRepDashboard({ root, store }) {
 
   saleCustomerSelect?.addEventListener("change", applyWalkInPaymentRule);
   applyWalkInPaymentRule();
+
+  function updateSaleItem(row) {
+    if (!row) return;
+    const productId = String(qs("[data-rep-sale-product]", row)?.value || "");
+    const product = store.getState().products.find((item) => item.id === productId);
+    const salePackagingSelect = qs("[data-rep-sale-packaging]", row);
+    const previousValue = salePackagingSelect.value || "piece";
+    salePackagingSelect.innerHTML = productPackagingTypes(store.getState().client, product)
+      .map((type) => `<option value="${escapeHtml(type)}" ${type === previousValue ? "selected" : ""}>${escapeHtml(packagingOption(type).label)}</option>`)
+      .join("");
+    if (![...salePackagingSelect.options].some((option) => option.value === previousValue)) salePackagingSelect.value = "piece";
+    const priceInput = qs("[data-rep-sale-package-price]", row);
+    if (priceInput) priceInput.value = formatCurrency(product ? packagingUnitPrice(product, salePackagingSelect.value, store.getState().client) : 0);
+  }
+
+  function syncSaleItemRemoveButtons() {
+    const rows = qsa("[data-rep-sale-item-row]", saleItemList);
+    rows.forEach((row) => {
+      const button = qs(".js-remove-rep-sale-item", row);
+      if (button) button.disabled = rows.length === 1;
+    });
+  }
+
+  qsa("[data-rep-sale-item-row]", saleItemList).forEach(updateSaleItem);
+  syncSaleItemRemoveButtons();
+  qs(".js-add-rep-sale-item", saleForm)?.addEventListener("click", () => {
+    if (!saleItemList || !saleItemTemplate) return;
+    saleItemList.append(saleItemTemplate.content.cloneNode(true));
+    const row = qsa("[data-rep-sale-item-row]", saleItemList).at(-1);
+    updateSaleItem(row);
+    syncSaleItemRemoveButtons();
+    qs("[data-rep-sale-product]", row)?.focus();
+  });
+  saleItemList?.addEventListener("change", (event) => {
+    if (event.target.matches("[data-rep-sale-product], [data-rep-sale-packaging]")) updateSaleItem(event.target.closest("[data-rep-sale-item-row]"));
+  });
+  saleItemList?.addEventListener("click", (event) => {
+    const button = event.target.closest(".js-remove-rep-sale-item");
+    if (!button || button.disabled) return;
+    button.closest("[data-rep-sale-item-row]")?.remove();
+    syncSaleItemRemoveButtons();
+  });
 
   function updateReturnCustomerOptions() {
     if (!returnProductSelect || !returnCustomerSelect) return;
@@ -3652,16 +3770,120 @@ function bindSalesRepDashboard({ root, store }) {
 
   qsa(".js-fill-rep-product", root).forEach((button) => {
     button.addEventListener("click", () => {
-      assignmentSelects.forEach((select) => {
+      qsa("[data-rep-assignment-select], [data-rep-sale-product]", root).forEach((select) => {
         select.value = button.dataset.productId;
         select.dispatchEvent(new Event("change", { bubbles: true }));
       });
-      assignmentSelects[0]?.focus();
+      qs("[data-rep-sale-product], [data-rep-assignment-select]", root)?.focus();
     });
   });
 
+  function handleRepSale(event) {
+    const state = store.getState();
+    const form = event.currentTarget;
+    const formData = new FormData(form);
+    const message = qs("#rep-sale-message", root);
+    const selectedCustomerId = String(formData.get("saleCustomerId") || "");
+    const isWalkInSale = selectedCustomerId === WALK_IN_CUSTOMER_ID;
+    const customerId = isWalkInSale ? "" : selectedCustomerId;
+    const customer = (state.retailers || []).find((item) => item.id === customerId);
+    const customerName = isWalkInSale ? "Walk-in customer" : customer?.name || "";
+    const paymentType = String(formData.get("salePaymentType") || "cash");
+    const repName = currentRepName(state);
+    const items = qsa("[data-rep-sale-item-row]", form).map((row) => {
+      const productId = String(qs("[data-rep-sale-product]", row)?.value || "");
+      const product = (state.products || []).find((candidate) => candidate.id === productId);
+      const packagingType = String(qs("[data-rep-sale-packaging]", row)?.value || "piece");
+      const packagingQuantity = Number(qs('input[name="saleQuantity"]', row)?.value || 0);
+      return {
+        productId,
+        product,
+        packagingType,
+        packagingQuantity,
+        quantity: quantityInPieces(product, packagingQuantity, packagingType, state.client),
+        packagingUnitPrice: packagingUnitPrice(product, packagingType, state.client),
+        unitPrice: effectivePiecePrice(product, packagingType, state.client),
+        amount: packagingLineAmount(product, packagingQuantity, packagingType, state.client)
+      };
+    });
+    const lineKeys = items.map((item) => `${item.productId}:${item.packagingType}`);
+    const requestedByProduct = items.reduce((totals, item) => totals.set(item.productId, Number(totals.get(item.productId) || 0) + item.quantity), new Map());
+    const availableByProduct = new Map([...requestedByProduct.keys()].map((productId) => [
+      productId,
+      buildRepAssignments(state, repName)
+        .filter((assignment) => assignment.productId === productId && assignment.outstanding > 0)
+        .reduce((total, assignment) => total + assignment.outstanding, 0)
+    ]));
+    const amount = items.reduce((total, item) => total + item.amount, 0);
+    const isCreditSale = normalized(paymentType).includes("credit");
+
+    setRepMessage(message, "");
+    if (!items.length || items.some((item) => !item.product || item.packagingQuantity <= 0 || item.quantity <= 0)) {
+      setRepMessage(message, "Choose every product, packaging type, and quantity.", "error");
+      return;
+    }
+    if (new Set(lineKeys).size !== lineKeys.length) {
+      setRepMessage(message, "Combine duplicate product and packaging lines into one quantity.", "error");
+      return;
+    }
+    const unavailable = [...requestedByProduct].find(([productId, quantity]) => quantity > Number(availableByProduct.get(productId) || 0));
+    if (unavailable) {
+      const product = state.products.find((item) => item.id === unavailable[0]);
+      setRepMessage(message, `Only ${formatNumber(availableByProduct.get(unavailable[0]) || 0)} pieces of ${product?.name || "this product"} are left.`, "error");
+      return;
+    }
+    if (!customerName) {
+      setRepMessage(message, "Choose a customer.", "error");
+      return;
+    }
+    if (isWalkInSale && normalized(paymentType) !== "cash") {
+      setRepMessage(message, "Walk-in customers can only pay with cash.", "error");
+      return;
+    }
+    if (isCreditSale && !customer) {
+      setRepMessage(message, "Credit sales need a saved customer.", "error");
+      return;
+    }
+    if (isCreditSale) {
+      const repLimit = getCreditLimitForParty(state.creditLimits || [], repName);
+      const customerLimit = getCreditLimitForParty(state.creditLimits || [], customer.name);
+      const repProjected = getRepresentativeDailyCreditUsed(state, repName, todayISO()) + amount;
+      const customerProjected = Number(customerLimit?.balance || 0) + amount;
+      if (!repLimit?.limit || repProjected > Number(repLimit.limit || 0)) {
+        setRepMessage(message, !repLimit?.limit ? "Daily credit limit has not been set." : "Daily credit limit reached for today.", "error");
+        return;
+      }
+      if (!customerLimit?.limit || customerProjected > Number(customerLimit.limit || 0)) {
+        setRepMessage(message, "Customer credit limit reached.", "error");
+        return;
+      }
+    }
+
+    const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+    const invoiceIdsBeforeSave = new Set((state.invoices || []).map((invoice) => invoice.id));
+    store.dispatch({
+      type: "LOG_REP_SALE",
+      items: items.map(({ productId, packagingType, packagingQuantity }) => ({ productId, packagingType, packagingQuantity })),
+      customerId,
+      customerName,
+      customerType: isWalkInSale ? "Walk-in" : customer?.channel || customer?.type || "Customer",
+      paymentType,
+      repName,
+      offline,
+      message: offline ? "Sale saved offline" : "Sale saved"
+    });
+    const recordedState = store.getState();
+    const invoice = (recordedState.invoices || []).find((item) => !invoiceIdsBeforeSave.has(item.id));
+    if (invoice) openInvoiceQuickView(invoice, recordedState, { downloadLabel: "Save invoice", downloadIconName: "save" });
+  }
+
   function handleRepTransaction(event, transactionType) {
     event.preventDefault();
+
+    if (transactionType === "sale") {
+      handleRepSale(event);
+      return;
+    }
 
     const form = event.currentTarget;
     const state = store.getState();
@@ -3678,7 +3900,7 @@ function bindSalesRepDashboard({ root, store }) {
     const returnableCustomerQuantity = Number(selectedReturnOption?.dataset.returnableQuantity || 0);
     const customerId = transactionType === "return" ? returnCustomerId : isWalkInSale ? "" : selectedCustomerId;
     const typedCustomerName = String(formData.get(`${prefix}CustomerName`) || "").trim();
-    const quantity = Number(formData.get(`${prefix}Quantity`) || 0);
+    const enteredQuantity = Number(formData.get(`${prefix}Quantity`) || 0);
     const paymentType = String(formData.get(`${prefix}PaymentType`) || "cash");
     const returnDisposition = String(formData.get("returnDisposition") || "held_by_rep");
     const repName = currentRepName(state);
@@ -3691,6 +3913,8 @@ function bindSalesRepDashboard({ root, store }) {
           : assignment.outstanding > 0
       ));
     const product = (state.products || []).find((item) => item.id === productId);
+    const packagingType = "piece";
+    const quantity = enteredQuantity;
     const customer = (state.retailers || []).find((item) => item.id === customerId);
     const customerName = transactionType === "return"
       ? returnCustomerName
@@ -3778,6 +4002,8 @@ function bindSalesRepDashboard({ root, store }) {
         ? returnCustomerType
         : isWalkInSale ? "Walk-in" : customer?.channel || customer?.type || "Customer",
       quantity,
+      packagingType,
+      packagingQuantity: enteredQuantity,
       transactionType,
       paymentType,
       returnDisposition: transactionType === "return" ? returnDisposition : "",

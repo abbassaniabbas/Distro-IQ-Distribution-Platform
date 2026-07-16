@@ -226,6 +226,22 @@
   font-weight: 800;
 }
 
+.required-form-alert-inline {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  min-height: 38px;
+  align-items: center;
+  padding: 8px 10px;
+}
+
+.form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(220px, 1fr));

@@ -99,7 +99,7 @@ export function getOrderTotal(order, products) {
   return (order.items || []).reduce((total, item) => {
     const product = productMap.get(item.productId);
     const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0);
-    return total + unitPrice * Number(item.quantity || 0);
+    return total + Number(item.lineAmount ?? (unitPrice * Number(item.quantity || 0)));
   }, 0);
 }
 
@@ -133,15 +133,15 @@ export function getFinancialSalesLines(state) {
       const route = routeMap.get(order.id);
       const retailer = retailerMap.get(order.retailerId);
 
-      return (order.items || []).map((item) => {
+      return (order.items || []).map((item, itemIndex) => {
         const product = productMap.get(item.productId);
         const quantity = Number(item.quantity || 0);
-        const revenue = quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0);
+        const revenue = Number(item.lineAmount ?? (quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0)));
         const cost = quantity * Number(item.unitCost ?? item.unitCostAtSale ?? product?.unitCost ?? 0);
         const profit = revenue - cost;
 
         return {
-          id: `${order.id}-${item.productId}`,
+          id: `${order.id}-${item.productId}-${item.packagingType || "piece"}-${itemIndex}`,
           recordId: order.id,
           source: "Sales order",
           date: dateOnly(order.createdAt || order.updatedAt || order.dueAt),

@@ -4,6 +4,7 @@ import {
   getAuthContext,
   getAuthenticatorAssuranceLevel,
   listAuthenticatorFactors,
+  requestPasswordReset,
   signInWithPassword,
   signOut,
   signUpWithPassword,
@@ -21,6 +22,12 @@ function isSignupRoute(routeId) {
 
 function isPlatformAdminRoute(routeId) {
   return routeId === "platform-admin";
+}
+
+function passwordResetSucceeded() {
+  if (typeof window === "undefined") return false;
+  const query = window.location.hash.split("?")[1] || "";
+  return new URLSearchParams(query).get("password-reset") === "success";
 }
 
 function readAuthForm(form) {
@@ -229,6 +236,7 @@ export function renderAuth({ routeId }) {
     : isSignup
     ? "Create your DistroIQ account"
     : "Access your company workspace";
+  const resetSucceeded = mode === "login" && passwordResetSucceeded();
 
   return `
     <section class="view auth-view">
@@ -287,9 +295,10 @@ export function renderAuth({ routeId }) {
               </span>
               ${renderFieldError("password")}
             </label>
-            <span id="auth-message" class="auth-message span-full" role="status" aria-live="polite"></span>
+            <span id="auth-message" class="auth-message span-full${resetSucceeded ? " is-success" : ""}" role="status" aria-live="polite">${resetSucceeded ? "Your password has been reset. Sign in with your new password." : ""}</span>
             ${isPlatformAdmin ? renderPlatformMfaPanel() : ""}
             <div class="span-full auth-submit-row">
+              ${!isSignup && !isPlatformAdmin ? '<a class="auth-forgot-link" href="#/forgot-password">Forgot password?</a>' : ""}
               ${textButton({
                 iconName: isSignup ? "userCheck" : "arrowRight",
                 label: isSignup ? "Create account" : "Sign in",
@@ -302,6 +311,76 @@ export function renderAuth({ routeId }) {
       </div>
     </section>
   `;
+}
+
+export function renderForgotPassword() {
+  return `
+    <section class="view auth-view">
+      <div class="auth-shell">
+        <section class="auth-card auth-card-centered" aria-labelledby="forgot-password-title">
+          <div class="auth-logo-lockup">
+            <span class="auth-logo-mark"><img src="./src/assets/distro-iq-mark.svg" alt=""></span>
+            <span><strong>DistroIQ</strong><small>Sales, Stock & Distribution</small></span>
+          </div>
+          <div class="auth-form-heading">
+            <h2 id="forgot-password-title">Reset your password</h2>
+            <p>Enter your staff email to receive a secure reset link.</p>
+          </div>
+          <form id="forgot-password-form" class="auth-form" novalidate>
+            <label class="field span-full auth-field">
+              <span>Email address</span>
+              <input name="email" type="email" autocomplete="email" placeholder="you@example.com" required>
+            </label>
+            <span id="forgot-password-message" class="auth-message span-full" role="status" aria-live="polite"></span>
+            <div class="span-full auth-submit-row">
+              <a class="button" href="#/login">${icon("arrowRight")}<span>Back to sign in</span></a>
+              ${textButton({ iconName: "mail", label: "Send reset link", className: "primary", type: "submit" })}
+            </div>
+          </form>
+        </section>
+      </div>
+    </section>
+  `;
+}
+
+export function bindForgotPassword({ root }) {
+  const form = qs("#forgot-password-form", root);
+  const message = qs("#forgot-password-message", root);
+  if (!form || !message) return;
+
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const email = String(new FormData(form).get("email") || "").trim();
+    const submitButton = qs('button[type="submit"]', form);
+    const submitLabel = qs("span", submitButton);
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      message.className = "auth-message span-full is-error";
+      message.textContent = "Enter a valid email address.";
+      return;
+    }
+
+    submitButton.disabled = true;
+    if (submitLabel) submitLabel.textContent = "Sending...";
+    message.className = "auth-message span-full";
+    message.textContent = "";
+
+    try {
+      const redirectUrl = new URL(window.location.href);
+      redirectUrl.search = "";
+      redirectUrl.hash = "/reset-password?recovery=1";
+      await requestPasswordReset(email, redirectUrl.href);
+      message.className = "auth-message span-full is-success";
+      message.textContent = "If this email has an account, a password reset link has been sent.";
+      form.reset();
+    } catch {
+      message.className = "auth-message span-full is-error";
+      message.textContent = "We could not send the reset link. Check your connection and try again.";
+    } finally {
+      submitButton.disabled = false;
+      if (submitLabel) submitLabel.textContent = "Send reset link";
+    }
+  });
 }
 
 export function bindAuth({ root, store, beginAuthFormFlow }) {

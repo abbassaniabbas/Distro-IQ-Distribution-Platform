@@ -8,7 +8,7 @@ import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, sco
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
-import { bindRequiredFieldValidation } from "./ui/form-validation.js";
+import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
 import {
   bindTopbarCommunications,
@@ -18,7 +18,8 @@ import {
 } from "./ui/topbar-communications.js";
 import { showToast } from "./ui/toast.js";
 import { renderActivityLog, bindActivityLog } from "./views/activity-log.js";
-import { renderAuth, bindAuth } from "./views/auth.js";
+import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js";
+import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
 import { renderDashboard, bindDashboard } from "./views/dashboard.js";
 import { renderFinance, bindFinance } from "./views/finance.js";
@@ -65,6 +66,12 @@ const routes = {
     bind: bindAuth,
     isSetup: true
   },
+  "forgot-password": {
+    title: "Forgot Password",
+    render: renderForgotPassword,
+    bind: bindForgotPassword,
+    isSetup: true
+  },
   onboarding: {
     title: "Onboarding",
     render: renderOnboarding,
@@ -96,6 +103,11 @@ const routes = {
     title: "Purchase Orders",
     render: renderPurchaseOrders,
     bind: bindPurchaseOrders
+  },
+  "admin-operations": {
+    title: "Admin Operations",
+    render: renderAdminOperations,
+    bind: bindAdminOperations
   },
   inventory: {
     title: "Stock",
@@ -178,7 +190,7 @@ const topbarAvatar = qs("#topbar-avatar");
 const notificationsButton = qs("#topbar-notifications");
 const messagesButton = qs("#topbar-messages");
 const searchSuggestions = document.createElement("div");
-const AUTH_ROUTES = ["login", "signup", "reset-password", "platform-admin"];
+const AUTH_ROUTES = ["login", "signup", "forgot-password", "reset-password", "platform-admin"];
 const PLATFORM_NAV_ITEMS = [
   {
     id: "platform-console",
@@ -251,11 +263,11 @@ function getCurrentRouteId(state) {
     return state.client?.id ? defaultRouteForState(state) : "platform-admin";
   }
 
-  if (!state.session && !["login", "signup", "platform-admin"].includes(routeId)) {
+  if (!state.session && !["login", "signup", "forgot-password", "platform-admin"].includes(routeId)) {
     return "login";
   }
 
-  if (state.session && ["login", "signup"].includes(routeId)) {
+  if (state.session && ["login", "signup", "forgot-password"].includes(routeId)) {
     return state.client?.id ? DEFAULT_ROUTE : "onboarding";
   }
 
@@ -298,6 +310,11 @@ function renderNav(activeRouteId, state) {
     return;
   }
 
+  if (!state.session || !state.client?.id) {
+    navRoot.innerHTML = "";
+    return;
+  }
+
   const permissions = currentUserPermissions(state);
   const role = currentUserRole(state);
   const visibleItems = state.session && state.client?.id
@@ -308,6 +325,8 @@ function renderNav(activeRouteId, state) {
     const isActive = item.id === activeRouteId;
     const label = role === "sales_rep" && item.id === "dashboard"
       ? "My Day"
+      : role === "store_keeper" && item.id === "admin-operations"
+        ? "Supplier Receipts"
       : role === "sales_rep" && item.id === "activity-log"
         ? "Recent Activity"
         : item.label;
@@ -499,6 +518,9 @@ function render() {
   const view = routes[routeId];
   const isAuthRoute = AUTH_ROUTES.includes(routeId);
   const viewState = scopeStateForCurrentRole(scopeStateForEnabledModules(state));
+  const formScope = `${state.client?.id || "no-client"}:${state.user?.id || "anonymous"}`;
+
+  captureInMemoryFormDrafts(viewRoot, { scope: formScope });
 
   document.body.dataset.appView = isAuthRoute || routeId === "backend-setup" ? "auth" : "workspace";
   setCurrencySettings(state.client);
@@ -527,7 +549,7 @@ function render() {
     signal: activeViewAbortController.signal
   });
   bindRequiredFieldValidation(viewRoot, {
-    scope: `${state.client?.id || "no-client"}:${state.user?.id || "anonymous"}`
+    scope: formScope
   });
   applySearchFilter(viewRoot, globalSearch.value);
   updateSearchSuggestions();
@@ -576,6 +598,7 @@ signOutButton.addEventListener("click", async () => {
   } catch (error) {
     showToast(error.message);
   } finally {
+    clearAllFormDrafts();
     store.dispatch({
       type: "CLEAR_AUTH_CONTEXT",
       message: "Signed out"
@@ -651,7 +674,8 @@ function refreshDelayedOrderStatuses() {
     !state.session ||
     !state.client?.id ||
     state.platformAdmin ||
-    document.documentElement.dataset.filePickerActive === "true"
+    document.documentElement.dataset.filePickerActive === "true" ||
+    qsa('input[type="password"]', viewRoot).some((input) => input.value)
   ) return;
   store.dispatch({ type: "AUTO_UPDATE_DELAYED_ORDERS" });
 }
@@ -718,13 +742,16 @@ async function bootstrap() {
       });
     }
 
-    await onAuthStateChange(async ({ session, user }) => {
+    await onAuthStateChange(async ({ event, session, user }) => {
       if (isAuthFormFlowActive()) {
         return;
       }
 
       try {
         if (session) {
+          if (event === "PASSWORD_RECOVERY" && getHashRouteId() !== "reset-password") {
+            window.location.hash = "#/reset-password?recovery=1";
+          }
           const platformOverview = await tryLoadPlatformOverview();
 
           if (platformOverview) {

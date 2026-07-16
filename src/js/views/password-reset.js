@@ -1,4 +1,4 @@
-import { updateCurrentUserPassword } from "../services/auth.js";
+import { getAuthContext, signOut, updateCurrentUserPassword } from "../services/auth.js";
 import { activateCurrentMembership } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
@@ -11,8 +11,13 @@ function parseResetParams() {
 
   return {
     clientId: params.get("client") || "",
-    accountId: params.get("account") || ""
+    accountId: params.get("account") || "",
+    recovery: params.get("recovery") === "1"
   };
+}
+
+function isPasswordRecovery() {
+  return parseResetParams().recovery;
 }
 
 function findAccount(state, clientId, accountId) {
@@ -21,6 +26,14 @@ function findAccount(state, clientId, accountId) {
 
 function getSupabaseInviteClientId(state) {
   return state.user?.user_metadata?.client_id || state.client?.id || "";
+}
+
+function currentWorkspaceAccount(state) {
+  const email = String(state.user?.email || "").trim().toLowerCase();
+  return (state.accounts || []).find((account) => (
+    account.userId === state.user?.id ||
+    (email && String(account.email || "").trim().toLowerCase() === email)
+  )) || null;
 }
 
 function writeMessage(root, message, isError = false) {
@@ -32,7 +45,9 @@ function writeMessage(root, message, isError = false) {
 }
 
 function renderSupabaseReset({ state }) {
-  if (!state.session) {
+  const recovery = isPasswordRecovery();
+
+  if (!state.session && !recovery) {
     return `
       <section class="view">
         <section class="panel setup-card">
@@ -47,12 +62,17 @@ function renderSupabaseReset({ state }) {
   return `
     <section class="view">
       <section class="panel setup-card">
-        ${panelHeader("Create your password", "This is required before using the workspace")}
-        <div class="client-id-box">
-          <span class="eyebrow">${escapeHtml(state.user?.email || "Signed-in user")}</span>
-          <strong>${escapeHtml(state.client?.companyName || "Factory workspace")}</strong>
-        </div>
-        <form id="reset-password-form" class="form-grid" novalidate data-mode="supabase">
+        ${panelHeader(
+          recovery ? "Reset your password" : "Create your password",
+          recovery ? "Enter and confirm your new password" : "This is required before using the workspace"
+        )}
+        ${state.user?.email ? `
+          <div class="client-id-box">
+            <span class="eyebrow">${escapeHtml(state.user.email)}</span>
+            <strong>${escapeHtml(recovery ? "Secure password recovery" : state.client?.companyName || "Factory workspace")}</strong>
+          </div>
+        ` : ""}
+        <form id="reset-password-form" class="form-grid" novalidate data-mode="${recovery ? "recovery" : "supabase"}">
           <label class="field">
             <span>New password</span>
             <input name="newPassword" type="password" minlength="8" autocomplete="new-password" required>
@@ -63,10 +83,10 @@ function renderSupabaseReset({ state }) {
           </label>
           <span id="reset-password-message" class="muted span-full">Use 8+ characters with uppercase, lowercase, a number, and a symbol.</span>
           <div class="span-full split">
-            <span class="muted">You only need the temporary password once.</span>
+            <span class="muted">${recovery ? "Your reset link securely verifies this request." : "You only need the temporary password once."}</span>
             ${textButton({
               iconName: "check",
-              label: "Continue",
+              label: recovery ? "Reset password" : "Continue",
               className: "primary",
               type: "submit"
             })}
@@ -189,13 +209,31 @@ export function bindPasswordReset({ root, store }) {
     submitButton.disabled = true;
 
     try {
+      if (form.dataset.mode === "recovery") {
+        const authContext = await getAuthContext();
+        if (!authContext.session) {
+          writeMessage(root, "This password reset link has expired or has already been used. Request a new link and try again.", true);
+          return;
+        }
+
+        await updateCurrentUserPassword(newPassword);
+        try {
+          await signOut();
+        } finally {
+          store.dispatch({ type: "CLEAR_AUTH_CONTEXT" });
+          window.location.hash = "#/login?password-reset=success";
+        }
+        return;
+      }
+
       if (form.dataset.mode === "supabase") {
         const state = store.getState();
         const clientId = getSupabaseInviteClientId(state);
+        const requiresMembershipActivation = Boolean(currentWorkspaceAccount(state)?.passwordResetRequired);
 
         await updateCurrentUserPassword(newPassword);
 
-        if (clientId) {
+        if (clientId && requiresMembershipActivation) {
           const workspace = await activateCurrentMembership(clientId, newPassword);
           store.dispatch({
             type: "SET_WORKSPACE",

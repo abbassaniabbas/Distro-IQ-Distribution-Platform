@@ -3,13 +3,14 @@ import {
   getScopedAccounts,
   validateAccountForm
 } from "../services/tenant.js";
-import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus } from "../services/backend.js";
+import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus, setMembershipRole } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { formatDate } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { confirmActionDialog } from "../ui/action-dialog.js";
 
 let activeLoginDetailsModal = null;
 
@@ -53,12 +54,9 @@ export function buildLoginDetailsEmail({ client, invite, loginUrl } = {}) {
   const recipient = String(invite?.to || "").trim();
   const subject = `Your DistroIQ login for ${companyName}`;
   const body = [
-    `Hello,`,
-    "",
-    `Your DistroIQ account for ${companyName} is ready.`,
-    "",
+    `${companyName} DistroIQ login details`,
     `Sign-in page: ${String(loginUrl || "").trim()}`,
-    `Email: ${recipient}`,
+    `Sign-in email: ${recipient}`,
     `Temporary password: ${invite?.temporaryPassword || ""}`,
     `Role: ${roleLabel(invite?.role)}`,
     "",
@@ -71,7 +69,8 @@ export function buildLoginDetailsEmail({ client, invite, loginUrl } = {}) {
     subject,
     body,
     mailtoHref,
-    clipboardText: [`To: ${recipient}`, `Subject: ${subject}`, "", body].join("\n")
+    whatsappHref: `https://wa.me/?text=${encodeURIComponent(body)}`,
+    clipboardText: body
   };
 }
 
@@ -110,7 +109,7 @@ function showLoginDetailsModal({ client, invite }) {
 
   closeLoginDetailsModal();
 
-  const emailDetails = buildLoginDetailsEmail({
+  const loginDetails = buildLoginDetailsEmail({
     client,
     invite,
     loginUrl: appLoginUrl()
@@ -140,6 +139,10 @@ function showLoginDetailsModal({ client, invite }) {
           <span class="eyebrow">Temporary password</span>
           <code>${escapeHtml(invite.temporaryPassword)}</code>
         </div>
+        <div class="client-id-box span-full">
+          <span class="eyebrow">Sign-in page</span>
+          <code>${escapeHtml(appLoginUrl())}</code>
+        </div>
       </div>
 
       <div class="login-details-actions">
@@ -148,15 +151,16 @@ function showLoginDetailsModal({ client, invite }) {
           label: "Copy password",
           className: "js-modal-copy-password"
         })}
-        <a class="button primary js-modal-email-login-details" href="${escapeHtml(emailDetails.mailtoHref)}">
-          ${icon("mail")}
-          <span>Open email app</span>
-        </a>
         ${textButton({
           iconName: "check",
-          label: "Copy email details",
-          className: "js-modal-copy-email-details span-full"
+          label: "Copy details",
+          className: "primary js-modal-copy-login-details"
         })}
+        <button class="icon-button js-modal-share-login-details" type="button" title="Share login details" aria-label="Share login details">${icon("share")}</button>
+        <div class="login-details-share-options span-full" data-login-share-options hidden>
+          <a class="button" href="${escapeHtml(loginDetails.mailtoHref)}">${icon("mail")}<span>Mail</span></a>
+          <a class="button" href="${escapeHtml(loginDetails.whatsappHref)}" target="_blank" rel="noopener noreferrer">${icon("message")}<span>WhatsApp</span></a>
+        </div>
       </div>
       <span class="login-details-status" aria-live="polite"></span>
     </section>
@@ -182,19 +186,32 @@ function showLoginDetailsModal({ client, invite }) {
     );
   });
 
-  qs(".js-modal-copy-email-details", modal).addEventListener("click", (event) => {
+  qs(".js-modal-copy-login-details", modal).addEventListener("click", (event) => {
     copyTextToClipboard(
-      emailDetails.clipboardText,
+      loginDetails.clipboardText,
       qs(".login-details-status", modal),
       event.currentTarget,
-      "Email details copied. Paste them into any email app.",
-      "Email details copied"
+      "Login details copied.",
+      "Details copied"
     );
   });
 
-  qs(".js-modal-email-login-details", modal).addEventListener("click", () => {
+  qs(".js-modal-share-login-details", modal).addEventListener("click", async () => {
     const status = qs(".login-details-status", modal);
-    if (status) status.textContent = "Opening your email app...";
+    const fallbackOptions = qs("[data-login-share-options]", modal);
+
+    if (typeof navigator.share === "function") {
+      try {
+        await navigator.share({ title: loginDetails.subject, text: loginDetails.clipboardText });
+        if (status) status.textContent = "Login details shared.";
+        return;
+      } catch (error) {
+        if (error?.name === "AbortError") return;
+      }
+    }
+
+    fallbackOptions.hidden = false;
+    if (status) status.textContent = "Choose Mail or WhatsApp to share the login details.";
   });
 
   qs(".js-modal-copy-password", modal).focus();
@@ -258,6 +275,12 @@ function renderTeamAccountDetails(account, state) {
         <div><span>Password</span><strong>${account.passwordResetRequired ? "Change required" : "Password set"}</strong></div>
       </div>
       <div class="team-account-actions">
+        ${canDeleteAccount ? `
+          <div class="team-account-role-control">
+            <label class="field"><span>Staff role</span><select data-team-account-role>${renderRoleOptions().replace(`value="${escapeHtml(normalizeRole(account.role))}"`, `value="${escapeHtml(normalizeRole(account.role))}" selected`)}</select></label>
+            <button class="button js-set-team-account-role" type="button" data-account-id="${escapeHtml(account.id)}">${icon("check")}<span>Update role</span></button>
+          </div>
+        ` : ""}
         <button class="button ${isActive ? "" : "primary"} js-set-team-account-status" type="button" data-account-id="${escapeHtml(account.id)}" data-account-active="${isActive ? "false" : "true"}" ${isCurrentAccount ? "disabled" : ""}>
           ${icon(isActive ? "x" : "check")}<span>${isActive ? "Make inactive" : "Make active"}</span>
         </button>
@@ -390,9 +413,12 @@ export function bindTeam({ root, store, signal }) {
       const state = store.getState();
       const accountId = deleteButton.dataset.accountId;
       const accountName = deleteButton.dataset.accountName || "this staff member";
-      const confirmed = typeof window.confirm !== "function" || window.confirm(
-        `Delete ${accountName}'s account permanently? They will lose access and this action cannot be undone.`
-      );
+      const confirmed = await confirmActionDialog({
+        title: "Delete staff account?",
+        message: `Delete ${accountName}'s account permanently? They will lose access and this action cannot be undone.`,
+        confirmLabel: "Delete account",
+        tone: "danger"
+      });
       if (!confirmed) return;
 
       const message = qs("[data-team-account-message]", accountModal);
@@ -410,6 +436,37 @@ export function bindTeam({ root, store, signal }) {
       } catch (error) {
         if (message) message.textContent = error.message;
         deleteButton.disabled = false;
+      }
+      return;
+    }
+    const roleButton = event.target.closest?.(".js-set-team-account-role");
+    if (roleButton) {
+      if (roleButton.disabled) return;
+      const state = store.getState();
+      const accountId = roleButton.dataset.accountId;
+      const roleSelect = qs("[data-team-account-role]", accountModal);
+      const role = String(roleSelect?.value || "");
+      const account = getScopedAccounts(state).find((item) => item.id === accountId);
+      const message = qs("[data-team-account-message]", accountModal);
+      if (!account || !["sales_rep", "store_keeper", "admin"].includes(role)) return;
+      if (normalizeRole(account.role) === role) {
+        if (message) message.textContent = "Choose a different role before updating.";
+        return;
+      }
+
+      roleButton.disabled = true;
+      if (message) message.textContent = "Updating staff role...";
+      try {
+        if (isBackendConfigured()) {
+          const workspace = await setMembershipRole({ clientId: state.client.id, membershipId: accountId, role });
+          store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Staff role updated" });
+        } else {
+          store.dispatch({ type: "SET_ACCOUNT_ROLE", accountId, role, message: "Staff role updated" });
+        }
+        closeAccountModal();
+      } catch (error) {
+        if (message) message.textContent = error.message;
+        roleButton.disabled = false;
       }
       return;
     }
