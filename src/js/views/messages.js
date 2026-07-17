@@ -63,6 +63,39 @@ function latestTimestamp(message) {
   return Number.isFinite(timestamp) ? timestamp : 0;
 }
 
+function broadcastDisplayKey(message) {
+  const timestamp = latestTimestamp(message);
+  const createdSecond = timestamp ? Math.floor(timestamp / 1000) : String(message.id || "");
+  return [
+    message.fromAccountId || message.fromUserId || message.fromEmail || "sender",
+    message.body || "",
+    createdSecond
+  ].join("|");
+}
+
+function consolidateSentBroadcasts(messages) {
+  const broadcasts = new Map();
+
+  messages.forEach((message) => {
+    const key = broadcastDisplayKey(message);
+    const existing = broadcasts.get(key);
+    if (existing) {
+      existing.recipientCount += 1;
+      return;
+    }
+
+    broadcasts.set(key, {
+      ...message,
+      toName: "All staff",
+      toEmail: "",
+      toRole: "",
+      recipientCount: 1
+    });
+  });
+
+  return [...broadcasts.values()];
+}
+
 function buildConversations(state) {
   const history = combinedMessages(state);
   const direct = messageRecipients(state)
@@ -83,10 +116,12 @@ function buildConversations(state) {
       String(a.account.name || a.account.email).localeCompare(String(b.account.name || b.account.email))
     ));
 
-  const allStaffMessages = sentMessages(state)
-    .filter((message) => message.audience === "all_staff")
-    .map((message) => ({ ...message, direction: "sent" }))
-    .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0));
+  const allStaffMessages = consolidateSentBroadcasts(
+    sentMessages(state)
+      .filter((message) => message.audience === "all_staff")
+      .map((message) => ({ ...message, direction: "sent" }))
+      .sort((a, b) => new Date(a.createdAt || 0) - new Date(b.createdAt || 0))
+  );
   const allStaff = canSendToAllStaff(state) && direct.length
     ? {
         id: "__all_staff__",
@@ -181,6 +216,7 @@ function messageBubble(message) {
       data-search-index="${escapeHtml(`${message.body} ${message.fromName} ${message.toName}`.toLowerCase())}"
     >
       <div class="message-bubble-body">
+        ${isSent && message.audience === "all_staff" ? '<span class="message-broadcast-label">To: All staff</span>' : ""}
         <p>${escapeHtml(message.body)}</p>
         <time>${escapeHtml(relativeTime(message.createdAt))}</time>
       </div>

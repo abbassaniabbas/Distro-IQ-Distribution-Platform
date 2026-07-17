@@ -19,6 +19,7 @@ import { renderDashboard } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
+import { renderMessages } from "../src/js/views/messages.js";
 import { renderOrders } from "../src/js/views/orders.js";
 import { renderPasswordReset } from "../src/js/views/password-reset.js";
 import { renderCustomerDetails, renderRetailers } from "../src/js/views/retailers.js";
@@ -128,6 +129,29 @@ function authenticate(userId) {
 
 authenticate("user-manager");
 assert.equal(currentUserRole(store.getState()), "ceo", "legacy Manager memberships must be absorbed into CEO access");
+globalThis.window.location.hash = "#/messages?with=__all_staff__";
+const broadcastBody = "Company-wide stock review at 4 PM";
+const broadcastMessagesHtml = renderMessages({
+  state: {
+    ...store.getState(),
+    messages: ["membership-rep", "membership-store"].map((toAccountId, index) => ({
+      id: `broadcast-copy-${index}`,
+      clientId: client.id,
+      fromAccountId: "membership-manager",
+      fromUserId: "user-manager",
+      fromName: "Musa Manager",
+      fromEmail: "musa@example.com",
+      toAccountId,
+      toName: index ? "Tola Store" : "Amina Rep",
+      body: broadcastBody,
+      audience: "all_staff",
+      createdAt: "2026-07-17T09:00:00.000Z"
+    }))
+  }
+});
+assert.equal((broadcastMessagesHtml.match(new RegExp(`<p>${broadcastBody}<\\/p>`, "g")) || []).length, 1, "sender must see one bubble for an all-staff broadcast");
+assert.match(broadcastMessagesHtml, /message-broadcast-label">To: All staff</);
+globalThis.window.location.hash = "#/dashboard";
 assert.equal(currentUserPermissions(store.getState()).canAssignStock, true);
 assert.equal(currentUserPermissions(store.getState()).canReconcileStock, true);
 assert.equal(currentUserPermissions(store.getState()).canLogSalesReturns, true);

@@ -4840,6 +4840,17 @@
   line-height: 1.45;
 }
 
+.message-broadcast-label {
+  display: block;
+  margin-bottom: 5px;
+  color: currentColor;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  opacity: 0.72;
+  text-transform: uppercase;
+}
+
 .message-bubble-body time {
   color: var(--muted);
   font-size: 0.7rem;
