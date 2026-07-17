@@ -98,7 +98,7 @@ export function generateTemporaryPassword() {
   return `Distro-${passwordBody}!`;
 }
 
-export function createAccountInvite({ client, name, email, phoneNumber, role }) {
+export function createAccountInvite({ client, name, email, phoneNumber, role, staffImageUrl = "" }) {
   const accountId = createId("USR");
   const temporaryPassword = generateTemporaryPassword();
   const normalizedEmail = email.trim().toLowerCase();
@@ -110,6 +110,7 @@ export function createAccountInvite({ client, name, email, phoneNumber, role }) 
     name: displayName,
     email: normalizedEmail,
     phoneNumber: String(phoneNumber || "").trim(),
+    staffImageUrl: String(staffImageUrl || "").trim(),
     role,
     status: "invited",
     temporaryPassword,

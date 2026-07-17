@@ -7,6 +7,7 @@ import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
+import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
@@ -410,7 +411,7 @@ function updateTopbarUtilities(state, view) {
 
   const account = accountForCurrentUser(state);
   const userMeta = state.user?.user_metadata || {};
-  const avatarUrl = userMeta.avatar_url || userMeta.picture || "";
+  const avatarUrl = account?.staffImageUrl || userMeta.avatar_url || userMeta.picture || "";
   const profileName = account?.name || userMeta.full_name || state.user?.email || "DistroIQ user";
   const profileRole = state.platformAdmin ? "Super Admin" : account?.role ? roleLabel(account.role) : "Team member";
 
@@ -677,6 +678,13 @@ function refreshDelayedOrderStatuses() {
     document.documentElement.dataset.filePickerActive === "true" ||
     qsa('input[type="password"]', viewRoot).some((input) => input.value)
   ) return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  const hasNewDelay = hasOrdersRequiringAutomaticDelay(state.orders, today);
+
+  // Returning to the browser tab must not rebuild the active page unless an
+  // order genuinely crossed its expected delivery date.
+  if (!hasNewDelay) return;
   store.dispatch({ type: "AUTO_UPDATE_DELAYED_ORDERS" });
 }
 
@@ -708,6 +716,7 @@ async function bootstrap() {
   });
 
   if (!isBackendConfigured()) {
+    await hydrateWorkspaceProductImages();
     return;
   }
 
@@ -744,6 +753,27 @@ async function bootstrap() {
 
     await onAuthStateChange(async ({ event, session, user }) => {
       if (isAuthFormFlowActive()) {
+        return;
+      }
+
+      const currentState = store.getState();
+      const currentUserId = String(currentState.user?.id || "");
+      const incomingUserId = String(user?.id || "");
+      const sameAuthenticatedUser = Boolean(
+        currentState.session &&
+        currentUserId &&
+        incomingUserId &&
+        currentUserId === incomingUserId
+      );
+
+      // Supabase can repeat these session events when a background tab becomes
+      // active. The token remains managed by Supabase, so avoid reloading the
+      // workspace and destroying open modals or unfinished fields.
+      if (
+        session &&
+        sameAuthenticatedUser &&
+        ["INITIAL_SESSION", "SIGNED_IN", "TOKEN_REFRESHED"].includes(event)
+      ) {
         return;
       }
 

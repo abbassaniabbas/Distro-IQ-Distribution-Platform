@@ -25,9 +25,11 @@ import {
 import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js";
 import { enabledPackagingTypes, packagingDefaults, PACKAGING_OPTIONS } from "../services/packaging.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
+import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
+import { renderStaffAvatar } from "../ui/staff-avatar.js";
 import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
 
 function getCurrentAccount(state) {
@@ -288,6 +290,16 @@ function renderProfileSettings(state, account) {
     <section class="panel">
       ${panelHeader("My profile", "")}
       <form id="profile-settings-form" class="form-grid" novalidate>
+        <div class="span-full staff-image-upload">
+          ${renderStaffAvatar({ name, staffImageUrl: account?.staffImageUrl }, "staff-image-preview")}
+          <div class="staff-image-upload-controls">
+            <label class="field">
+              <span>Staff image (optional)</span>
+              <input id="profile-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}">
+            </label>
+            <button class="button subtle" type="button" data-clear-profile-image ${account?.staffImageUrl ? "" : "hidden"}>${icon("x")}<span>Remove image</span></button>
+          </div>
+        </div>
         <label class="field">
           <span>Full name</span>
           <input name="name" autocomplete="name" value="${escapeHtml(name)}">
@@ -481,6 +493,49 @@ export function bindSettings({ root, store }) {
   const passwordModal = qs("#password-settings-modal", root);
   const deleteFactoryModal = qs("#delete-factory-modal", root);
   const logoUpload = companyForm ? bindCompanyLogoUpload({ root, form: companyForm, state }) : null;
+  const currentAccount = getCurrentAccount(state);
+  const profileImageInput = qs("#profile-staff-image", profileForm || root);
+  const profileImagePreview = qs(".staff-image-preview", profileForm || root);
+  const clearProfileImageButton = qs("[data-clear-profile-image]", profileForm || root);
+  let profileStaffImageUrl = String(currentAccount?.staffImageUrl || "");
+
+  function updateProfileImagePreview() {
+    if (!profileImagePreview) return;
+    profileImagePreview.innerHTML = profileStaffImageUrl
+      ? `<img src="${escapeHtml(profileStaffImageUrl)}" alt="Profile image preview">`
+      : escapeHtml(String(profileForm?.elements.name?.value || currentAccount?.name || "ST").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase());
+    if (clearProfileImageButton) clearProfileImageButton.hidden = !profileStaffImageUrl;
+  }
+
+  profileImageInput?.addEventListener("change", async () => {
+    const file = profileImageInput.files?.[0];
+    const message = qs("#profile-settings-message", profileForm);
+    if (message) message.textContent = "";
+    if (!file) return;
+    const error = validateStaffImageFile(file);
+    if (error) {
+      if (message) message.textContent = error;
+      profileImageInput.value = "";
+      return;
+    }
+    try {
+      profileStaffImageUrl = await readStaffImage(file);
+      updateProfileImagePreview();
+    } catch (readError) {
+      if (message) message.textContent = readError.message;
+      profileImageInput.value = "";
+    }
+  });
+
+  clearProfileImageButton?.addEventListener("click", () => {
+    profileStaffImageUrl = "";
+    if (profileImageInput) profileImageInput.value = "";
+    updateProfileImagePreview();
+  });
+
+  profileForm?.elements.name?.addEventListener("input", () => {
+    if (!profileStaffImageUrl) updateProfileImagePreview();
+  });
 
   packagingForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -669,7 +724,7 @@ export function bindSettings({ root, store }) {
   profileForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const currentState = store.getState();
-    const values = readProfileForm(profileForm);
+    const values = { ...readProfileForm(profileForm), staffImageUrl: profileStaffImageUrl };
     const message = qs("#profile-settings-message", profileForm);
     const submitButton = qs('button[type="submit"]', profileForm);
 
@@ -692,12 +747,14 @@ export function bindSettings({ root, store }) {
     try {
       if (isBackendConfigured()) {
         await updateCurrentUserProfile({
-          name: values.name
+          name: values.name,
+          staffImageUrl: values.staffImageUrl
         });
         const workspace = await updateMyMembershipProfile({
           clientId: currentState.client.id,
           name: values.name,
-          phoneNumber: values.phoneNumber
+          phoneNumber: values.phoneNumber,
+          staffImageUrl: values.staffImageUrl
         });
         store.dispatch({
           type: "SET_WORKSPACE",
@@ -709,6 +766,7 @@ export function bindSettings({ root, store }) {
           type: "UPDATE_MY_PROFILE",
           name: values.name,
           phoneNumber: values.phoneNumber,
+          staffImageUrl: values.staffImageUrl,
           message: "Profile updated"
         });
       }

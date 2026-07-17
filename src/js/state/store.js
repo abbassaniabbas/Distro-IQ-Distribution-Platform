@@ -1121,7 +1121,8 @@ function reducer(currentState, action) {
               ...state.user,
               user_metadata: {
                 ...(state.user.user_metadata || {}),
-                full_name: action.name
+                full_name: action.name,
+                avatar_url: String(action.staffImageUrl ?? state.user.user_metadata?.avatar_url ?? "")
               }
             }
           : state.user,
@@ -1130,7 +1131,8 @@ function reducer(currentState, action) {
             ? {
                 ...account,
                 name: action.name,
-                phoneNumber: String(action.phoneNumber || account.phoneNumber || "")
+                phoneNumber: String(action.phoneNumber || account.phoneNumber || ""),
+                staffImageUrl: String(action.staffImageUrl ?? account.staffImageUrl ?? "")
               }
             : account
         )

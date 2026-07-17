@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 
-import { effectiveOrderStatus, getCustomerOrderCompletion, getFinancialSalesLines, getReturnableCustomerChoices } from "../src/js/services/calculations.js";
+import { effectiveOrderStatus, getCustomerOrderCompletion, getFinancialSalesLines, getReturnableCustomerChoices, hasOrdersRequiringAutomaticDelay } from "../src/js/services/calculations.js";
 import { getNigeriaLgas, NIGERIA_STATES_AND_LGAS, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../src/js/data/nigeria-locations.js";
 import { buildInvoiceDocument, buildInvoicePreviewContent, buildInvoiceQuickViewMarkup, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../src/js/services/packaging.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { nextFormattedId } from "../src/js/services/tenant.js";
+import { classifyAppFailure } from "../src/js/services/error-classification.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { REQUIRED_FORM_ALERT_MESSAGE } from "../src/js/ui/form-validation.js";
@@ -26,6 +27,7 @@ import { buildLoginDetailsEmail } from "../src/js/views/team.js";
 import { renderTeam } from "../src/js/views/team.js";
 
 globalThis.window = { location: { hash: "#/dashboard" } };
+const currentTestDate = new Date().toISOString().slice(0, 10);
 const browserStorage = new Map();
 globalThis.localStorage = {
   getItem(key) { return browserStorage.get(key) || null; },
@@ -69,9 +71,17 @@ assert.doesNotMatch(loginHtml, /value="accountant"|>Accountant</, "the removed A
 const backendErrorHtml = renderBackendSetup({ state: { backend: { error: "Temporary connection error" } } });
 assert.match(backendErrorHtml, /data-retry-workspace="true"/);
 assert.match(backendErrorHtml, /Try again/);
-assert.match(backendErrorHtml, /No connection/);
-assert.match(backendErrorHtml, /Check your connection and try again/);
+assert.match(backendErrorHtml, /Network error/);
+assert.match(backendErrorHtml, /Connection problem/);
 assert.doesNotMatch(backendErrorHtml, /Setup required|company sign-in|workspace connection|What to do next|project README/);
+const databaseErrorHtml = renderBackendSetup({ state: { backend: { configured: true, error: "column memberships.staff_image_url does not exist" } } });
+assert.match(databaseErrorHtml, /Database error/);
+assert.match(databaseErrorHtml, /Database update required/);
+assert.match(databaseErrorHtml, /staff_image_url/);
+assert.equal(classifyAppFailure({ configured: true, error: "Invalid API key", online: true }).category, "configuration");
+assert.equal(classifyAppFailure({ configured: true, error: "Failed to send a request to the Edge Function", online: true }).category, "backend");
+assert.equal(classifyAppFailure({ configured: true, error: "Auth session expired", online: true }).category, "authentication");
+assert.equal(classifyAppFailure({ configured: true, error: "Failed to fetch", online: false }).category, "network");
 const passwordSetupHtml = renderPasswordReset({ state: { session: { user: { id: "password-user" } }, user: { email: "password@example.com" }, client: { companyName: "Test Factory" } } });
 assert.match(passwordSetupHtml, /minlength="8"/);
 assert.match(passwordSetupHtml, /Use 8\+ characters/);
@@ -136,6 +146,7 @@ assert.doesNotMatch(managerSettings, /Saved delivery note preview/);
 assert.match(managerSettings, /data-open-password-modal/);
 assert.match(managerSettings, /name="oldPassword"/);
 assert.match(managerSettings, /data-open-delete-factory/);
+assert.match(managerSettings, /id="profile-staff-image"[^>]+type="file"/, "profile settings must accept an optional staff image");
 const managerTeam = renderTeam({ state: store.getState() });
 assert.doesNotMatch(managerTeam, /<option value="ceo">/, "CEO must not be assignable as a staff role");
 assert.doesNotMatch(managerTeam, /<option value="manager">/);
@@ -145,7 +156,18 @@ assert.match(managerTeam, /data-team-account-id="membership-rep"/);
 assert.match(managerTeam, /team-account-modal/);
 assert.match(managerTeam, /Add Staff/);
 assert.match(managerTeam, /Create staff/);
+assert.match(managerTeam, /id="new-staff-image"[^>]+type="file"/, "staff creation must accept an optional staff image");
 assert.doesNotMatch(managerTeam, /Team access/);
+const staffImageFixture = "data:image/jpeg;base64,STAFF_IMAGE_FIXTURE";
+store.dispatch({
+  type: "UPDATE_MY_PROFILE",
+  name: "Musa Manager",
+  phoneNumber: "08000000001",
+  staffImageUrl: staffImageFixture
+});
+assert.equal(store.getState().accounts.find((account) => account.userId === "user-manager").staffImageUrl, staffImageFixture, "profile images must persist on the membership");
+assert.match(renderSettings({ state: store.getState() }), /staff-image-preview[\s\S]*STAFF_IMAGE_FIXTURE/, "saved profile images must render in profile settings");
+assert.match(renderTeam({ state: store.getState() }), /team-member-avatar[\s\S]*STAFF_IMAGE_FIXTURE/, "saved staff images must render in the staff list");
 store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId: "membership-rep", active: false });
 assert.equal(store.getState().accounts.find((account) => account.id === "membership-rep").status, "disabled");
 store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId: "membership-rep", active: true });
@@ -165,6 +187,7 @@ store.dispatch({
   reorderPoint: 10,
   unitCost: 200,
   unitPrice: 500,
+  packagingConversions: { carton: 10, pack: 5 },
   status: "active"
 });
 store.dispatch({
@@ -216,7 +239,7 @@ store.dispatch({
   recipientType: "Sales Representative",
   recipientName: "Amina Rep",
   destination: "Route A",
-  dispatchDate: "2026-07-10",
+  dispatchDate: currentTestDate,
   expectedDeliveryAt: "2099-07-11",
   staffName: "Musa Manager"
 });
@@ -298,7 +321,7 @@ store.dispatch({
   recipientType: "Sales Representative",
   recipientName: "Amina Rep",
   destination: "Route A",
-  dispatchDate: "2026-07-10",
+  dispatchDate: currentTestDate,
   expectedDeliveryAt: "2099-07-11",
   staffName: "Musa Manager"
 });
@@ -486,6 +509,7 @@ authenticate("user-store");
 globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
+assert.doesNotMatch(storeKeeperInventory, /<dt>Region<\/dt>/, "stock product details must not show Region");
 assert.match(storeKeeperInventory, /name="sku" value="SKU-\d+" readonly/, "new products must receive an automatic SKU");
 assert.match(storeKeeperInventory, /field stock-sku-field/, "SKU field must have its own spacing hook");
 assert.match(storeKeeperInventory, /name="productType"/);
@@ -494,6 +518,19 @@ assert.match(storeKeeperInventory, /name="sizeUnit" aria-label="Product size uni
 assert.match(storeKeeperInventory, /name="sizeUnitOther"[^>]+hidden/);
 assert.match(storeKeeperInventory, /name="packagingConversion-carton"/, "products must record pieces per configured bulk package");
 assert.doesNotMatch(storeKeeperInventory, /name="packagingConversion-carton"[^>]+value="10"/, "new stock must require its own package quantity instead of inheriting a factory default");
+assert.match(storeKeeperInventory, /name="stockEntryMode"/);
+assert.match(storeKeeperInventory, /value="package">Package<\/option>/);
+assert.match(storeKeeperInventory, /value="piece">Pieces<\/option>/);
+assert.match(storeKeeperInventory, /name="stockPackagingType"/);
+assert.match(storeKeeperInventory, /data-stock-piece-total/);
+assert.equal((storeKeeperInventory.match(/data-stock-form-step="/g) || []).length, 3, "Add Stock must use three simple steps");
+assert.match(storeKeeperInventory, /data-stock-form-step="1"[\s\S]*Product name[\s\S]*Product type[\s\S]*Product size[\s\S]*SKU[\s\S]*Category/);
+assert.match(storeKeeperInventory, /data-stock-form-step="2"[\s\S]*Factory stock[\s\S]*Enter stock as[\s\S]*Package type[\s\S]*Reorder point[\s\S]*Cost price per piece[\s\S]*Selling price per piece[\s\S]*Package contents and selling prices/);
+assert.match(storeKeeperInventory, /data-stock-form-step="3"[\s\S]*Catalogue status[\s\S]*Stock picture/);
+assert.match(storeKeeperInventory, /data-stock-step-previous hidden/);
+assert.match(storeKeeperInventory, /data-stock-step-next/);
+assert.match(storeKeeperInventory, /data-stock-step-save hidden/);
+assert.doesNotMatch(storeKeeperInventory, /js-clear-product-form/);
 assert.equal((storeKeeperInventory.match(/<select name="sizeUnit"[\s\S]*?<\/select>/)?.[0].match(/<option /g) || []).length, 5, "product-size unit dropdown must not exceed five options");
 assert.match(storeKeeperInventory, /data-affiliated-product-progress/);
 assert.match(storeKeeperInventory, /js-add-affiliated-product/);
@@ -504,6 +541,60 @@ assert.doesNotMatch(storeKeeperInventory, /name="variantSku"/);
 assert.match(storeKeeperInventory, /<th>Product type<\/th>/);
 assert.match(storeKeeperInventory, /<th>Size<\/th>/);
 assert.match(storeKeeperInventory, /toolbar stock-health-toolbar/);
+assert.match(storeKeeperInventory, /data-stock-view="list"/, "Stock Health must offer a list view");
+assert.match(storeKeeperInventory, /data-stock-view="grid"/, "Stock Health must offer a grid view");
+assert.match(storeKeeperInventory, /data-stock-view-panel="list"/, "Stock Health must render its list panel");
+assert.match(storeKeeperInventory, /data-stock-view-panel="grid"/, "Stock Health must render its grid panel");
+assert.match(storeKeeperInventory, /stock-health-grid-card/, "the grid view must show product cards with full images");
+assert.match(storeKeeperInventory, /data-open-stock-product/, "stock rows and cards must open product details from their main surface");
+assert.match(storeKeeperInventory, /id="stock-product-details-modal"/, "Stock Health must provide a product details modal");
+assert.match(storeKeeperInventory, /id="stock-product-details-content"/, "the product details modal must have dynamic product content");
+const cartonStockInventory = renderInventory({
+  state: {
+    ...store.getState(),
+    products: [{
+      id: "SKU-CARTON-VIEW",
+      name: "Carton View Product",
+      productType: "Original",
+      size: "150g",
+      category: "Finished Products",
+      stockCategory: "finished_products",
+      unit: "piece",
+      warehouse: "Finished Products Store",
+      region: "Factory",
+      stock: 1440,
+      reorderPoint: 25,
+      dailyVelocity: 0,
+      unitCost: 100,
+      unitPrice: 200,
+      packagingConversions: { carton: 24 },
+      packagingPrices: { carton: 4500 },
+      status: "active"
+    }]
+  }
+});
+assert.match(cartonStockInventory, /data-grid-stock-unit="carton"[\s\S]*60 cartons/, "grid cards must prefer full-carton availability over pieces");
+const belowCartonStockInventory = renderInventory({
+  state: {
+    ...store.getState(),
+    products: [{
+      id: "SKU-LOOSE-VIEW",
+      name: "Loose Piece Product",
+      category: "Finished Products",
+      stockCategory: "finished_products",
+      unit: "piece",
+      stock: 23,
+      reorderPoint: 10,
+      dailyVelocity: 0,
+      unitCost: 100,
+      unitPrice: 200,
+      packagingConversions: { carton: 24 },
+      packagingPrices: { carton: 4500 },
+      status: "active"
+    }]
+  }
+});
+assert.match(belowCartonStockInventory, /data-grid-stock-unit="piece"[\s\S]*23 pieces/, "grid cards must fall back to pieces below one complete carton");
 globalThis.window.location.hash = "#/inventory?tab=dispatch";
 const defaultDispatchForm = renderInventory({ state: store.getState() });
 const defaultDispatchDate = defaultDispatchForm.match(/name="dispatchDate"[^>]+value="([^"]+)"/)?.[1];
@@ -514,6 +605,8 @@ assert.match(defaultDispatchForm, /name="dispatchPackagingType"/, "factory dispa
 assert.match(storeKeeperInventory, /field stock-health-type-filter/);
 
 assert.equal(effectiveOrderStatus({ status: "in_transit", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delayed");
+assert.equal(hasOrdersRequiringAutomaticDelay([{ status: "in_transit", expectedDeliveryAt: "2026-07-01" }], "2026-07-11"), true);
+assert.equal(hasOrdersRequiringAutomaticDelay([{ status: "in_transit", expectedDeliveryAt: "2099-07-01" }], "2026-07-11"), false, "tab focus must not rebuild the page when no order newly became delayed");
 assert.equal(effectiveOrderStatus({ status: "delivered", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delivered");
 assert.equal(
   effectiveOrderStatus({ source: "quick_sale", status: "in_transit", dueAt: "2026-07-01" }, "2026-07-11"),
@@ -662,6 +755,7 @@ assert.doesNotMatch(ceoDashboard, /Business pulse/);
 assert.doesNotMatch(ceoDashboard, /Customer ratings/);
 assert.doesNotMatch(ceoDashboard, /Leadership drilldown/);
 assert.doesNotMatch(ceoDashboard, /data-ceo-drilldown/);
+assert.match(ceoDashboard, /dashboard-stock-quantity/, "CEO factory stock figures must include piece and package quantities");
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
@@ -937,7 +1031,8 @@ store.dispatch({
     name: "Security Test",
     email: "security-test@example.com",
     phoneNumber: "08000000000",
-    role: "sales_rep"
+    role: "sales_rep",
+    staffImageUrl: staffImageFixture
   }
 });
 const temporaryPassword = store.getState().invites.find((invite) => invite.to === "security-test@example.com")?.temporaryPassword;
@@ -947,6 +1042,7 @@ assert.ok(
   "temporary passwords must never be persisted in browser storage"
 );
 const securityAccount = store.getState().accounts.find((account) => account.email === "security-test@example.com");
+assert.equal(securityAccount.staffImageUrl, staffImageFixture, "new staff accounts must retain their optional image");
 store.dispatch({ type: "DELETE_ACCOUNT", accountId: securityAccount.id });
 assert.equal(store.getState().accounts.some((account) => account.id === securityAccount.id), false, "CEO must be able to delete a staff account");
 store.dispatch({ type: "DELETE_ACCOUNT", accountId: "membership-ceo" });
@@ -1032,6 +1128,9 @@ assert.match(productSizeDashboard, /Available in factory/);
 assert.match(productSizeDashboard, /Dispatched today/);
 assert.match(productSizeDashboard, /Stock with sales reps/);
 assert.match(productSizeDashboard, /data-size-rep-stock=/);
+assert.match(productSizeDashboard, /data-size-available-packages=/);
+assert.match(productSizeDashboard, /data-size-detail-available-packages/);
+assert.match(productSizeDashboard, /pieces[\s\S]*(?:cartons|packs)/, "configured package equivalents must appear alongside CEO stock pieces");
 assert.doesNotMatch(productSizeDashboard, /This month/);
 assert.doesNotMatch(productSizeDashboard, /This year/);
 

@@ -609,6 +609,13 @@ export function effectiveOrderStatus(order, today = new Date().toISOString().sli
   return status;
 }
 
+export function hasOrdersRequiringAutomaticDelay(orders = [], today = new Date().toISOString().slice(0, 10)) {
+  return orders.some((order) => (
+    String(order?.status || "").toLowerCase() === "in_transit" &&
+    effectiveOrderStatus(order, today) === "delayed"
+  ));
+}
+
 export function buildOrderStatusSummary(orders) {
   return orders.reduce((summary, order) => {
     const status = effectiveOrderStatus(order);

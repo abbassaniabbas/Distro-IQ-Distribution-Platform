@@ -71,15 +71,18 @@ export async function restoreProductImages(clientId, products = []) {
     try {
       let imageStorageKey = String(product.imageStorageKey || "").trim();
       let imageUrl = String(product.imageUrl || "");
+      const canonicalStorageKey = storageKey(clientId, product.id);
 
       if (imageUrl.startsWith("data:image/") && !imageStorageKey) {
         imageStorageKey = await saveProductImage({ clientId, productId: product.id, dataUrl: imageUrl });
-      } else if (!imageUrl && imageStorageKey) {
-        const record = await runImageRequest("readonly", (store) => store.get(imageStorageKey));
+      } else if (!imageUrl && (imageStorageKey || canonicalStorageKey)) {
+        const restoreKey = imageStorageKey || canonicalStorageKey;
+        const record = await runImageRequest("readonly", (store) => store.get(restoreKey));
         imageUrl = String(record?.dataUrl || "");
+        if (imageUrl) imageStorageKey = restoreKey;
       }
 
-      if (imageUrl || imageStorageKey) {
+      if (imageUrl) {
         restored.push({ productId: product.id, imageUrl, imageStorageKey });
       }
     } catch {

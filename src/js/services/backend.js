@@ -3,6 +3,8 @@ import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
 
 const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, sku_format, invoice_format, packaging_types, packaging_defaults, created_at)";
 const CLIENT_SELECT_LEGACY = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, timezone, currency, currency_symbol, created_at)";
+const ACCOUNT_SELECT_WITH_IMAGE = "id, client_id, user_id, email, phone_number, staff_image_url, name, role, status, password_reset_required, created_at";
+const ACCOUNT_SELECT_LEGACY = "id, client_id, user_id, email, phone_number, name, role, status, password_reset_required, created_at";
 
 function mapClient(row) {
   if (!row) return null;
@@ -33,6 +35,7 @@ function mapAccount(row) {
     name: row.name,
     email: row.email,
     phoneNumber: row.phone_number || "",
+    staffImageUrl: row.staff_image_url || "",
     role: row.role,
     status: row.status,
     temporaryPassword: "",
@@ -322,6 +325,21 @@ async function loadMembershipRows(supabase, userId) {
   return query(CLIENT_SELECT_LEGACY);
 }
 
+async function loadWorkspaceAccountRows(supabase, clientId) {
+  const query = (selectList) => supabase
+    .from("memberships")
+    .select(selectList)
+    .eq("client_id", clientId)
+    .order("created_at", { ascending: false });
+
+  const result = await query(ACCOUNT_SELECT_WITH_IMAGE);
+  if (!result.error || !isSchemaCacheError(result.error, "staff_image_url")) return result;
+
+  // Older workspaces can open while the optional staff-image migration is
+  // pending. Accounts simply render without a photo until the column exists.
+  return query(ACCOUNT_SELECT_LEGACY);
+}
+
 async function recordWorkspaceActivity({ clientId, actionType, recordType, recordLabel = "", summary }) {
   if (!clientId) return;
 
@@ -399,11 +417,7 @@ export async function loadWorkspace() {
     { data: packagingRequestRows, error: packagingRequestError },
     { data: messageRows, error: messageError }
   ] = await Promise.all([
-    supabase
-      .from("memberships")
-      .select("id, client_id, user_id, email, phone_number, name, role, status, password_reset_required, created_at")
-      .eq("client_id", client.id)
-      .order("created_at", { ascending: false }),
+    loadWorkspaceAccountRows(supabase, client.id),
     supabase
       .from("invites")
       .select("id, client_id, membership_id, email, role, subject, redirect_to, status, created_at")
@@ -741,14 +755,15 @@ export async function deleteWorkspace({ clientId }) {
   }
 }
 
-export async function updateMyMembershipProfile({ clientId, name, phoneNumber }) {
+export async function updateMyMembershipProfile({ clientId, name, phoneNumber, staffImageUrl = "" }) {
   throwIfBackendMissing();
 
   const supabase = await getSupabaseClient();
   const { error } = await supabase.rpc("update_my_membership_profile", {
     p_client_id: clientId,
     p_name: name.trim(),
-    p_phone_number: String(phoneNumber || "").trim()
+    p_phone_number: String(phoneNumber || "").trim(),
+    p_staff_image_url: String(staffImageUrl || "")
   });
 
   if (error) {
@@ -766,7 +781,7 @@ export async function updateMyMembershipProfile({ clientId, name, phoneNumber })
   return loadWorkspace();
 }
 
-export async function inviteAccount({ client, name, email, phoneNumber, role }) {
+export async function inviteAccount({ client, name, email, phoneNumber, role, staffImageUrl = "" }) {
   throwIfBackendMissing();
 
   const supabase = await getSupabaseClient();
@@ -807,15 +822,31 @@ export async function inviteAccount({ client, name, email, phoneNumber, role }) 
     summary: `Created temporary access for ${name.trim()}`
   });
 
-  const workspace = await loadWorkspace();
+  let workspace = await loadWorkspace();
   const temporaryPassword = data?.temporaryPassword || "";
 
   if (!temporaryPassword) {
     throw new Error("The invite service did not return a temporary password. Deploy the updated invite-user function, then try again.");
   }
 
+  let staffImageWarning = "";
+  const createdAccount = workspace.accounts.find((account) => account.email === normalizedEmail);
+  if (staffImageUrl && createdAccount?.id) {
+    const { error: staffImageError } = await supabase.rpc("set_membership_staff_image", {
+      p_client_id: client.id,
+      p_membership_id: createdAccount.id,
+      p_staff_image_url: String(staffImageUrl)
+    });
+    if (staffImageError) {
+      staffImageWarning = "Staff access was created, but the profile image could not be saved.";
+    } else {
+      workspace = await loadWorkspace();
+    }
+  }
+
   return {
     ...workspace,
+    staffImageWarning,
     accounts: workspace.accounts.map((account) => (
       account.email === normalizedEmail
         ? { ...account, temporaryPassword }

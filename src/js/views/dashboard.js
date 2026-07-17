@@ -1153,15 +1153,77 @@ function dailyProductMovementRows(state) {
     .sort((a, b) => productFamilyLabel(a.product).localeCompare(productFamilyLabel(b.product)) || productTypeLabel(a.product).localeCompare(productTypeLabel(b.product)) || productSizeLabel(a.product).localeCompare(productSizeLabel(b.product)));
 }
 
+function dashboardPackagingTypes(product) {
+  const savedTypes = Object.entries(product?.packagingConversions || {})
+    .filter(([, pieces]) => Number(pieces || 0) > 0)
+    .map(([type]) => type);
+
+  return [...new Set(savedTypes)]
+    .filter((type) => type !== "piece")
+    .sort((a, b) => Number(b === "carton") - Number(a === "carton"));
+}
+
+function packageQuantityLabel(state, product, pieces) {
+  const exactPieces = Math.max(0, Number(pieces || 0));
+  const types = dashboardPackagingTypes(product);
+
+  if (!types.length) return "Package conversion not set";
+
+  return types.map((type) => {
+    const piecesPerPackage = quantityInPieces(product, 1, type, state.client);
+    const packageCount = piecesPerPackage > 0 ? Math.floor(exactPieces / piecesPerPackage) : 0;
+    const loosePieces = piecesPerPackage > 0 ? exactPieces - (packageCount * piecesPerPackage) : exactPieces;
+    const option = packagingOption(type);
+    const packageName = packageCount === 1 ? option.singular : option.label.toLowerCase();
+
+    if (!packageCount && loosePieces) {
+      return `Below 1 ${option.singular} · ${formatNumber(loosePieces)} loose piece${loosePieces === 1 ? "" : "s"}`;
+    }
+
+    return `${formatNumber(packageCount)} ${packageName}${loosePieces ? ` + ${formatNumber(loosePieces)} loose piece${loosePieces === 1 ? "" : "s"}` : ""}`;
+  }).join(" · ");
+}
+
+function aggregatePackageQuantityLabel(state, entries) {
+  const totals = new Map();
+
+  entries.forEach(({ product, pieces }) => {
+    dashboardPackagingTypes(product).forEach((type) => {
+      const piecesPerPackage = quantityInPieces(product, 1, type, state.client);
+      if (piecesPerPackage <= 0) return;
+      totals.set(type, (totals.get(type) || 0) + Math.floor(Math.max(0, Number(pieces || 0)) / piecesPerPackage));
+    });
+  });
+
+  if (!totals.size) return "Package conversion not set";
+
+  return [...totals.entries()]
+    .sort(([a], [b]) => Number(b === "carton") - Number(a === "carton"))
+    .map(([type, quantity]) => {
+      const option = packagingOption(type);
+      return `${formatNumber(quantity)} ${quantity === 1 ? option.singular : option.label.toLowerCase()}`;
+    })
+    .join(" · ");
+}
+
+function renderDashboardStockQuantity(state, product, pieces) {
+  return `
+    <span class="dashboard-stock-quantity">
+      <strong>${formatNumber(pieces || 0)} pieces</strong>
+      <small>${escapeHtml(packageQuantityLabel(state, product, pieces))}</small>
+    </span>
+  `;
+}
+
 function renderDailyStockMovementTable(state) {
   return table(
     ["Product", "Added stock", "Dispatched product", "Available", "Status"],
     dailyProductMovementRows(state).map(({ product, added, dispatched }) => `
       <tr data-search-index="${escapeHtml(`${product.name} ${productFamilyLabel(product)} ${productTypeLabel(product)} ${productSizeLabel(product)}`.toLowerCase())}">
         <td><strong>${escapeHtml(product.name)}</strong><div class="muted">${escapeHtml(productSizeLabel(product))}</div></td>
-        <td>${formatNumber(added)}</td>
-        <td>${formatNumber(dispatched)}</td>
-        <td>${formatNumber(product.stock || 0)}</td>
+        <td>${renderDashboardStockQuantity(state, product, added)}</td>
+        <td>${renderDashboardStockQuantity(state, product, dispatched)}</td>
+        <td>${renderDashboardStockQuantity(state, product, product.stock || 0)}</td>
         <td>
           ${statusPill(Number(product.stock || 0) <= 0 ? "sold_out" : "in_stock")}
           ${product.soldOutAt ? `<div class="muted">Saved ${formatDate(product.soldOutAt)}</div>` : ""}
@@ -1207,13 +1269,19 @@ function renderCeoProductStock(state) {
     <div class="ceo-product-family-grid">
       ${[...families.entries()].map(([family, familyRows]) => {
         const types = [...new Set(familyRows.map(({ product }) => productTypeLabel(product)))].sort();
+        const familyStock = familyRows.reduce((total, row) => total + Number(row.product.stock || 0), 0);
+        const familyPackages = aggregatePackageQuantityLabel(state, familyRows.map(({ product }) => ({
+          product,
+          pieces: product.stock || 0
+        })));
         return `
           <article class="ceo-product-family-card">
             <button class="ceo-product-family-trigger js-toggle-product-types" type="button" data-product-family="${escapeHtml(family)}" aria-expanded="false">
               <span class="eyebrow">Product</span>
               <strong>${escapeHtml(family)}</strong>
               <span>${formatNumber(types.length)} type${types.length === 1 ? "" : "s"} · ${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"}</span>
-              <b>${formatNumber(familyRows.reduce((total, row) => total + Number(row.product.stock || 0), 0))} available</b>
+              <b>${formatNumber(familyStock)} pieces available</b>
+              <small class="ceo-family-package-total">${escapeHtml(familyPackages === "Package conversion not set" ? familyPackages : `${familyPackages} in full packages across variants`)}</small>
             </button>
             <div class="ceo-product-type-dropdown" data-product-type-dropdown="${escapeHtml(family)}" hidden>
               ${types.map((type) => `
@@ -1251,6 +1319,9 @@ function renderCeoProductStock(state) {
                 data-size-available="${escapeHtml(product.stock || 0)}"
                 data-size-dispatch-day="${escapeHtml(dispatchedToday)}"
                 data-size-rep-stock="${escapeHtml(stockWithSalesReps)}"
+                data-size-available-packages="${escapeHtml(packageQuantityLabel(state, product, product.stock || 0))}"
+                data-size-dispatch-day-packages="${escapeHtml(packageQuantityLabel(state, product, dispatchedToday))}"
+                data-size-rep-stock-packages="${escapeHtml(packageQuantityLabel(state, product, stockWithSalesReps))}"
                 hidden
               >
                 <span class="ceo-size-picture">${renderCeoSizePicture(product)}</span>
@@ -1266,9 +1337,9 @@ function renderCeoProductStock(state) {
             <small data-size-detail-sku>SKU</small>
           </div>
           <div class="selected-size-stock-metrics">
-            <div><span>Available in factory</span><strong data-size-detail-available>0</strong></div>
-            <div><span>Dispatched today</span><strong data-size-detail-day>0</strong></div>
-            <div><span>Stock with sales reps</span><strong data-size-detail-rep-stock>0</strong></div>
+            <div><span>Available in factory</span><strong data-size-detail-available>0 pieces</strong><small data-size-detail-available-packages>0 packages</small></div>
+            <div><span>Dispatched today</span><strong data-size-detail-day>0 pieces</strong><small data-size-detail-day-packages>0 packages</small></div>
+            <div><span>Stock with sales reps</span><strong data-size-detail-rep-stock>0 pieces</strong><small data-size-detail-rep-stock-packages>0 packages</small></div>
           </div>
         </article>
       </section>
@@ -1285,6 +1356,12 @@ function renderCeoDashboard(state) {
   const riskyAccountCount = riskRows.filter((row) => row.status !== "credit_clear").length;
   const latestReport = [...(state.salesReports || [])]
     .sort((a, b) => toTimestamp(b.submittedAt || b.reportDate) - toTimestamp(a.submittedAt || a.reportDate))[0];
+  const finishedProducts = activeStockProducts(state.products)
+    .filter((product) => stockCategoryIdForProduct(product) === "finished_products");
+  const stockPackageSummary = aggregatePackageQuantityLabel(state, finishedProducts.map((product) => ({
+    product,
+    pieces: Number(product.stock || 0) + productStockWithSalesReps(state, product.id)
+  })));
 
   return `
     <section class="view dashboard-view ceo-dashboard">
@@ -1306,8 +1383,10 @@ function renderCeoDashboard(state) {
         })}
         ${renderCeoMetricCard({
           label: "Stock",
-          value: formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits),
-          meta: "Factory plus representative custody",
+          value: `${formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits)} pieces`,
+          meta: stockPackageSummary === "Package conversion not set"
+            ? "Package conversion not set · factory plus representative custody"
+            : `${stockPackageSummary} in full packages · factory plus representative custody`,
           iconName: "package"
         })}
         ${renderCeoMetricCard({
@@ -3390,9 +3469,12 @@ function bindCeoDashboard({ root, store }) {
       setText("[data-size-detail-type]", `${button.dataset.sizeType} · ${button.dataset.sizeLabel}`);
       setText("[data-size-detail-name]", button.dataset.sizeName || "Product size");
       setText("[data-size-detail-sku]", button.dataset.sizeSku || "SKU");
-      setText("[data-size-detail-available]", formatNumber(button.dataset.sizeAvailable || 0));
-      setText("[data-size-detail-day]", formatNumber(button.dataset.sizeDispatchDay || 0));
-      setText("[data-size-detail-rep-stock]", formatNumber(button.dataset.sizeRepStock || 0));
+      setText("[data-size-detail-available]", `${formatNumber(button.dataset.sizeAvailable || 0)} pieces`);
+      setText("[data-size-detail-day]", `${formatNumber(button.dataset.sizeDispatchDay || 0)} pieces`);
+      setText("[data-size-detail-rep-stock]", `${formatNumber(button.dataset.sizeRepStock || 0)} pieces`);
+      setText("[data-size-detail-available-packages]", button.dataset.sizeAvailablePackages || "Package conversion not set");
+      setText("[data-size-detail-day-packages]", button.dataset.sizeDispatchDayPackages || "Package conversion not set");
+      setText("[data-size-detail-rep-stock-packages]", button.dataset.sizeRepStockPackages || "Package conversion not set");
       selectedSizeDetail.hidden = false;
     });
   });

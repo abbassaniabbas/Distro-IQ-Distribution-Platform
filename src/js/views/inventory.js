@@ -26,6 +26,7 @@ import {
   effectivePiecePrice,
   packagingDefaults,
   packagingLineAmount,
+  packagingMultiplier,
   packagingOption,
   packagingQuantityLabel,
   packagingUnitPrice,
@@ -53,8 +54,10 @@ const stockEntrySession = {
   editingProductId: "",
   draft: {},
   imageUrl: "",
-  defaults: {}
+  defaults: {},
+  step: 1
 };
+let stockHealthView = "list";
 
 function renderProductSizeUnitOptions(selected = "g") {
   return PRODUCT_SIZE_UNITS.map((unit) => `
@@ -396,6 +399,12 @@ function renderStockProductModal(state, permissions) {
           <div class="affiliated-product-list" data-affiliated-product-list></div>
         </section>
         <div class="stock-entry-fields span-full manager-form-grid" data-stock-entry-fields>
+        <nav class="stock-form-stepper span-full" aria-label="Stock form progress">
+          <span class="is-active" data-stock-step-indicator="1"><b>1</b><small>General</small></span>
+          <span data-stock-step-indicator="2"><b>2</b><small>Stock</small></span>
+          <span data-stock-step-indicator="3"><b>3</b><small>Catalogue</small></span>
+        </nav>
+        <section class="stock-form-step span-full manager-form-grid" data-stock-form-step="1">
         <label class="field">
           <span>Product name</span>
           <input name="name" placeholder="Plantain Chips" required>
@@ -426,10 +435,33 @@ function renderStockProductModal(state, permissions) {
             `).join("")}
           </select>
         </label>
-        <label class="field">
-          <span>Factory stock (pieces)</span>
-          <input name="stock" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
-        </label>
+        </section>
+        <section class="stock-form-step span-full manager-form-grid" data-stock-form-step="2" hidden>
+        <div class="factory-stock-entry span-full">
+          <label class="field">
+            <span data-stock-quantity-label>Factory stock</span>
+            <input name="stock" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
+          </label>
+          <label class="field">
+            <span>Enter stock as</span>
+            <select name="stockEntryMode" data-stock-entry-mode>
+              ${enabledPackagingTypes(state.client).some((type) => type !== "piece") ? '<option value="package">Package</option>' : ""}
+              <option value="piece">Pieces</option>
+            </select>
+          </label>
+          <label class="field" data-stock-package-type hidden>
+            <span data-stock-package-label>Package type</span>
+            <select name="stockPackagingType">
+              ${enabledPackagingTypes(state.client).filter((type) => type !== "piece").map((type) => {
+                const option = packagingOption(type);
+                return `<option value="${escapeHtml(type)}">${escapeHtml(option.label)}</option>`;
+              }).join("")}
+            </select>
+          </label>
+          <div class="factory-stock-piece-total" data-stock-piece-total hidden aria-live="polite">
+            <span>Total factory stock</span><strong>0 pieces</strong>
+          </div>
+        </div>
         <label class="field">
           <span>Reorder point</span>
           <input name="reorderPoint" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required>
@@ -447,9 +479,11 @@ function renderStockProductModal(state, permissions) {
           if (!packageTypes.length) return "";
           return `<fieldset class="span-full product-packaging-conversions"><legend>Package contents and selling prices</legend>${packageTypes.map((type) => {
             const option = packagingOption(type);
-            return `<section class="product-package-pricing"><strong>${escapeHtml(option.label)}</strong><label class="field"><span>Pieces contained</span><input name="packagingConversion-${escapeHtml(type)}" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label><label class="field"><span>Selling price per ${escapeHtml(option.singular)} (${escapeHtml(moneySymbol)})</span><input name="packagingPrice-${escapeHtml(type)}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="Uses the total piece price"></label></section>`;
+            return `<section class="product-package-pricing"><strong>${escapeHtml(option.label)}</strong><label class="field"><span>Pieces contained</span><input name="packagingConversion-${escapeHtml(type)}" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label><label class="field"><span>Selling price per ${escapeHtml(option.singular)} (${escapeHtml(moneySymbol)})</span><input name="packagingPrice-${escapeHtml(type)}" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0" required></label></section>`;
           }).join("")}</fieldset>`;
         })()}
+        </section>
+        <section class="stock-form-step span-full manager-form-grid" data-stock-form-step="3" hidden>
         <label class="field">
           <span>Catalogue status</span>
           <select name="status" required>
@@ -474,20 +508,13 @@ function renderStockProductModal(state, permissions) {
             </button>
           </div>
         </div>
-        <div class="manager-form-actions span-full">
-          ${textButton({
-            iconName: "check",
-            label: "Save stock",
-            className: "primary js-save-stock-entry",
-            type: "submit"
-          })}
-          ${textButton({
-            iconName: "refresh",
-            label: "Clear",
-            className: "js-clear-product-form"
-          })}
+        </section>
+        <div class="stock-wizard-actions span-full">
+          <button class="icon-button stock-wizard-previous" type="button" title="Previous step" aria-label="Previous step" data-stock-step-previous hidden>${icon("arrowRight")}</button>
+          <span id="manager-product-message" class="field-error" aria-live="polite"></span>
+          <button class="icon-button primary stock-wizard-next" type="button" title="Next step" aria-label="Next step" data-stock-step-next>${icon("arrowRight")}</button>
+          <button class="button primary js-save-stock-entry" type="submit" data-stock-step-save hidden>${icon("check")}<span>Save stock</span></button>
         </div>
-        <span id="manager-product-message" class="field-error span-full" aria-live="polite"></span>
         </div>
       </form>
       </section>
@@ -753,6 +780,10 @@ function renderProductListRow(product, state, permissions) {
       data-category="${escapeHtml(product.category)}"
       data-stock-category="${escapeHtml(stockCategory)}"
       data-search-index="${escapeHtml(searchIndex)}"
+      data-open-stock-product
+      data-product-id="${escapeHtml(product.id)}"
+      tabindex="0"
+      aria-label="View full details for ${escapeHtml(product.name)}"
     >
       ${canManageProducts ? `
         <td class="stock-select-cell">
@@ -798,6 +829,200 @@ function renderProductListRow(product, state, permissions) {
         </div>
       </td>
     </tr>
+  `;
+}
+
+function cartonStockBreakdown(product) {
+  const pieces = Math.max(0, Number(product.stock || 0));
+  const piecesPerCarton = Math.max(0, Number(product.packagingConversions?.carton || 0));
+  const fullCartons = piecesPerCarton > 0 ? Math.floor(pieces / piecesPerCarton) : 0;
+  const loosePieces = piecesPerCarton > 0 ? pieces - (fullCartons * piecesPerCarton) : pieces;
+  const cartonLabel = fullCartons === 1 ? "carton" : "cartons";
+
+  return {
+    pieces,
+    piecesPerCarton,
+    fullCartons,
+    loosePieces,
+    cartonLabel,
+    hasFullCarton: fullCartons > 0
+  };
+}
+
+function renderStockGridCard(product, state, permissions) {
+  const health = getStockHealth(product);
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canReduceStock = permissions.canManageStockMovements;
+  const canManageProducts = permissions.canManageProducts;
+  const stockCategory = stockCategoryIdForProduct(product);
+  const isRawMaterial = stockCategory === RAW_MATERIALS_CATEGORY;
+  const isFinishedProduct = stockCategory === FINISHED_PRODUCTS_CATEGORY;
+  const productionBatches = isFinishedProduct ? productionBatchesForProduct(state, product.id) : [];
+  const hasStockMaterialUsage = productionBatches.some((batch) => (batch.materials || []).length > 0);
+  const lineageTitle = hasStockMaterialUsage ? "Made using stock raw materials" : "No stock-material usage recorded";
+  const lineageDescription = hasStockMaterialUsage
+    ? `${formatNumber(productionBatches.length)} linked production batch${productionBatches.length === 1 ? "" : "es"}`
+    : "Production batches with raw materials will appear here.";
+  const searchIndex = [product.id, product.name, product.productType, product.size, product.category, product.region, product.warehouse]
+    .join(" ")
+    .toLowerCase();
+  const cartonStock = cartonStockBreakdown(product);
+  const primaryStockUnit = cartonStock.hasFullCarton ? "carton" : "piece";
+  const primaryStockLabel = cartonStock.hasFullCarton
+    ? `${formatNumber(cartonStock.fullCartons)} ${cartonStock.cartonLabel}`
+    : `${formatNumber(cartonStock.pieces)} piece${cartonStock.pieces === 1 ? "" : "s"}`;
+  const looseStockLabel = cartonStock.hasFullCarton && cartonStock.loosePieces > 0
+    ? `+ ${formatNumber(cartonStock.loosePieces)} loose piece${cartonStock.loosePieces === 1 ? "" : "s"}`
+    : "";
+
+  return `
+    <article
+      class="stock-health-grid-card ${product.status === "inactive" ? "is-inactive" : ""}"
+      data-category="${escapeHtml(product.category)}"
+      data-stock-category="${escapeHtml(stockCategory)}"
+      data-search-index="${escapeHtml(searchIndex)}"
+      data-open-stock-product
+      data-product-id="${escapeHtml(product.id)}"
+      tabindex="0"
+      role="group"
+      aria-label="${escapeHtml(product.name)} product card. Press Enter to view full details."
+    >
+      <div class="stock-health-grid-image">${renderProductImage(product)}</div>
+      <div class="stock-health-grid-body">
+        <div class="stock-health-grid-heading">
+          <div>
+            <strong>${escapeHtml(product.name)}</strong>
+            <span>${escapeHtml(product.id)}</span>
+          </div>
+          ${product.status === "inactive" ? statusPill("inactive") : health.status === "ready" ? "" : statusPill(health.status)}
+        </div>
+        <div class="stock-health-grid-meta">
+          <span>${escapeHtml(product.productType || "Standard")}</span>
+          <span>${escapeHtml(product.size || "Standard size")}</span>
+        </div>
+        <div class="stock-health-grid-availability" data-grid-stock-unit="${primaryStockUnit}">
+          <span>Available stock</span>
+          <div>
+            <strong>${primaryStockLabel}</strong>
+            ${looseStockLabel ? `<small>${looseStockLabel}</small>` : ""}
+          </div>
+        </div>
+        <div class="row-actions stock-list-actions stock-health-grid-actions">
+          ${canManageProducts ? iconButton({ iconName: "settings", label: "Update stock record", className: "js-edit-product", data: { "product-id": product.id } }) : ""}
+          ${canManageProducts ? iconButton({ iconName: product.status === "inactive" ? "check" : "x", label: product.status === "inactive" ? "Show" : "Hide", className: "js-toggle-product-status", data: { "product-id": product.id } }) : ""}
+          ${canManageProducts ? iconButton({ iconName: "trash", label: "Delete stock record", className: "js-delete-product warning-icon", data: { "product-id": product.id } }) : ""}
+          ${canRestock ? iconButton({ iconName: "plus", label: "Add stock quantity", className: "stock-action-primary js-restock-product", data: { "product-id": product.id } }) : ""}
+          ${canReduceStock ? iconButton({ iconName: "alert", label: "Reduce stock", className: "js-reduce-stock", disabled: Number(product.stock || 0) <= 0, data: { "product-id": product.id } }) : ""}
+          ${isRawMaterial && Number(product.stock || 0) > 0 && (canManageProducts || canReduceStock)
+            ? iconButton({ iconName: "wallet", label: "Sell raw material", className: "js-sell-raw-material", data: { "product-id": product.id } })
+            : ""}
+          ${isFinishedProduct
+            ? iconButton({ iconName: hasStockMaterialUsage ? "eye" : "history", label: `${lineageTitle}. ${lineageDescription}`, className: `js-open-production-traceability${hasStockMaterialUsage ? " has-lineage" : ""}`, data: { "product-id": product.id } })
+            : ""}
+        </div>
+      </div>
+    </article>
+  `;
+}
+
+function renderStockProductDetailsModal() {
+  return `
+    <div id="stock-product-details-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal stock-product-details-modal" role="dialog" aria-modal="true" aria-labelledby="stock-product-details-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Stock product</span>
+            <h2 id="stock-product-details-title">Product details</h2>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close product details", className: "js-close-stock-product-details" })}
+        </header>
+        <div id="stock-product-details-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function renderStockProductDetails(product, state) {
+  const health = getStockHealth(product);
+  const stock = Math.max(0, Number(product.stock || 0));
+  const cartonStock = cartonStockBreakdown(product);
+  const bulkTypes = productPackagingTypes(state.client, product).filter((type) => type !== "piece");
+  const packageAvailability = bulkTypes.map((type) => {
+    const option = packagingOption(type);
+    const piecesContained = Math.max(0, Number(packagingMultiplier(product, type, state.client) || 0));
+    const fullPackages = piecesContained ? Math.floor(stock / piecesContained) : 0;
+    const loosePieces = piecesContained ? stock - (fullPackages * piecesContained) : stock;
+    const packageName = fullPackages === 1 ? option.singular : option.label.toLowerCase();
+    const packagePrice = Math.max(0, Number(product.packagingPrices?.[type] || 0));
+
+    return `
+      <article class="stock-product-package-card">
+        <span>${escapeHtml(option.label)}</span>
+        <strong>${formatNumber(fullPackages)} ${escapeHtml(packageName)}${loosePieces ? ` + ${formatNumber(loosePieces)} loose piece${loosePieces === 1 ? "" : "s"}` : ""}</strong>
+        <small>${formatNumber(piecesContained)} pieces per ${escapeHtml(option.singular)} · ${packagePrice ? formatCurrency(packagePrice) : "No package price set"}</small>
+      </article>
+    `;
+  }).join("");
+  const isFinishedProduct = stockCategoryIdForProduct(product) === FINISHED_PRODUCTS_CATEGORY;
+  const linkedBatches = isFinishedProduct ? productionBatchesForProduct(state, product.id) : [];
+
+  return `
+    <div class="stock-product-details-hero">
+      <div class="stock-product-details-image">${renderProductImage(product)}</div>
+      <div class="stock-product-details-summary">
+        <div>
+          <span class="eyebrow">${escapeHtml(product.category || "Stock item")}</span>
+          <h3>${escapeHtml(product.name)}</h3>
+          <p>${escapeHtml(product.id)} · ${escapeHtml(product.productType || "Standard type")} · ${escapeHtml(product.size || "Standard size")}</p>
+        </div>
+        <div class="stock-product-details-status">
+          ${statusPill(product.status || "active")}
+          ${health.status === "ready" ? "" : statusPill(health.status)}
+        </div>
+        <div class="stock-product-primary-availability">
+          <span>Available stock</span>
+          <div class="stock-product-primary-totals">
+            <strong>${formatNumber(stock)} pieces</strong>
+            ${cartonStock.piecesPerCarton > 0
+              ? `<b>${cartonStock.hasFullCarton
+                  ? `${formatNumber(cartonStock.fullCartons)} ${cartonStock.cartonLabel}${cartonStock.loosePieces ? ` + ${formatNumber(cartonStock.loosePieces)} loose piece${cartonStock.loosePieces === 1 ? "" : "s"}` : ""}`
+                  : `Below one carton (${formatNumber(cartonStock.piecesPerCarton)} pieces required)`}</b>`
+              : '<b>Carton quantity not configured</b>'}
+          </div>
+          <small>${formatNumber(product.reorderPoint || 0)} piece reorder point · ${formatNumber(health.daysCover)} days cover</small>
+        </div>
+      </div>
+    </div>
+
+    <section class="stock-product-details-section">
+      <div class="stock-product-details-section-heading">
+        <div>
+          <span class="eyebrow">Package equivalents</span>
+          <h3>Available stock in packages</h3>
+        </div>
+        ${icon("package")}
+      </div>
+      <div class="stock-product-package-grid">
+        ${packageAvailability || '<div class="stock-product-package-empty">No package conversion has been configured for this product.</div>'}
+      </div>
+    </section>
+
+    <section class="stock-product-details-section">
+      <span class="eyebrow">Complete stock record</span>
+      <dl class="stock-product-details-grid">
+        <div><dt>SKU</dt><dd>${escapeHtml(product.id)}</dd></div>
+        <div><dt>Product name</dt><dd>${escapeHtml(product.name)}</dd></div>
+        <div><dt>Product type</dt><dd>${escapeHtml(product.productType || "Standard")}</dd></div>
+        <div><dt>Product size</dt><dd>${escapeHtml(product.size || "Not specified")}</dd></div>
+        <div><dt>Category</dt><dd>${escapeHtml(product.category || "Not specified")}</dd></div>
+        <div><dt>Stock unit</dt><dd>${escapeHtml(product.unit || "piece")}</dd></div>
+        <div><dt>Factory location</dt><dd>${escapeHtml(product.warehouse || "Factory")}</dd></div>
+        <div><dt>Cost per piece</dt><dd>${formatCurrency(product.unitCost || 0)}</dd></div>
+        <div><dt>Selling price per piece</dt><dd>${product.unitPrice ? formatCurrency(product.unitPrice) : "Factory use"}</dd></div>
+        <div><dt>Catalogue status</dt><dd>${escapeHtml(statusText(product.status || "active"))}</dd></div>
+        <div><dt>Production batches</dt><dd>${isFinishedProduct ? formatNumber(linkedBatches.length) : "Not applicable"}</dd></div>
+      </dl>
+    </section>
   `;
 }
 
@@ -1427,6 +1652,10 @@ function renderStockHealthPage(state, permissions) {
       <div class="toolbar stock-health-toolbar">
         ${panelHeader("Stock health", "Raw materials, finished products, equipment, days remaining, and low-stock warnings")}
         <div class="toolbar-group">
+          <div class="stock-health-view-toggle" role="group" aria-label="Stock item view">
+            ${iconButton({ iconName: "orders", label: "List view", className: stockHealthView === "list" ? "is-active" : "", data: { "stock-view": "list" } })}
+            ${iconButton({ iconName: "dashboard", label: "Grid view", className: stockHealthView === "grid" ? "is-active" : "", data: { "stock-view": "grid" } })}
+          </div>
           ${permissions.canManageProducts
             ? textButton({
                 iconName: "trash",
@@ -1454,7 +1683,7 @@ function renderStockHealthPage(state, permissions) {
         </div>
       </div>
 
-      <div class="table-wrap stock-health-list">
+      <div class="table-wrap stock-health-list" data-stock-view-panel="list" ${stockHealthView === "list" ? "" : "hidden"}>
         <table class="data-table stock-health-table">
           <thead>
             <tr>
@@ -1475,6 +1704,11 @@ function renderStockHealthPage(state, permissions) {
               : `<tr><td colspan="${permissions.canManageProducts ? 9 : 8}"><div class="empty-state">No active stock items available</div></td></tr>`}
           </tbody>
         </table>
+      </div>
+      <div class="stock-health-grid" data-stock-view-panel="grid" ${stockHealthView === "grid" ? "" : "hidden"}>
+        ${visibleProducts.length
+          ? visibleProducts.map((product) => renderStockGridCard(product, state, permissions)).join("")
+          : '<div class="empty-state">No active stock items available</div>'}
       </div>
     </section>
   `;
@@ -1765,6 +1999,7 @@ export function renderInventory({ state }) {
       ${renderStockReductionModal(permissions)}
       ${renderAssignmentDetailsModal()}
       ${renderProductionTraceabilityModal()}
+      ${renderStockProductDetailsModal()}
       ${renderRawMaterialSaleModal(state)}
       ${renderRecordCorrectionModal(currentUserRole(state) === "ceo" ? "Save adjustment" : "Send for approval")}
       ${renderStockDeletionModal(permissions)}
@@ -1826,6 +2061,9 @@ export function bindInventory({ root, store, signal }) {
   const rawSaleUnitPriceInput = rawMaterialSaleForm ? qs("[data-raw-sale-unit-price]", rawMaterialSaleForm) : null;
   const productionTraceabilityModal = qs("#production-traceability-modal", root);
   const productionTraceabilityContent = qs("#production-traceability-content", root);
+  const stockProductDetailsModal = qs("#stock-product-details-modal", root);
+  const stockProductDetailsContent = qs("#stock-product-details-content", root);
+  const stockProductDetailsTitle = qs("#stock-product-details-title", root);
   const correctionModal = qs("#record-correction-modal", root);
   const correctionForm = qs("#record-correction-form", root);
   const correctionMessage = qs("#record-correction-message", root);
@@ -1836,6 +2074,17 @@ export function bindInventory({ root, store, signal }) {
   const stockEntryFields = qs("[data-stock-entry-fields]", productForm || root);
   const sizeUnitSelect = productForm?.elements.sizeUnit;
   const customSizeUnitInput = productForm?.elements.sizeUnitOther;
+  const stockEntryModeSelect = productForm?.elements.stockEntryMode;
+  const stockPackageTypeSelect = productForm?.elements.stockPackagingType;
+  const stockPackageTypeField = productForm ? qs("[data-stock-package-type]", productForm) : null;
+  const stockPieceTotal = productForm ? qs("[data-stock-piece-total]", productForm) : null;
+  const stockQuantityLabel = productForm ? qs("[data-stock-quantity-label]", productForm) : null;
+  const stockPackageLabel = productForm ? qs("[data-stock-package-label]", productForm) : null;
+  const stockFormSteps = productForm ? qsa("[data-stock-form-step]", productForm) : [];
+  const stockStepIndicators = productForm ? qsa("[data-stock-step-indicator]", productForm) : [];
+  const previousStockStepButton = productForm ? qs("[data-stock-step-previous]", productForm) : null;
+  const nextStockStepButton = productForm ? qs("[data-stock-step-next]", productForm) : null;
+  let activeStockFormStep = Math.min(3, Math.max(1, Number(stockEntrySession.step || 1)));
   let sessionAddedProductIds = [...stockEntrySession.productIds];
   let activeProductFamily = stockEntrySession.family;
   let entrySaved = sessionAddedProductIds.length > 0 && !stockEntrySession.adding;
@@ -1852,6 +2101,109 @@ export function bindInventory({ root, store, signal }) {
     updateCustomSizeUnitVisibility();
     if (!customSizeUnitInput.hidden) customSizeUnitInput.focus();
   });
+
+  function updateFactoryStockEntry() {
+    if (!productForm || !stockEntryModeSelect) return;
+    const usesPackage = stockEntryModeSelect.value === "package";
+    const hasPackageTypes = Boolean(stockPackageTypeSelect?.options.length);
+    if (stockPackageTypeField) stockPackageTypeField.hidden = !hasPackageTypes;
+    if (stockPackageTypeSelect) stockPackageTypeSelect.required = hasPackageTypes;
+    if (stockQuantityLabel) stockQuantityLabel.textContent = usesPackage ? "Number of packages" : "Factory stock in pieces";
+    if (stockPackageLabel) stockPackageLabel.textContent = usesPackage ? "Package type" : "Calculate packages as";
+    if (productForm.elements.stock) {
+      productForm.elements.stock.step = usesPackage ? "1" : "0.01";
+      productForm.elements.stock.min = "0";
+      productForm.elements.stock.inputMode = usesPackage ? "numeric" : "decimal";
+    }
+    if (!stockPieceTotal) return;
+    stockPieceTotal.hidden = !hasPackageTypes;
+    const packageType = stockPackageTypeSelect?.value || "";
+    const enteredQuantity = Math.max(0, Number(productForm.elements.stock?.value || 0));
+    const piecesContained = Math.max(0, Number(productForm.elements[`packagingConversion-${packageType}`]?.value || 0));
+    const totalLabel = qs("strong", stockPieceTotal);
+    if (!totalLabel) return;
+    if (!piecesContained) {
+      totalLabel.textContent = "Enter pieces contained";
+      return;
+    }
+    if (usesPackage) {
+      totalLabel.textContent = `${formatNumber(enteredQuantity * piecesContained)} pieces`;
+      return;
+    }
+    const completePackages = Math.floor(enteredQuantity / piecesContained);
+    const loosePieces = enteredQuantity - (completePackages * piecesContained);
+    const option = packagingOption(packageType);
+    const packageLabel = completePackages === 1 ? option.singular : option.label.toLowerCase();
+    totalLabel.textContent = completePackages
+      ? `${formatNumber(completePackages)} ${packageLabel}${loosePieces ? ` + ${formatNumber(loosePieces)} pieces` : ""}`
+      : `${formatNumber(enteredQuantity)} pieces — below one ${option.singular}`;
+  }
+
+  stockEntryModeSelect?.addEventListener("change", updateFactoryStockEntry);
+  stockPackageTypeSelect?.addEventListener("change", updateFactoryStockEntry);
+
+  function setStockFormStep(step) {
+    activeStockFormStep = Math.min(3, Math.max(1, Number(step || 1)));
+    stockEntrySession.step = activeStockFormStep;
+    stockFormSteps.forEach((section) => { section.hidden = Number(section.dataset.stockFormStep) !== activeStockFormStep; });
+    stockStepIndicators.forEach((indicator) => {
+      const indicatorStep = Number(indicator.dataset.stockStepIndicator);
+      indicator.classList.toggle("is-active", indicatorStep === activeStockFormStep);
+      indicator.classList.toggle("is-complete", indicatorStep < activeStockFormStep);
+    });
+    if (previousStockStepButton) previousStockStepButton.hidden = activeStockFormStep === 1;
+    if (nextStockStepButton) nextStockStepButton.hidden = activeStockFormStep === 3;
+    if (saveStockEntryButton) saveStockEntryButton.hidden = activeStockFormStep !== 3;
+    if (productMessage) productMessage.textContent = "";
+  }
+
+  function validateStockFormStep(step) {
+    const section = stockFormSteps.find((item) => Number(item.dataset.stockFormStep) === step);
+    if (!section) return true;
+    const requiredControls = [...section.querySelectorAll("input[required], select[required]")]
+      .filter((control) => !control.disabled && !control.closest("[hidden]"));
+    const invalidControl = requiredControls.find((control) => !String(control.value || "").trim() || !control.checkValidity());
+    if (invalidControl) {
+      invalidControl.classList.add("is-required-invalid");
+      invalidControl.setAttribute("aria-invalid", "true");
+      if (productMessage) productMessage.textContent = "Please complete the required fields";
+      invalidControl.focus();
+      return false;
+    }
+    if (step === 2 && stockEntryModeSelect?.value === "package") {
+      const packageCount = Number(productForm.elements.stock?.value || 0);
+      if (!Number.isInteger(packageCount) || packageCount < 1) {
+        productForm.elements.stock.classList.add("is-required-invalid");
+        productForm.elements.stock.setAttribute("aria-invalid", "true");
+        if (productMessage) productMessage.textContent = "Enter at least one complete package";
+        productForm.elements.stock.focus();
+        return false;
+      }
+    }
+    return true;
+  }
+
+  previousStockStepButton?.addEventListener("click", () => setStockFormStep(activeStockFormStep - 1));
+  nextStockStepButton?.addEventListener("click", () => {
+    if (validateStockFormStep(activeStockFormStep)) setStockFormStep(activeStockFormStep + 1);
+  });
+  productForm?.addEventListener("input", (event) => {
+    event.target.classList?.remove("is-required-invalid");
+    event.target.removeAttribute?.("aria-invalid");
+    if (productMessage) productMessage.textContent = "";
+  });
+  productForm?.addEventListener("change", (event) => {
+    event.target.classList?.remove("is-required-invalid");
+    event.target.removeAttribute?.("aria-invalid");
+    if (productMessage) productMessage.textContent = "";
+  });
+  productForm?.addEventListener("submit", (event) => {
+    if (activeStockFormStep === 3) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (validateStockFormStep(activeStockFormStep)) setStockFormStep(activeStockFormStep + 1);
+  });
+  setStockFormStep(activeStockFormStep);
 
   qsa(".js-open-record-correction", root).forEach((button) => {
     button.addEventListener("click", () => {
@@ -2080,6 +2432,47 @@ export function bindInventory({ root, store, signal }) {
     if (event.key === "Escape") closeProductionTraceability();
   });
 
+  function closeStockProductDetails() {
+    if (stockProductDetailsModal) stockProductDetailsModal.hidden = true;
+  }
+
+  function openStockProductDetails(productId) {
+    const state = store.getState();
+    const product = (state.products || []).find((item) => item.id === productId);
+    if (!product || !stockProductDetailsModal || !stockProductDetailsContent) return;
+
+    if (stockProductDetailsTitle) stockProductDetailsTitle.textContent = product.name;
+    stockProductDetailsContent.innerHTML = renderStockProductDetails(product, state);
+    stockProductDetailsModal.hidden = false;
+    qs(".js-close-stock-product-details", stockProductDetailsModal)?.focus();
+  }
+
+  function productDetailsEventIsFromControl(event) {
+    return Boolean(event.target.closest("button, input, select, textarea, a, label"));
+  }
+
+  qsa("[data-open-stock-product]", root).forEach((item) => {
+    item.addEventListener("click", (event) => {
+      if (productDetailsEventIsFromControl(event)) return;
+      openStockProductDetails(item.dataset.productId);
+    });
+    item.addEventListener("keydown", (event) => {
+      if (!['Enter', ' '].includes(event.key) || productDetailsEventIsFromControl(event)) return;
+      event.preventDefault();
+      openStockProductDetails(item.dataset.productId);
+    });
+  });
+
+  qsa(".js-close-stock-product-details", root).forEach((button) => {
+    button.addEventListener("click", closeStockProductDetails);
+  });
+  stockProductDetailsModal?.addEventListener("click", (event) => {
+    if (event.target === stockProductDetailsModal) closeStockProductDetails();
+  });
+  stockProductDetailsModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeStockProductDetails();
+  });
+
   const assignmentRepFilter = qs("[data-assignment-rep-filter]", root);
   const assignmentDateFrom = qs("[data-assignment-date-from]", root);
   const assignmentDateTo = qs("[data-assignment-date-to]", root);
@@ -2226,6 +2619,23 @@ export function bindInventory({ root, store, signal }) {
     });
     updateStockSelectionControls();
   }
+
+  function setStockHealthView(view) {
+    stockHealthView = view === "grid" ? "grid" : "list";
+    qsa("[data-stock-view]", root).forEach((button) => {
+      const isActive = button.dataset.stockView === stockHealthView;
+      button.classList.toggle("is-active", isActive);
+      button.setAttribute("aria-pressed", String(isActive));
+    });
+    qsa("[data-stock-view-panel]", root).forEach((panel) => {
+      panel.hidden = panel.dataset.stockViewPanel !== stockHealthView;
+    });
+  }
+
+  qsa("[data-stock-view]", root).forEach((button) => {
+    button.addEventListener("click", () => setStockHealthView(button.dataset.stockView));
+  });
+  setStockHealthView(stockHealthView);
 
   function stockSelectionCheckboxes() {
     return qsa(".js-select-stock", root);
@@ -2480,6 +2890,8 @@ export function bindInventory({ root, store, signal }) {
     "sku",
     "stockCategory",
     "stock",
+    "stockEntryMode",
+    "stockPackagingType",
     "reorderPoint",
     "unitCost",
     "unitPrice",
@@ -2552,6 +2964,9 @@ export function bindInventory({ root, store, signal }) {
     if (event.target.name === "productionQuantity" || String(event.target.name || "").startsWith("productionPackageQuantity-") || String(event.target.name || "").startsWith("packagingConversion-")) {
       updateProductionOutputTotal();
     }
+    if (event.target.name === "stock" || String(event.target.name || "").startsWith("packagingConversion-")) {
+      updateFactoryStockEntry();
+    }
   });
 
   function resetProductForm() {
@@ -2571,6 +2986,7 @@ export function bindInventory({ root, store, signal }) {
     stockEntrySession.draft = {};
     stockEntrySession.imageUrl = "";
     stockEntrySession.defaults = {};
+    stockEntrySession.step = 1;
     if (affiliatedProductList) affiliatedProductList.innerHTML = "";
     if (affiliatedProductProgress) affiliatedProductProgress.hidden = true;
     if (stockEntryFields) stockEntryFields.hidden = false;
@@ -2578,6 +2994,8 @@ export function bindInventory({ root, store, signal }) {
     resetProductionStockFields();
     updateProductionStockVisibility();
     updateCustomSizeUnitVisibility();
+    updateFactoryStockEntry();
+    setStockFormStep(1);
     stockImageDataUrl = "";
     stockImageCleared = false;
     if (stockImageInput) stockImageInput.value = "";
@@ -2625,11 +3043,14 @@ export function bindInventory({ root, store, signal }) {
     resetProductionStockFields();
     updateProductionStockVisibility();
     updateCustomSizeUnitVisibility();
+    updateFactoryStockEntry();
     setStockImageUploadState();
     entrySaved = false;
     stockEntrySession.adding = true;
     stockEntrySession.editingProductId = "";
     stockEntrySession.draft = {};
+    stockEntrySession.step = 1;
+    setStockFormStep(1);
     if (stockEntryFields) stockEntryFields.hidden = false;
     if (saveStockEntryButton) saveStockEntryButton.disabled = false;
     if (productMessage) productMessage.textContent = `Add another type or size for ${activeProductFamily}.`;
@@ -2664,6 +3085,7 @@ export function bindInventory({ root, store, signal }) {
     stockEntrySession.draft = {};
     stockEntrySession.imageUrl = "";
     stockEntrySession.defaults = {};
+    stockEntrySession.step = 1;
     if (stockModal) stockModal.hidden = true;
   }
 
@@ -2839,6 +3261,13 @@ export function bindInventory({ root, store, signal }) {
       .filter((type) => type !== "piece")
       .map((type) => [type, Math.max(0, Number(formData.get(`packagingPrice-${type}`) || 0))])
       .filter(([, price]) => price > 0));
+    const stockEntryMode = String(formData.get("stockEntryMode") || "piece");
+    const stockPackagingType = String(formData.get("stockPackagingType") || "");
+    const enteredStockQuantity = Math.max(0, Number(formData.get("stock") || 0));
+    const selectedPackageMultiplier = Number(packagingConversions[stockPackagingType] || 0);
+    const factoryStockInPieces = stockEntryMode === "package"
+      ? enteredStockQuantity * selectedPackageMultiplier
+      : enteredStockQuantity;
     const productionQuantity = looseProductionQuantity + Object.entries(productionPackageQuantities)
       .reduce((total, [type, packageQuantity]) => total + packageQuantity * Number(packagingConversions[type] || 0), 0);
     const productionPackagingBreakdown = [
@@ -2867,6 +3296,16 @@ export function bindInventory({ root, store, signal }) {
 
     if (invalidNumberField) {
       if (productMessage) productMessage.textContent = "Stock quantities and prices must be zero or higher.";
+      return;
+    }
+
+    if (stockEntryMode === "package" && (!stockPackagingType || !Number.isFinite(selectedPackageMultiplier) || selectedPackageMultiplier <= 0)) {
+      if (productMessage) productMessage.textContent = "Enter how many pieces the selected package contains.";
+      return;
+    }
+
+    if (stockEntryMode === "package" && (!Number.isInteger(enteredStockQuantity) || enteredStockQuantity < 1)) {
+      if (productMessage) productMessage.textContent = "Enter at least one complete package.";
       return;
     }
 
@@ -2978,7 +3417,7 @@ export function bindInventory({ root, store, signal }) {
       sizeUnit,
       stockCategory: formData.get("stockCategory"),
       unit: sizeUnit,
-      stock: Number(formData.get("stock") || 0),
+      stock: factoryStockInPieces,
       reorderPoint: Number(formData.get("reorderPoint") || 0),
       unitCost: Number(formData.get("unitCost") || 0),
       unitPrice: Number(formData.get("unitPrice") || 0),
@@ -3039,6 +3478,7 @@ export function bindInventory({ root, store, signal }) {
     if (stockEntryFields) stockEntryFields.hidden = false;
     productForm.elements.stockCategory.value = stockCategoryIdForProduct(product);
     productForm.elements.stock.value = product.stock || 0;
+    if (productForm.elements.stockEntryMode) productForm.elements.stockEntryMode.value = "piece";
     productForm.elements.reorderPoint.value = product.reorderPoint || 0;
     productForm.elements.unitCost.value = product.unitCost || 0;
     productForm.elements.unitPrice.value = product.unitPrice || 0;
@@ -3054,6 +3494,8 @@ export function bindInventory({ root, store, signal }) {
     if (restoreDraft) restoreStockEditDraft();
     updateProductionStockVisibility();
     updateCustomSizeUnitVisibility();
+    updateFactoryStockEntry();
+    setStockFormStep(restoreDraft ? stockEntrySession.step : 1);
     stockImageDataUrl = restoreDraft ? (stockEntrySession.imageUrl || product.imageUrl || "") : (product.imageUrl || "");
     stockImageCleared = false;
     stockEntrySession.editingProductId = product.id;

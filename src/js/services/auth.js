@@ -209,11 +209,12 @@ export async function updateCurrentUserPassword(password) {
   return data;
 }
 
-export async function updateCurrentUserProfile({ name }) {
+export async function updateCurrentUserProfile({ name, staffImageUrl }) {
   const supabase = await getSupabaseClient();
   const { data, error } = await supabase.auth.updateUser({
     data: {
-      full_name: name.trim()
+      full_name: name.trim(),
+      avatar_url: String(staffImageUrl || "")
     }
   });
 

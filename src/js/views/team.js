@@ -5,12 +5,14 @@ import {
 } from "../services/tenant.js";
 import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus, setMembershipRole } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
+import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";
 import { formatDate } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { confirmActionDialog } from "../ui/action-dialog.js";
+import { renderStaffAvatar, staffInitials } from "../ui/staff-avatar.js";
 
 let activeLoginDetailsModal = null;
 
@@ -233,7 +235,7 @@ function renderAccountListItem(account) {
 
   return `
     <button class="team-member-row" type="button" data-team-account-id="${escapeHtml(account.id)}" data-search-index="${escapeHtml(searchIndex)}">
-      <span class="team-member-avatar">${escapeHtml(String(account.name || "TM").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())}</span>
+      ${renderStaffAvatar(account)}
       <span class="team-member-primary"><strong>${escapeHtml(account.name)}</strong><small>${escapeHtml(account.email)}</small></span>
       <span class="team-member-role">${escapeHtml(roleLabel(account.role))}</span>
       ${statusPill(accountIsActive(account) ? "active" : "inactive")}
@@ -264,7 +266,7 @@ function renderTeamAccountDetails(account, state) {
   return `
     <div class="team-account-summary">
       <div class="team-account-identity">
-        <span class="team-member-avatar">${escapeHtml(String(account.name || "TM").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())}</span>
+        ${renderStaffAvatar(account)}
         <div><h3>${escapeHtml(account.name)}</h3><p>${escapeHtml(roleLabel(account.role))}</p></div>
         ${statusPill(isActive ? "active" : "inactive")}
       </div>
@@ -329,6 +331,16 @@ export function renderTeam({ state }) {
         <section class="panel">
           ${panelHeader("Add Staff", "")}
           <form id="account-form" class="form-grid" novalidate>
+            <div class="span-full staff-image-upload staff-create-image-upload">
+              <span class="staff-image-preview" data-new-staff-image-preview>ST</span>
+              <div class="staff-image-upload-controls">
+                <label class="field">
+                  <span>Staff image (optional)</span>
+                  <input id="new-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}">
+                </label>
+                <button class="button subtle" type="button" data-clear-new-staff-image hidden>${icon("x")}<span>Remove image</span></button>
+              </div>
+            </div>
             <label class="field">
               <span>Full name</span>
               <input name="name" autocomplete="name" placeholder="Ada Okonkwo">
@@ -501,10 +513,54 @@ export function bindTeam({ root, store, signal }) {
 
   if (!form) return;
 
+  const staffImageInput = qs("#new-staff-image", form);
+  const staffImagePreview = qs("[data-new-staff-image-preview]", form);
+  const clearStaffImageButton = qs("[data-clear-new-staff-image]", form);
+  let staffImageUrl = "";
+
+  function updateNewStaffImagePreview() {
+    if (!staffImagePreview) return;
+    const name = String(form.elements.name?.value || "Staff");
+    staffImagePreview.innerHTML = staffImageUrl
+      ? `<img src="${escapeHtml(staffImageUrl)}" alt="Staff image preview">`
+      : escapeHtml(staffInitials(name));
+    if (clearStaffImageButton) clearStaffImageButton.hidden = !staffImageUrl;
+  }
+
+  staffImageInput?.addEventListener("change", async () => {
+    const file = staffImageInput.files?.[0];
+    const message = qs("#account-message", form);
+    if (message) message.textContent = "";
+    if (!file) return;
+    const error = validateStaffImageFile(file);
+    if (error) {
+      if (message) message.textContent = error;
+      staffImageInput.value = "";
+      return;
+    }
+    try {
+      staffImageUrl = await readStaffImage(file);
+      updateNewStaffImagePreview();
+    } catch (readError) {
+      if (message) message.textContent = readError.message;
+      staffImageInput.value = "";
+    }
+  }, { signal });
+
+  clearStaffImageButton?.addEventListener("click", () => {
+    staffImageUrl = "";
+    if (staffImageInput) staffImageInput.value = "";
+    updateNewStaffImagePreview();
+  }, { signal });
+
+  form.elements.name?.addEventListener("input", () => {
+    if (!staffImageUrl) updateNewStaffImagePreview();
+  }, { signal });
+
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const state = store.getState();
-    const values = collectAccountForm(form);
+    const values = { ...collectAccountForm(form), staffImageUrl };
     const errors = validateAccountForm(values, getScopedAccounts(state));
     const submitButton = qs('button[type="submit"]', form);
     const message = qs("#account-message", form);
@@ -525,7 +581,7 @@ export function bindTeam({ root, store, signal }) {
         store.dispatch({
           type: "SET_WORKSPACE",
           ...workspace,
-          message: "Member created"
+          message: workspace.staffImageWarning || "Member created"
         });
         showLoginDetailsModal({
           client: workspace.client,

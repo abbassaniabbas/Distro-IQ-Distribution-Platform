@@ -69,6 +69,9 @@ alter table public.memberships
 add column if not exists phone_number text not null default '';
 
 alter table public.memberships
+add column if not exists staff_image_url text not null default '';
+
+alter table public.memberships
 add column if not exists password_reset_requested_at timestamptz not null default now();
 
 create table if not exists public.membership_password_security (
@@ -1664,6 +1667,7 @@ begin
           'name', memberships.name,
           'email', memberships.email,
           'phoneNumber', memberships.phone_number,
+          'staffImageUrl', memberships.staff_image_url,
           'role', memberships.role,
           'status', memberships.status,
           'passwordResetRequired', memberships.password_reset_required,
@@ -1967,11 +1971,14 @@ end;
 $$;
 
 drop function if exists public.update_my_membership_profile(uuid, text);
+drop function if exists public.update_my_membership_profile(uuid, text, text);
+drop function if exists public.update_my_membership_profile(uuid, text, text, text);
 
 create or replace function public.update_my_membership_profile(
   p_client_id uuid,
   p_name text,
-  p_phone_number text
+  p_phone_number text,
+  p_staff_image_url text
 )
 returns public.memberships
 language plpgsql
@@ -1982,6 +1989,7 @@ declare
   v_membership public.memberships;
   v_name text := trim(coalesce(p_name, ''));
   v_phone_number text := trim(coalesce(p_phone_number, ''));
+  v_staff_image_url text := trim(coalesce(p_staff_image_url, ''));
 begin
   if auth.uid() is null then
     raise exception 'Authentication required';
@@ -1999,9 +2007,15 @@ begin
     raise exception 'Enter a valid phone number';
   end if;
 
+  if char_length(v_staff_image_url) > 800000
+    or (v_staff_image_url <> '' and v_staff_image_url !~ '^data:image/(png|jpeg|webp);base64,') then
+    raise exception 'Choose a valid staff image';
+  end if;
+
   update public.memberships
   set name = v_name,
-      phone_number = v_phone_number
+      phone_number = v_phone_number,
+      staff_image_url = v_staff_image_url
   where client_id = p_client_id
     and user_id = auth.uid()
     and status = 'active'
@@ -2013,6 +2027,63 @@ begin
   end if;
 
   return v_membership;
+end;
+$$;
+
+create or replace function public.set_membership_staff_image(
+  p_client_id uuid,
+  p_membership_id uuid,
+  p_staff_image_url text
+)
+returns public.memberships
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_actor public.memberships;
+  v_target public.memberships;
+  v_staff_image_url text := trim(coalesce(p_staff_image_url, ''));
+begin
+  if auth.uid() is null then
+    raise exception 'Authentication required';
+  end if;
+
+  select * into v_actor
+  from public.memberships
+  where client_id = p_client_id
+    and user_id = auth.uid()
+    and status = 'active'
+    and not password_reset_required;
+
+  if v_actor.id is null then
+    raise exception 'Active company access required';
+  end if;
+
+  select * into v_target
+  from public.memberships
+  where id = p_membership_id
+    and client_id = p_client_id;
+
+  if v_target.id is null then
+    raise exception 'Staff account not found';
+  end if;
+
+  if v_actor.role <> 'ceo' and v_target.user_id <> auth.uid() then
+    raise exception 'Only the CEO can update another staff image';
+  end if;
+
+  if char_length(v_staff_image_url) > 800000
+    or (v_staff_image_url <> '' and v_staff_image_url !~ '^data:image/(png|jpeg|webp);base64,') then
+    raise exception 'Choose a valid staff image';
+  end if;
+
+  update public.memberships
+  set staff_image_url = v_staff_image_url
+  where id = p_membership_id
+  returning * into v_target;
+
+  return v_target;
 end;
 $$;
 
@@ -2110,7 +2181,8 @@ $$;
 grant execute on function public.create_client_workspace(text, text, text, text, text, text) to authenticated;
 grant execute on function public.record_activity(uuid, text, text, text, text) to authenticated;
 grant execute on function public.activate_my_membership(uuid, text) to authenticated;
-grant execute on function public.update_my_membership_profile(uuid, text, text) to authenticated;
+grant execute on function public.update_my_membership_profile(uuid, text, text, text) to authenticated;
+grant execute on function public.set_membership_staff_image(uuid, uuid, text) to authenticated;
 grant execute on function public.set_membership_active_status(uuid, uuid, boolean) to authenticated;
 grant execute on function public.set_membership_role(uuid, uuid, text) to authenticated;
 grant execute on function public.is_client_member(uuid) to authenticated;
@@ -2128,7 +2200,8 @@ grant execute on function public.get_platform_overview() to authenticated;
 grant execute on function public.get_platform_console() to authenticated;
 
 revoke all on function public.activate_my_membership(uuid, text) from public, anon;
-revoke all on function public.update_my_membership_profile(uuid, text, text) from public, anon;
+revoke all on function public.update_my_membership_profile(uuid, text, text, text) from public, anon;
+revoke all on function public.set_membership_staff_image(uuid, uuid, text) from public, anon;
 revoke all on function public.set_membership_active_status(uuid, uuid, boolean) from public, anon;
 revoke all on function public.set_membership_role(uuid, uuid, text) from public, anon;
 revoke all on function public.has_pending_membership_setup(uuid) from public, anon, authenticated;
