@@ -29,7 +29,6 @@ import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../s
 import { escapeHtml, qs } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
-import { renderStaffAvatar } from "../ui/staff-avatar.js";
 import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
 
 function getCurrentAccount(state) {
@@ -290,15 +289,13 @@ function renderProfileSettings(state, account) {
     <section class="panel">
       ${panelHeader("My profile", "")}
       <form id="profile-settings-form" class="form-grid" novalidate>
-        <div class="span-full staff-image-upload">
-          ${renderStaffAvatar({ name, staffImageUrl: account?.staffImageUrl }, "staff-image-preview")}
-          <div class="staff-image-upload-controls">
-            <label class="field">
-              <span>Staff image (optional)</span>
-              <input id="profile-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}">
-            </label>
-            <button class="button subtle" type="button" data-clear-profile-image ${account?.staffImageUrl ? "" : "hidden"}>${icon("x")}<span>Remove image</span></button>
-          </div>
+        <div class="span-full staff-image-picker-row">
+          <button class="staff-image-preview staff-image-picker" type="button" aria-label="Choose profile picture">
+            ${account?.staffImageUrl
+              ? `<img src="${escapeHtml(account.staffImageUrl)}" alt="${escapeHtml(name || "Staff member")}">`
+              : escapeHtml(String(name || "ST").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())}
+          </button>
+          <input class="sr-only" id="profile-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}" tabindex="-1">
         </div>
         <label class="field">
           <span>Full name</span>
@@ -496,7 +493,6 @@ export function bindSettings({ root, store }) {
   const currentAccount = getCurrentAccount(state);
   const profileImageInput = qs("#profile-staff-image", profileForm || root);
   const profileImagePreview = qs(".staff-image-preview", profileForm || root);
-  const clearProfileImageButton = qs("[data-clear-profile-image]", profileForm || root);
   let profileStaffImageUrl = String(currentAccount?.staffImageUrl || "");
 
   function updateProfileImagePreview() {
@@ -504,8 +500,9 @@ export function bindSettings({ root, store }) {
     profileImagePreview.innerHTML = profileStaffImageUrl
       ? `<img src="${escapeHtml(profileStaffImageUrl)}" alt="Profile image preview">`
       : escapeHtml(String(profileForm?.elements.name?.value || currentAccount?.name || "ST").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase());
-    if (clearProfileImageButton) clearProfileImageButton.hidden = !profileStaffImageUrl;
   }
+
+  profileImagePreview?.addEventListener("click", () => profileImageInput?.click());
 
   profileImageInput?.addEventListener("change", async () => {
     const file = profileImageInput.files?.[0];
@@ -525,12 +522,6 @@ export function bindSettings({ root, store }) {
       if (message) message.textContent = readError.message;
       profileImageInput.value = "";
     }
-  });
-
-  clearProfileImageButton?.addEventListener("click", () => {
-    profileStaffImageUrl = "";
-    if (profileImageInput) profileImageInput.value = "";
-    updateProfileImagePreview();
   });
 
   profileForm?.elements.name?.addEventListener("input", () => {

@@ -67,6 +67,25 @@ export async function restoreProductImages(clientId, products = []) {
   if (!clientId || !globalThis.indexedDB) return [];
 
   const restored = [];
+  let storedRecords = [];
+
+  try {
+    storedRecords = await runImageRequest("readonly", (store) => store.getAll());
+  } catch {
+    storedRecords = [];
+  }
+
+  const recordsByKey = new Map(storedRecords.map((record) => [String(record?.key || ""), record]));
+  const recordsByProductId = new Map();
+  storedRecords.forEach((record) => {
+    const productId = String(record?.productId || "");
+    if (!productId || !String(record?.dataUrl || "").startsWith("data:image/")) return;
+    const current = recordsByProductId.get(productId);
+    if (!current || String(record.updatedAt || "") > String(current.updatedAt || "")) {
+      recordsByProductId.set(productId, record);
+    }
+  });
+
   for (const product of products) {
     try {
       let imageStorageKey = String(product.imageStorageKey || "").trim();
@@ -77,9 +96,18 @@ export async function restoreProductImages(clientId, products = []) {
         imageStorageKey = await saveProductImage({ clientId, productId: product.id, dataUrl: imageUrl });
       } else if (!imageUrl && (imageStorageKey || canonicalStorageKey)) {
         const restoreKey = imageStorageKey || canonicalStorageKey;
-        const record = await runImageRequest("readonly", (store) => store.get(restoreKey));
+        const record = recordsByKey.get(restoreKey) || recordsByProductId.get(String(product.id || ""));
         imageUrl = String(record?.dataUrl || "");
-        if (imageUrl) imageStorageKey = restoreKey;
+        if (imageUrl) {
+          imageStorageKey = record?.key || restoreKey;
+          if (imageStorageKey !== canonicalStorageKey) {
+            imageStorageKey = await saveProductImage({
+              clientId,
+              productId: product.id,
+              dataUrl: imageUrl
+            });
+          }
+        }
       }
 
       if (imageUrl) {

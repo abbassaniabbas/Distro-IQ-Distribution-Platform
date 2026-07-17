@@ -476,6 +476,14 @@
   letter-spacing: 0;
 }
 
+.ceo-metric-secondary {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
 .metric-meta {
   color: var(--muted);
   font-size: 0.82rem;

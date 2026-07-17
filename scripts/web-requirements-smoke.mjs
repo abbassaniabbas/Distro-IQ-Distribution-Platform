@@ -147,6 +147,8 @@ assert.match(managerSettings, /data-open-password-modal/);
 assert.match(managerSettings, /name="oldPassword"/);
 assert.match(managerSettings, /data-open-delete-factory/);
 assert.match(managerSettings, /id="profile-staff-image"[^>]+type="file"/, "profile settings must accept an optional staff image");
+assert.match(managerSettings, /staff-image-preview staff-image-picker[^>]+aria-label="Choose profile picture"/, "profile picture selection must use the circular avatar surface");
+assert.doesNotMatch(managerSettings, /Staff image \(optional\)|Remove image/, "profile settings must not show file-upload instructions or removal text");
 const managerTeam = renderTeam({ state: store.getState() });
 assert.doesNotMatch(managerTeam, /<option value="ceo">/, "CEO must not be assignable as a staff role");
 assert.doesNotMatch(managerTeam, /<option value="manager">/);
@@ -157,6 +159,9 @@ assert.match(managerTeam, /team-account-modal/);
 assert.match(managerTeam, /Add Staff/);
 assert.match(managerTeam, /Create staff/);
 assert.match(managerTeam, /id="new-staff-image"[^>]+type="file"/, "staff creation must accept an optional staff image");
+assert.match(managerTeam, /staff-image-preview staff-image-picker[^>]+aria-label="Choose staff profile picture"/, "staff creation must use the circular avatar surface as its picker");
+assert.doesNotMatch(managerTeam, /Staff image \(optional\)|Remove image/, "staff creation must not show file-upload instructions or removal text");
+assert.match(managerTeam, /staff-create-compact[\s\S]*staff-create-photo[\s\S]*staff-create-fields/, "Add Staff must place the profile picture on the left and compact fields on the right");
 assert.doesNotMatch(managerTeam, /Team access/);
 const staffImageFixture = "data:image/jpeg;base64,STAFF_IMAGE_FIXTURE";
 store.dispatch({
@@ -1131,6 +1136,8 @@ assert.match(productSizeDashboard, /data-size-rep-stock=/);
 assert.match(productSizeDashboard, /data-size-available-packages=/);
 assert.match(productSizeDashboard, /data-size-detail-available-packages/);
 assert.match(productSizeDashboard, /pieces[\s\S]*(?:cartons|packs)/, "configured package equivalents must appear alongside CEO stock pieces");
+assert.match(productSizeDashboard, /<div class="metric-value">[^<]*(?:cartons|packs)[^<]*<\/div>\s*<div class="ceo-metric-secondary">[^<]*pieces<\/div>/, "CEO Stock metric must emphasize packages above the piece count");
+assert.doesNotMatch(productSizeDashboard, /in full packages/, "CEO stock summaries must not use the phrase in full packages");
 assert.doesNotMatch(productSizeDashboard, /This month/);
 assert.doesNotMatch(productSizeDashboard, /This year/);
 

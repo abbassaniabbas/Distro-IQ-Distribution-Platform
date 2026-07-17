@@ -283,7 +283,7 @@ function buildCeoFreshness(state) {
   };
 }
 
-function renderCeoMetricCard({ label, value, meta, iconName }) {
+function renderCeoMetricCard({ label, value, secondaryValue = "", meta, iconName }) {
   return `
     <article class="metric-card ceo-metric-card">
       <header>
@@ -292,6 +292,7 @@ function renderCeoMetricCard({ label, value, meta, iconName }) {
       </header>
       <div>
         <div class="metric-value">${escapeHtml(value)}</div>
+        ${secondaryValue ? `<div class="ceo-metric-secondary">${escapeHtml(secondaryValue)}</div>` : ""}
         <div class="metric-meta">${escapeHtml(meta)}</div>
       </div>
     </article>
@@ -1281,7 +1282,7 @@ function renderCeoProductStock(state) {
               <strong>${escapeHtml(family)}</strong>
               <span>${formatNumber(types.length)} type${types.length === 1 ? "" : "s"} · ${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"}</span>
               <b>${formatNumber(familyStock)} pieces available</b>
-              <small class="ceo-family-package-total">${escapeHtml(familyPackages === "Package conversion not set" ? familyPackages : `${familyPackages} in full packages across variants`)}</small>
+              <small class="ceo-family-package-total">${escapeHtml(familyPackages === "Package conversion not set" ? familyPackages : `${familyPackages} across variants`)}</small>
             </button>
             <div class="ceo-product-type-dropdown" data-product-type-dropdown="${escapeHtml(family)}" hidden>
               ${types.map((type) => `
@@ -1383,10 +1384,15 @@ function renderCeoDashboard(state) {
         })}
         ${renderCeoMetricCard({
           label: "Stock",
-          value: `${formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits)} pieces`,
+          value: stockPackageSummary === "Package conversion not set"
+            ? `${formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits)} pieces`
+            : stockPackageSummary,
+          secondaryValue: stockPackageSummary === "Package conversion not set"
+            ? ""
+            : `${formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits)} pieces`,
           meta: stockPackageSummary === "Package conversion not set"
             ? "Package conversion not set · factory plus representative custody"
-            : `${stockPackageSummary} in full packages · factory plus representative custody`,
+            : "Factory plus representative custody",
           iconName: "package"
         })}
         ${renderCeoMetricCard({

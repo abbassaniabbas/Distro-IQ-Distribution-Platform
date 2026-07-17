@@ -331,38 +331,36 @@ export function renderTeam({ state }) {
         <section class="panel">
           ${panelHeader("Add Staff", "")}
           <form id="account-form" class="form-grid" novalidate>
-            <div class="span-full staff-image-upload staff-create-image-upload">
-              <span class="staff-image-preview" data-new-staff-image-preview>ST</span>
-              <div class="staff-image-upload-controls">
+            <div class="span-full staff-create-compact">
+              <div class="staff-image-picker-row staff-create-photo">
+                <button class="staff-image-preview staff-image-picker" type="button" data-new-staff-image-preview aria-label="Choose staff profile picture">ST</button>
+                <input class="sr-only" id="new-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}" tabindex="-1">
+              </div>
+              <div class="staff-create-fields">
                 <label class="field">
-                  <span>Staff image (optional)</span>
-                  <input id="new-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}">
+                  <span>Full name</span>
+                  <input name="name" autocomplete="name" placeholder="Ada Okonkwo">
+                  ${renderFieldError("name")}
                 </label>
-                <button class="button subtle" type="button" data-clear-new-staff-image hidden>${icon("x")}<span>Remove image</span></button>
+                <label class="field">
+                  <span>Email</span>
+                  <input name="email" type="email" autocomplete="email" placeholder="ada@example.com">
+                  ${renderFieldError("email")}
+                </label>
+                <label class="field">
+                  <span>Phone number</span>
+                  <input name="phoneNumber" type="tel" inputmode="tel" autocomplete="tel" placeholder="0800 000 0000" required>
+                  ${renderFieldError("phoneNumber")}
+                </label>
+                <label class="field">
+                  <span>Role assignment</span>
+                  <select name="role">
+                    ${renderRoleOptions(state)}
+                  </select>
+                  ${renderFieldError("role")}
+                </label>
               </div>
             </div>
-            <label class="field">
-              <span>Full name</span>
-              <input name="name" autocomplete="name" placeholder="Ada Okonkwo">
-              ${renderFieldError("name")}
-            </label>
-            <label class="field">
-              <span>Email</span>
-              <input name="email" type="email" autocomplete="email" placeholder="ada@example.com">
-              ${renderFieldError("email")}
-            </label>
-            <label class="field">
-              <span>Phone number</span>
-              <input name="phoneNumber" type="tel" inputmode="tel" autocomplete="tel" placeholder="0800 000 0000" required>
-              ${renderFieldError("phoneNumber")}
-            </label>
-            <label class="field span-full">
-              <span>Role assignment</span>
-              <select name="role">
-                ${renderRoleOptions(state)}
-              </select>
-              ${renderFieldError("role")}
-            </label>
             <div class="span-full split">
               <span class="muted">They sign in once with a temporary password, then choose a new one.</span>
               ${textButton({
@@ -515,7 +513,6 @@ export function bindTeam({ root, store, signal }) {
 
   const staffImageInput = qs("#new-staff-image", form);
   const staffImagePreview = qs("[data-new-staff-image-preview]", form);
-  const clearStaffImageButton = qs("[data-clear-new-staff-image]", form);
   let staffImageUrl = "";
 
   function updateNewStaffImagePreview() {
@@ -524,8 +521,9 @@ export function bindTeam({ root, store, signal }) {
     staffImagePreview.innerHTML = staffImageUrl
       ? `<img src="${escapeHtml(staffImageUrl)}" alt="Staff image preview">`
       : escapeHtml(staffInitials(name));
-    if (clearStaffImageButton) clearStaffImageButton.hidden = !staffImageUrl;
   }
+
+  staffImagePreview?.addEventListener("click", () => staffImageInput?.click(), { signal });
 
   staffImageInput?.addEventListener("change", async () => {
     const file = staffImageInput.files?.[0];
@@ -545,12 +543,6 @@ export function bindTeam({ root, store, signal }) {
       if (message) message.textContent = readError.message;
       staffImageInput.value = "";
     }
-  }, { signal });
-
-  clearStaffImageButton?.addEventListener("click", () => {
-    staffImageUrl = "";
-    if (staffImageInput) staffImageInput.value = "";
-    updateNewStaffImagePreview();
   }, { signal });
 
   form.elements.name?.addEventListener("input", () => {
