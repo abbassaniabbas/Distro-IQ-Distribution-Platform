@@ -530,18 +530,29 @@ body[data-app-view="auth"] .view-root > .view {
 }
 
 @media (max-width: 640px) {
+  .sidebar {
+    gap: 12px;
+    padding: 12px;
+    overflow: hidden;
+  }
+
   .brand {
     grid-template-columns: 38px minmax(0, 1fr);
   }
 
   .nav-list {
     grid-auto-columns: minmax(124px, 1fr);
+    margin-inline: -12px;
+    padding-inline: 12px;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
   }
 
   .nav-link {
-    min-height: 40px;
+    min-height: 44px;
     padding: 0 8px;
     font-size: 0.85rem;
+    scroll-snap-align: start;
   }
 
   .sidebar-footer {
@@ -550,6 +561,33 @@ body[data-app-view="auth"] .view-root > .view {
 
   .topbar-actions {
     align-items: stretch;
+  }
+
+  .topbar {
+    gap: 12px;
+    padding: 14px 12px;
+  }
+
+  .topbar-actions .search-field {
+    width: 100%;
+    flex: 1 1 100%;
+  }
+
+  .topbar-icon-button,
+  .topbar-clear-notifications,
+  .topbar-dismiss-notification {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+  }
+
+  .topbar-heading > .eyebrow {
+    display: none;
+  }
+
+  .view-root,
+  body[data-app-view="auth"] .view-root {
+    padding: 14px 12px 24px;
   }
 
   .dashboard-status-summary {
@@ -567,6 +605,12 @@ body[data-app-view="auth"] .view-root > .view {
     left: 12px !important;
     right: 12px;
     width: auto !important;
+  }
+
+  .toast-region {
+    right: 12px;
+    bottom: 12px;
+    width: calc(100vw - 24px);
   }
 
 }

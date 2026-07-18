@@ -1,5 +1,6 @@
 import { CURRENCY_OPTIONS } from "./tenant.js";
 import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
+import { classifyAppFailure } from "./error-classification.js";
 
 const CLIENT_SELECT_WITH_BRAND = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, brand_color, timezone, currency, currency_symbol, credit_limit_email_enabled, credit_limit_sms_enabled, sku_format, invoice_format, packaging_types, packaging_defaults, created_at)";
 const CLIENT_SELECT_LEGACY = "id, client_id, role, status, password_reset_required, clients(id, company_name, logo_data_url, timezone, currency, currency_symbol, created_at)";
@@ -121,6 +122,14 @@ function mapPackagingChangeRequest(row) {
   };
 }
 
+function mapSharedProductImage(row) {
+  return {
+    productId: String(row.sku || ""),
+    imageUrl: String(row.image_url || ""),
+    remoteSynced: true
+  };
+}
+
 function mapCreditLimit(row, accountByMembershipId = new Map()) {
   const account = accountByMembershipId.get(row.membership_id);
 
@@ -213,6 +222,11 @@ function throwIfBackendMissing() {
   if (!isBackendConfigured()) {
     throw new Error("Supabase is not configured.");
   }
+}
+
+function sharedImageFailure(error, fallback) {
+  const failure = classifyAppFailure({ error, configured: isBackendConfigured() });
+  return new Error(`${failure.label}: ${fallback}${failure.detail ? ` ${failure.detail}` : ""}`);
 }
 
 async function readEdgeFunctionError(error) {
@@ -415,7 +429,8 @@ export async function loadWorkspace() {
     { data: creditLimitRows, error: creditLimitError },
     { data: creditHistoryRows, error: creditHistoryError },
     { data: packagingRequestRows, error: packagingRequestError },
-    { data: messageRows, error: messageError }
+    { data: messageRows, error: messageError },
+    { data: productImageRows, error: productImageError }
   ] = await Promise.all([
     loadWorkspaceAccountRows(supabase, client.id),
     supabase
@@ -449,7 +464,11 @@ export async function loadWorkspace() {
       .order("requested_at", { ascending: false }),
     supabase.rpc("get_my_workspace_messages", {
       p_client_id: client.id
-    })
+    }),
+    supabase
+      .from("stock_products")
+      .select("sku, image_url")
+      .eq("client_id", client.id)
   ]);
 
   if (accountError) {
@@ -484,6 +503,10 @@ export async function loadWorkspace() {
     console.warn("Messages could not be loaded:", messageError.message);
   }
 
+  if (productImageError) {
+    console.warn("Shared stock pictures could not be loaded:", productImageError.message);
+  }
+
   const accounts = (accountRows || []).map(mapAccount);
   const accountByMembershipId = new Map(accounts.map((account) => [account.id, account]));
 
@@ -496,8 +519,73 @@ export async function loadWorkspace() {
     creditLimits: creditLimitError ? undefined : (creditLimitRows || []).map((row) => mapCreditLimit(row, accountByMembershipId)),
     creditLimitHistory: creditHistoryError ? undefined : (creditHistoryRows || []).map(mapCreditLimitHistory),
     packagingChangeRequests: packagingRequestError ? undefined : (packagingRequestRows || []).map(mapPackagingChangeRequest),
-    messages: messageError ? [] : (messageRows || []).map(mapWorkspaceMessage)
+    messages: messageError ? [] : (messageRows || []).map(mapWorkspaceMessage),
+    productImages: productImageError ? undefined : (productImageRows || []).map(mapSharedProductImage)
   };
+}
+
+export async function loadSharedProductImages(clientId) {
+  throwIfBackendMissing();
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase
+    .from("stock_products")
+    .select("sku, image_url")
+    .eq("client_id", clientId);
+
+  if (error) throw sharedImageFailure(error, "Shared stock pictures could not be loaded.");
+  return (data || []).map(mapSharedProductImage);
+}
+
+export async function saveSharedProductImage({ clientId, sku, previousSku = "", name, unit = "piece", status = "active", imageUrl = "" }) {
+  throwIfBackendMissing();
+  const supabase = await getSupabaseClient();
+  const candidateSkus = [...new Set([previousSku, sku].map((value) => String(value || "").trim()).filter(Boolean))];
+  const { data: existingRows, error: readError } = await supabase
+    .from("stock_products")
+    .select("id, sku")
+    .eq("client_id", clientId)
+    .in("sku", candidateSkus);
+
+  if (readError) throw sharedImageFailure(readError, "The shared stock picture record could not be checked.");
+
+  const existingRow = (existingRows || []).find((row) => row.sku === previousSku) || existingRows?.[0];
+  if (existingRow) {
+    const { error } = await supabase
+      .from("stock_products")
+      .update({
+        sku: String(sku),
+        name: String(name || sku),
+        unit: String(unit || "piece"),
+        status: String(status || "active"),
+        image_url: String(imageUrl || ""),
+        updated_at: new Date().toISOString()
+      })
+      .eq("id", existingRow.id)
+      .eq("client_id", clientId);
+    if (error) throw sharedImageFailure(error, "The stock picture could not be shared.");
+    return;
+  }
+
+  const { error } = await supabase.from("stock_products").insert({
+    client_id: clientId,
+    sku: String(sku),
+    name: String(name || sku),
+    unit: String(unit || "piece"),
+    status: String(status || "active"),
+    image_url: String(imageUrl || "")
+  });
+
+  if (error) {
+    if (String(error.code || "") === "23505") {
+      const { error: retryError } = await supabase
+        .from("stock_products")
+        .update({ image_url: String(imageUrl || ""), name: String(name || sku), updated_at: new Date().toISOString() })
+        .eq("client_id", clientId)
+        .eq("sku", String(sku));
+      if (!retryError) return;
+    }
+    throw sharedImageFailure(error, "The stock picture could not be shared.");
+  }
 }
 
 export async function loadWorkspaceFeatureModules(clientId) {

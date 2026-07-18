@@ -94,6 +94,10 @@ export async function restoreProductImages(clientId, products = []) {
 
       if (imageUrl.startsWith("data:image/") && !imageStorageKey) {
         imageStorageKey = await saveProductImage({ clientId, productId: product.id, dataUrl: imageUrl });
+      } else if (!imageUrl && product.imageRemoteSynced) {
+        const staleKey = imageStorageKey || canonicalStorageKey;
+        if (staleKey) await removeProductImage(staleKey);
+        continue;
       } else if (!imageUrl && (imageStorageKey || canonicalStorageKey)) {
         const restoreKey = imageStorageKey || canonicalStorageKey;
         const record = recordsByKey.get(restoreKey) || recordsByProductId.get(String(product.id || ""));

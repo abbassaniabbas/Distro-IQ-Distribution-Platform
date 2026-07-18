@@ -2901,6 +2901,61 @@
   font-size: 1.25rem;
 }
 
+@media (max-width: 640px) {
+  .stock-modal-backdrop {
+    align-items: end;
+    padding: 10px;
+  }
+
+  .stock-modal {
+    width: 100%;
+    max-width: 100%;
+    max-height: calc(100dvh - 20px);
+    gap: 13px;
+    padding: 14px;
+    border-radius: 12px;
+    overscroll-behavior: contain;
+  }
+
+  .stock-modal-header,
+  .stock-modal-header > div {
+    min-width: 0;
+  }
+
+  .stock-modal-header h2,
+  .stock-modal-header p {
+    overflow-wrap: anywhere;
+  }
+
+  .stock-modal-header .icon-button {
+    flex: 0 0 44px;
+  }
+
+  .manager-form-actions,
+  .stock-wizard-actions,
+  .report-modal-actions,
+  .table-document-actions {
+    max-width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .table-document-actions .icon-button,
+  .report-modal-actions .icon-button {
+    width: 44px;
+    height: 44px;
+    flex: 0 0 44px;
+  }
+
+  .stock-subtabs,
+  .finance-subtabs {
+    max-width: 100%;
+    overflow-x: auto;
+    overscroll-behavior-inline: contain;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: thin;
+  }
+}
+
 .action-dialog-backdrop {
   z-index: 120;
   animation: action-dialog-backdrop-in 160ms ease-out both;

@@ -301,7 +301,7 @@ function getPersistableState(state) {
     ...state,
     products: (state.products || []).map((product) => ({
       ...product,
-      imageUrl: product.imageStorageKey && String(product.imageUrl || "").startsWith("data:image/")
+      imageUrl: (product.imageStorageKey || product.imageRemoteSynced) && String(product.imageUrl || "").startsWith("data:image/")
         ? ""
         : product.imageUrl || ""
     })),
@@ -313,6 +313,20 @@ function getPersistableState(state) {
     platformAdmin: false,
     platformOverview: []
   };
+}
+
+function applySharedProductImages(products, images) {
+  if (!Array.isArray(images)) return products;
+  const imagesByProductId = new Map(images.map((image) => [String(image.productId || ""), image]));
+  return products.map((product) => {
+    const image = imagesByProductId.get(String(product.id || ""));
+    if (!image) return product;
+    return {
+      ...product,
+      imageUrl: String(image.imageUrl || ""),
+      imageRemoteSynced: true
+    };
+  });
 }
 
 function canManageOrderFlow(state) {
@@ -851,6 +865,7 @@ function reducer(currentState, action) {
 
     case "SET_WORKSPACE": {
       const baseState = workspaceBaseState(state, action.client?.id);
+      baseState.products = applySharedProductImages(baseState.products, action.productImages);
 
       return {
         ...baseState,
@@ -880,6 +895,7 @@ function reducer(currentState, action) {
 
     case "SET_AUTHENTICATED_WORKSPACE": {
       const baseState = workspaceBaseState(state, action.client?.id);
+      baseState.products = applySharedProductImages(baseState.products, action.productImages);
       const nextState = {
         ...baseState,
         session: action.session || null,
@@ -2295,6 +2311,7 @@ function reducer(currentState, action) {
           : { ...(existingProduct?.packagingPrices || {}) },
         imageUrl: String(action.imageUrl ?? existingProduct?.imageUrl ?? "").trim(),
         imageStorageKey: String(action.imageStorageKey ?? existingProduct?.imageStorageKey ?? "").trim(),
+        imageRemoteSynced: Boolean(action.imageRemoteSynced ?? existingProduct?.imageRemoteSynced),
         status,
         soldOutAt: Math.max(0, Number(action.stock ?? existingProduct?.stock ?? 0)) > 0 ? "" : (existingProduct?.soldOutAt || ""),
         equipmentStatus: stockCategory === "equipment" ? (existingProduct?.equipmentStatus || "in_stock") : undefined,
@@ -2325,8 +2342,11 @@ function reducer(currentState, action) {
       state.products.forEach((product) => {
         const image = imagesByProductId.get(product.id);
         if (!image) return;
-        product.imageUrl = String(image.imageUrl || product.imageUrl || "");
+        product.imageUrl = action.authoritative
+          ? String(image.imageUrl || "")
+          : String(image.imageUrl || product.imageUrl || "");
         product.imageStorageKey = String(image.imageStorageKey || product.imageStorageKey || "");
+        if (action.authoritative || image.remoteSynced) product.imageRemoteSynced = true;
       });
       return state;
     }

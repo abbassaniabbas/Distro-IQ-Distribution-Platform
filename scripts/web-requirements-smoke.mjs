@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { effectiveOrderStatus, getCustomerOrderCompletion, getFinancialSalesLines, getReturnableCustomerChoices, hasOrdersRequiringAutomaticDelay } from "../src/js/services/calculations.js";
 import { getNigeriaLgas, NIGERIA_STATES_AND_LGAS, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../src/js/data/nigeria-locations.js";
@@ -28,6 +29,13 @@ import { buildLoginDetailsEmail } from "../src/js/views/team.js";
 import { renderTeam } from "../src/js/views/team.js";
 
 globalThis.window = { location: { hash: "#/dashboard" } };
+const responsiveLayoutCss = readFileSync(new URL("../src/css/layout.css", import.meta.url), "utf8");
+const responsiveComponentCss = readFileSync(new URL("../src/css/components.css", import.meta.url), "utf8");
+const responsiveViewCss = readFileSync(new URL("../src/css/views.css", import.meta.url), "utf8");
+assert.match(responsiveLayoutCss, /@media \(max-width: 640px\)[\s\S]*\.view-root,[\s\S]*padding: 14px 12px 24px/, "phone layouts must use compact page padding");
+assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-button[\s\S]*width: 44px;[\s\S]*height: 44px/, "phone and tablet controls must retain touch-friendly targets");
+assert.match(responsiveComponentCss, /\.table-wrap[\s\S]*-webkit-overflow-scrolling: touch/, "wide tables must scroll safely on touch devices");
+assert.match(responsiveViewCss, /@media \(max-width: 640px\)[\s\S]*max-height: calc\(100dvh - 20px\)/, "mobile modals must remain inside the visible viewport");
 const currentTestDate = new Date().toISOString().slice(0, 10);
 const browserStorage = new Map();
 globalThis.localStorage = {
@@ -279,6 +287,13 @@ store.dispatch({
   images: [{ productId: "SKU-IMAGE-PERSIST", imageUrl: persistentImageData, imageStorageKey: `${client.id}:SKU-IMAGE-PERSIST` }]
 });
 assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, persistentImageData, "saved stock images must restore after workspace hydration");
+store.dispatch({
+  type: "HYDRATE_PRODUCT_IMAGES",
+  images: [{ productId: "SKU-IMAGE-PERSIST", imageUrl: "data:image/png;base64,SHARED_PORTAL_IMAGE", remoteSynced: true }],
+  authoritative: true
+});
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, "data:image/png;base64,SHARED_PORTAL_IMAGE", "shared Supabase stock pictures must replace a portal's local image");
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageRemoteSynced, true, "shared stock pictures must be marked as backend synchronized");
 store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-IMAGE-PERSIST"] });
 
 store.dispatch({

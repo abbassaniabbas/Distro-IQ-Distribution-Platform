@@ -14,7 +14,9 @@ import {
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
 import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
+import { loadSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { removeProductImage, saveProductImage } from "../services/product-images.js";
+import { isBackendConfigured } from "../services/supabase-client.js";
 import { printTabularReport } from "../services/report-export.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
@@ -2052,6 +2054,36 @@ export function renderInventory({ state }) {
 
 export function bindInventory({ root, store, signal }) {
   bindAdjustments({ root, store });
+  const imageRefreshState = store.getState();
+  if (isBackendConfigured() && imageRefreshState.client?.id) {
+    const refreshSharedStockPictures = () => {
+      loadSharedProductImages(imageRefreshState.client.id).then((images) => {
+        if (signal?.aborted) return;
+        const currentProducts = new Map((store.getState().products || []).map((product) => [String(product.id), product]));
+        const changedImages = images.filter((image) => {
+          const product = currentProducts.get(String(image.productId || ""));
+          return product && (
+            String(product.imageUrl || "") !== String(image.imageUrl || "") ||
+            !product.imageRemoteSynced
+          );
+        });
+        if (changedImages.length) {
+          store.dispatch({
+            type: "HYDRATE_PRODUCT_IMAGES",
+            images: changedImages,
+            authoritative: true
+          });
+        }
+      }).catch((error) => {
+        console.warn("Shared stock pictures could not be refreshed:", error.message);
+      });
+    };
+    refreshSharedStockPictures();
+    if (signal) {
+      const sharedPictureRefreshTimer = globalThis.setInterval(refreshSharedStockPictures, 15000);
+      signal.addEventListener("abort", () => globalThis.clearInterval(sharedPictureRefreshTimer), { once: true });
+    }
+  }
   const categoryFilter = qs("#inventory-category-filter", root);
   const selectAllStock = qs(".js-select-all-stock", root);
   const deleteSelectedStockButton = qs(".js-delete-selected-stock", root);
@@ -3477,6 +3509,26 @@ export function bindInventory({ root, store, signal }) {
       imageUrlForState = "";
     }
 
+    const sharedImageChanged = shouldStoreImage || stockImageCleared || Boolean(
+      existingProduct && existingProduct.id !== sku && imageUrlForState
+    );
+    if (sharedImageChanged && isBackendConfigured()) {
+      try {
+        await saveSharedProductImage({
+          clientId: state.client?.id,
+          sku,
+          previousSku: existingProduct?.id || "",
+          name: primaryProductName,
+          unit: sizeUnit,
+          status: String(formData.get("status") || "active"),
+          imageUrl: imageUrlForState
+        });
+      } catch (error) {
+        if (productMessage) productMessage.textContent = error.message;
+        return;
+      }
+    }
+
     if (existingProductId) {
       stockEntrySession.open = false;
     } else {
@@ -3518,6 +3570,9 @@ export function bindInventory({ root, store, signal }) {
       status: formData.get("status"),
       imageUrl: imageUrlForState,
       imageStorageKey,
+      imageRemoteSynced: sharedImageChanged && isBackendConfigured()
+        ? true
+        : existingProduct?.imageRemoteSynced,
       message: existingProductId ? "Stock updated" : "Stock added"
     });
 
