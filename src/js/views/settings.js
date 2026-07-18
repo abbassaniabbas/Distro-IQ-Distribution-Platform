@@ -257,15 +257,19 @@ function renderPackagingSettings(state) {
         </div>
       ` : ""}
       <form id="packaging-settings-form" class="form-grid" novalidate>
-        <fieldset class="span-full packaging-settings-options">
-          <legend>Packaging used by the factory</legend>
+        <fieldset class="span-full packaging-settings-options" aria-describedby="packaging-selection-summary">
+          <legend>Packaging used by the factory — select all that apply</legend>
           ${PACKAGING_OPTIONS.map((option) => `
-            <label class="packaging-setting-option">
+            <label class="packaging-setting-option ${selected.has(option.value) ? "is-selected" : ""}" data-packaging-option>
               <input type="checkbox" name="packagingTypes" value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""} ${option.value === "piece" ? "disabled" : ""}>
               <span><strong>${escapeHtml(option.label)}</strong><small>${option.value === "piece" ? "Base stock unit" : "Set the quantity inside each stock item"}</small></span>
             </label>
           `).join("")}
         </fieldset>
+        <div id="packaging-selection-summary" class="packaging-selection-summary span-full" aria-live="polite">
+          <span>Selected</span>
+          <strong data-packaging-selection-summary>${escapeHtml(PACKAGING_OPTIONS.filter((option) => selected.has(option.value)).map((option) => option.label).join(" · "))}</strong>
+        </div>
         <span id="packaging-settings-message" class="field-error span-full"></span>
         <div class="span-full manager-form-actions">
           ${textButton({
@@ -546,6 +550,27 @@ export function bindSettings({ root, store }) {
   profileForm?.elements.name?.addEventListener("input", () => {
     if (!profileStaffImageUrl) updateProfileImagePreview();
   });
+
+  function updatePackagingSelectionSummary() {
+    if (!packagingForm) return;
+    const selectedTypes = new Set(["piece", ...new FormData(packagingForm).getAll("packagingTypes").map(String)]);
+    packagingForm.querySelectorAll("[data-packaging-option]").forEach((option) => {
+      const checkbox = option.querySelector('input[name="packagingTypes"]');
+      option.classList.toggle("is-selected", selectedTypes.has(String(checkbox?.value || "")));
+    });
+    const summary = qs("[data-packaging-selection-summary]", packagingForm);
+    if (summary) {
+      summary.textContent = PACKAGING_OPTIONS
+        .filter((option) => selectedTypes.has(option.value))
+        .map((option) => option.label)
+        .join(" · ");
+    }
+  }
+
+  packagingForm?.querySelectorAll('input[name="packagingTypes"]').forEach((checkbox) => {
+    checkbox.addEventListener("change", updatePackagingSelectionSummary);
+  });
+  updatePackagingSelectionSummary();
 
   packagingForm?.addEventListener("submit", async (event) => {
     event.preventDefault();

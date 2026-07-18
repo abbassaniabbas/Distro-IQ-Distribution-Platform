@@ -491,7 +491,7 @@ function renderStockProductModal(state, permissions) {
           </label>
           <label class="field" data-stock-package-type hidden>
             <span data-stock-package-label>Package type</span>
-            <select name="stockPackagingType">
+            <select name="stockPackagingType" data-stock-packaging-type>
               ${enabledPackagingTypes(state.client).filter((type) => type !== "piece").map((type) => {
                 const option = packagingOption(type);
                 return `<option value="${escapeHtml(type)}">${escapeHtml(option.label)}</option>`;
@@ -794,6 +794,20 @@ function renderProductCard(product, state, permissions) {
   `;
 }
 
+function stockProductBaseName(product) {
+  const savedFamily = String(product?.productFamily || "").trim();
+  if (savedFamily) return savedFamily;
+
+  let baseName = String(product?.name || "Stock item").trim();
+  [product?.size, product?.productType].forEach((suffix) => {
+    const normalizedSuffix = String(suffix || "").trim();
+    if (!normalizedSuffix) return;
+    const escapedSuffix = normalizedSuffix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    baseName = baseName.replace(new RegExp(`\\s+${escapedSuffix}$`, "i"), "").trim();
+  });
+  return baseName || String(product?.name || "Stock item").trim();
+}
+
 function renderProductListRow(product, state, permissions) {
   const health = getStockHealth(product);
   const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
@@ -825,7 +839,7 @@ function renderProductListRow(product, state, permissions) {
         <div class="stock-health-item">
           <div class="product-media">${renderProductImage(product)}</div>
           <div>
-            <strong>${escapeHtml(product.name)}</strong>
+            <strong>${escapeHtml(stockProductBaseName(product))}</strong>
             <span>${escapeHtml(product.id)}</span>
           </div>
         </div>
@@ -912,7 +926,7 @@ function renderStockGridCard(product, state, permissions) {
       <div class="stock-health-grid-body">
         <div class="stock-health-grid-heading">
           <div>
-            <strong>${escapeHtml(product.name)}</strong>
+            <strong>${escapeHtml(stockProductBaseName(product))}</strong>
             <span>${escapeHtml(product.id)}</span>
           </div>
           ${product.status === "inactive" ? statusPill("inactive") : health.status === "ready" ? "" : statusPill(health.status)}
@@ -990,7 +1004,7 @@ function renderStockProductDetails(product, state) {
       <div class="stock-product-details-summary">
         <div>
           <span class="eyebrow">${escapeHtml(product.category || "Stock item")}</span>
-          <h3>${escapeHtml(product.name)}</h3>
+          <h3>${escapeHtml(stockProductBaseName(product))}</h3>
           <p>${escapeHtml(product.id)} · ${escapeHtml(product.productType || "Standard type")} · ${escapeHtml(product.size || "Standard size")}</p>
         </div>
         <div class="stock-product-details-status">
@@ -1029,7 +1043,7 @@ function renderStockProductDetails(product, state) {
       <span class="eyebrow">Complete stock record</span>
       <dl class="stock-product-details-grid">
         <div><dt>SKU</dt><dd>${escapeHtml(product.id)}</dd></div>
-        <div><dt>Product name</dt><dd>${escapeHtml(product.name)}</dd></div>
+        <div><dt>Product name</dt><dd>${escapeHtml(stockProductBaseName(product))}</dd></div>
         <div><dt>Product type</dt><dd>${escapeHtml(product.productType || "Standard")}</dd></div>
         <div><dt>Product size</dt><dd>${escapeHtml(product.size || "Not specified")}</dd></div>
         <div><dt>Category</dt><dd>${escapeHtml(product.category || "Not specified")}</dd></div>
@@ -2519,7 +2533,7 @@ export function bindInventory({ root, store, signal }) {
     const product = (state.products || []).find((item) => item.id === productId);
     if (!product || !stockProductDetailsModal || !stockProductDetailsContent) return;
 
-    if (stockProductDetailsTitle) stockProductDetailsTitle.textContent = product.name;
+    if (stockProductDetailsTitle) stockProductDetailsTitle.textContent = stockProductBaseName(product);
     stockProductDetailsContent.innerHTML = renderStockProductDetails(product, state);
     stockProductDetailsModal.hidden = false;
     qs(".js-close-stock-product-details", stockProductDetailsModal)?.focus();

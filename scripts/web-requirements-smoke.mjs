@@ -163,6 +163,9 @@ assert.ok(managerSettings.indexOf("Factory settings") < managerSettings.indexOf(
 assert.match(managerSettings, /class="settings-primary"[\s\S]*Factory settings[\s\S]*Sales packaging/);
 assert.equal((managerSettings.match(/id="packaging-settings-form"/g) || []).length, 1, "CEO Sales Packaging must render once");
 assert.match(managerSettings, /name="packagingTypes" value="carton"/);
+assert.match(managerSettings, /name="packagingTypes" value="carton" checked/, "CEO packaging settings must retain multiple selected package types");
+assert.match(managerSettings, /name="packagingTypes" value="pack" checked/, "CEO packaging settings must allow more than one package type at once");
+assert.match(managerSettings, /data-packaging-selection-summary>Pieces · Cartons · Packs</, "CEO packaging settings must clearly summarize all selected package types");
 assert.doesNotMatch(managerSettings, /name="packagingDefault-|Default pieces per/);
 assert.match(managerSettings, /Set the quantity inside each stock item/);
 assert.doesNotMatch(managerSettings, /name="timezone"/);
@@ -186,6 +189,7 @@ assert.match(managerTeam, /Add Staff/);
 assert.match(managerTeam, /Create staff/);
 assert.match(managerTeam, /id="new-staff-image"[^>]+type="file"/, "staff creation must accept an optional staff image");
 assert.match(managerTeam, /staff-image-preview staff-image-picker[^>]+aria-label="Choose staff profile picture"/, "staff creation must use the circular avatar surface as its picker");
+assert.match(managerTeam, /js-remove-new-staff-image[^>]+disabled/, "staff creation must include a compact remove-photo icon that starts hidden until a picture is selected");
 assert.doesNotMatch(managerTeam, /Staff image \(optional\)|Remove image/, "staff creation must not show file-upload instructions or removal text");
 assert.match(managerTeam, /staff-create-compact[\s\S]*staff-create-photo[\s\S]*staff-create-fields/, "Add Staff must place the profile picture on the left and compact fields on the right");
 assert.doesNotMatch(managerTeam, /Team access/);
@@ -579,6 +583,7 @@ assert.match(storeKeeperInventory, /name="stockEntryMode"/);
 assert.match(storeKeeperInventory, /value="package">Package<\/option>/);
 assert.match(storeKeeperInventory, /value="piece">Pieces<\/option>/);
 assert.match(storeKeeperInventory, /name="stockPackagingType"/);
+assert.match(storeKeeperInventory, /data-stock-packaging-type[\s\S]*value="carton">Cartons<[\s\S]*value="pack">Packs</, "Add Stock must offer every package type selected in Settings");
 assert.match(storeKeeperInventory, /data-stock-piece-total/);
 assert.equal((storeKeeperInventory.match(/data-stock-form-step="/g) || []).length, 3, "Add Stock must use three simple steps");
 assert.match(storeKeeperInventory, /data-stock-form-step="1"[\s\S]*Product name[\s\S]*Product type[\s\S]*Product size[\s\S]*SKU[\s\S]*Category/);
@@ -606,6 +611,27 @@ assert.match(storeKeeperInventory, /stock-health-grid-card/, "the grid view must
 assert.match(storeKeeperInventory, /data-open-stock-product/, "stock rows and cards must open product details from their main surface");
 assert.match(storeKeeperInventory, /id="stock-product-details-modal"/, "Stock Health must provide a product details modal");
 assert.match(storeKeeperInventory, /id="stock-product-details-content"/, "the product details modal must have dynamic product content");
+const plainStockNameInventory = renderInventory({
+  state: {
+    ...store.getState(),
+    products: [{
+      id: "SKU-PLANTAIN-650G",
+      name: "Plantain Chips Plastic Pack 650g",
+      productFamily: "Plantain Chips",
+      productType: "Plastic Pack",
+      size: "650g",
+      category: "Finished Products",
+      stockCategory: "finished_products",
+      stock: 24,
+      reorderPoint: 5,
+      unitCost: 100,
+      unitPrice: 150,
+      status: "active"
+    }]
+  }
+});
+assert.match(plainStockNameInventory, /stock-health-item[\s\S]*<strong>Plantain Chips<\/strong>[\s\S]*SKU-PLANTAIN-650G/, "Stock item must show only the plain product name");
+assert.match(plainStockNameInventory, /<td>Plastic Pack<\/td>[\s\S]*<td>650g<\/td>/, "product type and size must remain in their own Stock Health columns");
 assert.doesNotMatch(storeKeeperInventory, /js-open-production-traceability/, "Stock Health must not show the stock-material-usage icon in any portal");
 const cartonStockInventory = renderInventory({
   state: {

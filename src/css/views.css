@@ -6311,6 +6311,18 @@
   border: 1px solid var(--line);
   border-radius: 11px;
   background: white;
+  cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, box-shadow 150ms ease;
+}
+
+.packaging-setting-option:hover {
+  border-color: rgba(25, 185, 133, 0.38);
+}
+
+.packaging-setting-option.is-selected {
+  border-color: rgba(25, 185, 133, 0.5);
+  background: var(--mint-soft);
+  box-shadow: inset 0 0 0 1px rgba(25, 185, 133, 0.08);
 }
 
 .packaging-setting-option > input[type="checkbox"] {
@@ -6329,6 +6341,27 @@
 .packaging-setting-option small {
   color: var(--muted);
   font-size: 0.7rem;
+}
+
+.packaging-selection-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 3px;
+}
+
+.packaging-selection-summary span {
+  color: var(--muted);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.packaging-selection-summary strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--navy);
+  font-size: 0.82rem;
 }
 
 .factory-stock-entry {

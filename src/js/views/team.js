@@ -9,7 +9,7 @@ import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../s
 import { formatDate } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qs } from "../ui/dom.js";
-import { panelHeader, statusPill, textButton } from "../ui/components.js";
+import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { confirmActionDialog } from "../ui/action-dialog.js";
 import { renderStaffAvatar, staffInitials } from "../ui/staff-avatar.js";
@@ -334,8 +334,16 @@ export function renderTeam({ state }) {
           <form id="account-form" class="form-grid" novalidate>
             <div class="span-full staff-create-compact">
               <div class="staff-image-picker-row staff-create-photo">
-                <button class="staff-image-preview staff-image-picker" type="button" data-new-staff-image-preview aria-label="Choose staff profile picture">ST</button>
-                <input class="sr-only" id="new-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}" tabindex="-1">
+                <div class="profile-image-control">
+                  <button class="staff-image-preview staff-image-picker" type="button" data-new-staff-image-preview aria-label="Choose staff profile picture">ST</button>
+                  ${iconButton({
+                    iconName: "trash",
+                    label: "Remove selected staff picture",
+                    className: "profile-image-remove js-remove-new-staff-image",
+                    disabled: true
+                  })}
+                  <input class="sr-only" id="new-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}" tabindex="-1">
+                </div>
               </div>
               <div class="staff-create-fields">
                 <label class="field">
@@ -514,6 +522,7 @@ export function bindTeam({ root, store, signal }) {
 
   const staffImageInput = qs("#new-staff-image", form);
   const staffImagePreview = qs("[data-new-staff-image-preview]", form);
+  const removeStaffImageButton = qs(".js-remove-new-staff-image", form);
   let staffImageUrl = "";
 
   function updateNewStaffImagePreview() {
@@ -522,9 +531,18 @@ export function bindTeam({ root, store, signal }) {
     staffImagePreview.innerHTML = staffImageUrl
       ? `<img src="${escapeHtml(staffImageUrl)}" alt="Staff image preview">`
       : escapeHtml(staffInitials(name));
+    if (removeStaffImageButton) removeStaffImageButton.disabled = !staffImageUrl;
   }
 
   staffImagePreview?.addEventListener("click", () => staffImageInput?.click(), { signal });
+
+  removeStaffImageButton?.addEventListener("click", () => {
+    staffImageUrl = "";
+    if (staffImageInput) staffImageInput.value = "";
+    const message = qs("#account-message", form);
+    if (message) message.textContent = "";
+    updateNewStaffImagePreview();
+  }, { signal });
 
   staffImageInput?.addEventListener("change", async () => {
     const file = staffImageInput.files?.[0];
