@@ -170,8 +170,10 @@ assert.doesNotMatch(managerSettings, /Saved delivery note preview/);
 assert.match(managerSettings, /data-open-password-modal/);
 assert.match(managerSettings, /name="oldPassword"/);
 assert.match(managerSettings, /data-open-delete-factory/);
+assert.match(managerSettings, /permanently deletes the factory records and linked staff sign-ins/);
 assert.match(managerSettings, /id="profile-staff-image"[^>]+type="file"/, "profile settings must accept an optional staff image");
 assert.match(managerSettings, /staff-image-preview staff-image-picker[^>]+aria-label="Choose profile picture"/, "profile picture selection must use the circular avatar surface");
+assert.match(managerSettings, /js-remove-profile-image[^>]+disabled/, "profile settings must provide a compact remove-photo control");
 assert.doesNotMatch(managerSettings, /Staff image \(optional\)|Remove image/, "profile settings must not show file-upload instructions or removal text");
 const managerTeam = renderTeam({ state: store.getState() });
 assert.doesNotMatch(managerTeam, /<option value="ceo">/, "CEO must not be assignable as a staff role");
@@ -196,6 +198,20 @@ store.dispatch({
 });
 assert.equal(store.getState().accounts.find((account) => account.userId === "user-manager").staffImageUrl, staffImageFixture, "profile images must persist on the membership");
 assert.match(renderSettings({ state: store.getState() }), /staff-image-preview[\s\S]*STAFF_IMAGE_FIXTURE/, "saved profile images must render in profile settings");
+assert.doesNotMatch(renderSettings({ state: store.getState() }), /js-remove-profile-image[^>]+disabled/, "remove-photo control must be available when a profile picture exists");
+store.dispatch({
+  type: "UPDATE_MY_PROFILE",
+  name: "Musa Manager",
+  phoneNumber: "08000000001",
+  staffImageUrl: ""
+});
+assert.equal(store.getState().accounts.find((account) => account.userId === "user-manager").staffImageUrl, "", "profile pictures must be removable");
+store.dispatch({
+  type: "UPDATE_MY_PROFILE",
+  name: "Musa Manager",
+  phoneNumber: "08000000001",
+  staffImageUrl: staffImageFixture
+});
 assert.match(renderTeam({ state: store.getState() }), /team-member-avatar[\s\S]*STAFF_IMAGE_FIXTURE/, "saved staff images must render in the staff list");
 store.dispatch({ type: "SET_ACCOUNT_STATUS", accountId: "membership-rep", active: false });
 assert.equal(store.getState().accounts.find((account) => account.id === "membership-rep").status, "disabled");
@@ -432,6 +448,8 @@ const representativeInvoices = renderInvoices({ state: scopeStateForCurrentRole(
 assert.match(representativeInvoices, /My invoices/);
 assert.match(representativeInvoices, /js-download-invoice/);
 assert.match(representativeInvoices, /js-print-invoice/);
+assert.match(representativeInvoices, /js-print-invoice-list/);
+assert.match(representativeInvoices, /aria-label="Print invoice list"/);
 const sharedCustomerInvoiceState = {
   ...state,
   accounts: [
@@ -505,6 +523,16 @@ assert.match(repDashboard, /js-open-rep-product-sizes/, "representatives must be
 assert.match(repDashboard, /id="rep-product-size-modal"/, "product sizes must open in a catalogue modal");
 assert.match(repDashboard, /js-select-rep-product-size/, "each catalogue size must be selectable");
 assert.match(repDashboard, /name="salePackagingType"/, "quick sales must support configured packaging types");
+assert.match(repDashboard, /name="returnPackagingType"/, "customer returns must allow the representative to choose packaging");
+assert.match(repDashboard, /data-rep-return-package-summary/, "customer returns must show the exact piece equivalent of the selected package quantity");
+assert.match(repDashboard, /rep-return-quantity-row[\s\S]*name="returnQuantity"[\s\S]*name="returnPackagingType"/, "customer return quantity and packaging controls must share one aligned compact row");
+assert.match(repDashboard, /name="factoryReturnPackagingType"/, "Stock in your hand returns must support configured packaging");
+assert.match(repDashboard, /data-rep-factory-return-package-summary/, "Stock in your hand returns must show the exact piece equivalent");
+assert.match(repDashboard, /rep-sale-item-product/);
+assert.match(repDashboard, /rep-sale-item-quantity/);
+assert.match(repDashboard, /rep-sale-item-packaging/);
+assert.match(repDashboard, /rep-sale-item-price/);
+assert.match(repDashboard, /rep-sale-item-remove[\s\S]*js-remove-rep-sale-item/, "Quick Sale fields and remove control must use the contained item-row layout");
 
 store.dispatch({
   type: "SUBMIT_REP_REPORT",
@@ -578,6 +606,7 @@ assert.match(storeKeeperInventory, /stock-health-grid-card/, "the grid view must
 assert.match(storeKeeperInventory, /data-open-stock-product/, "stock rows and cards must open product details from their main surface");
 assert.match(storeKeeperInventory, /id="stock-product-details-modal"/, "Stock Health must provide a product details modal");
 assert.match(storeKeeperInventory, /id="stock-product-details-content"/, "the product details modal must have dynamic product content");
+assert.doesNotMatch(storeKeeperInventory, /js-open-production-traceability/, "Stock Health must not show the stock-material-usage icon in any portal");
 const cartonStockInventory = renderInventory({
   state: {
     ...store.getState(),
@@ -740,6 +769,28 @@ globalThis.window.location.hash = "#/activity-log";
 const activityWithUserFilter = renderActivityLog({ state: store.getState() });
 const userFilterMarkup = activityWithUserFilter.match(/<select id="activity-user-filter">([\s\S]*?)<\/select>/)?.[1] || "";
 assert.doesNotMatch(userFilterMarkup, /@/, "activity user filter must show names without email addresses");
+const conciseStockActivity = renderActivityLog({
+  state: {
+    ...store.getState(),
+    activityLogs: [{
+      id: "LOG-CONCISE-STOCK",
+      clientId: store.getState().client.id,
+      actionType: "updated",
+      recordType: "inventory",
+      recordLabel: "KULI-120G",
+      actorName: "Musa Manager",
+      summary: "Updated Kuli Kuli (Groundnut Cake) stock from 5 to 60 pieces.",
+      details: [
+        { summary: "product name: Kuli Kuli (Groundnut Cake) Original 120g -> Kuli Kuli (Groundnut Cake)" },
+        { summary: "stock: 5 -> 60" },
+        { summary: "picture: no picture -> picture set" }
+      ],
+      createdAt: "2026-07-17T10:00:00.000Z"
+    }]
+  }
+});
+assert.match(conciseStockActivity, /Updated Kuli Kuli \(Groundnut Cake\) stock from 5 to 60 pieces\./);
+assert.doesNotMatch(conciseStockActivity, /product name:|stock: 5 -&gt; 60|picture: no picture/, "Activity details must show one concise sentence instead of a technical field-by-field story");
 globalThis.window.location.hash = "#/activity-log?tab=sales-activity";
 assert.doesNotMatch(renderActivityLog({ state: store.getState() }), /Consolidated sales activity/);
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
@@ -763,6 +814,28 @@ assert.match(stockJourney, /With sales representatives/);
 assert.match(stockJourney, /Stock updates/);
 assert.match(stockJourney, /Paid/);
 assert.doesNotMatch(stockJourney, /Representative custody|Assignment \/ dispatch|Paid \/ reconciled/);
+const packagedStockJourney = renderInventory({
+  state: {
+    ...store.getState(),
+    products: [{
+      id: "SKU-JOURNEY-CARTON",
+      name: "Journey Carton Product",
+      stockCategory: "finished_products",
+      category: "Finished Products",
+      unit: "piece",
+      stock: 1450,
+      reorderPoint: 100,
+      packagingConversions: { carton: 24 },
+      status: "active"
+    }],
+    stockAssignments: [{ id: "ASN-JOURNEY-CARTON", productId: "SKU-JOURNEY-CARTON", assigned: 240, sold: 0, returned: 0, damaged: 0, status: "issued" }],
+    stockTransactions: [],
+    orders: []
+  }
+});
+assert.match(packagedStockJourney, /stock-journey-package-quantity[^>]*>60 cartons/, "Stock Journey must show configured cartons before exact factory-stock pieces");
+assert.match(packagedStockJourney, /60 cartons<\/strong>\s*<small>1,450 pieces<\/small>/, "Stock Journey package totals must retain the exact factory piece count underneath");
+assert.match(packagedStockJourney, /stock-journey-package-quantity[^>]*>10 cartons<\/strong>\s*<small>240 pieces<\/small>/, "Representative stock in Stock Journey must also show cartons and exact pieces");
 
 authenticate("user-ceo");
 const ceoDashboard = renderDashboard({ state: store.getState() });
@@ -1187,13 +1260,19 @@ store.dispatch({
   type: "REQUEST_RECORD_CORRECTION",
   transactionId: correctionSale.id,
   requestedQuantity: Number(correctionSale.quantity) + 1,
+  requestedPackagingType: "piece",
+  requestedPackagingQuantity: Number(correctionSale.quantity) + 1,
   reason: "Customer received one additional pack"
 });
 const saleCorrectionRequest = store.getState().correctionRequests.find((request) => request.transactionId === correctionSale.id && request.status === "pending");
 assert.ok(saleCorrectionRequest, "Sales Representative must request approval instead of editing a saved sale");
+assert.equal(saleCorrectionRequest.requestedPackagingType, "piece", "correction requests must retain the selected packaging");
+assert.equal(saleCorrectionRequest.requestedPackagingQuantity, Number(correctionSale.quantity) + 1, "correction requests must retain the entered package quantity");
 const repCorrectionDashboard = renderDashboard({ state: scopeStateForCurrentRole(store.getState()) });
 assert.match(repCorrectionDashboard, /Correction awaiting approval/);
 assert.match(repCorrectionDashboard, /Send for approval/);
+assert.match(repCorrectionDashboard, /name="requestedPackagingType"/, "correction requests must allow packaging selection");
+assert.match(repCorrectionDashboard, /data-correction-package-summary/, "correction requests must show the exact piece equivalent");
 assert.doesNotMatch(repCorrectionDashboard, /Send (?:to|for) CEO approval/i);
 authenticate("user-manager");
 store.dispatch({ type: "APPROVE_RECORD_CORRECTION", requestId: saleCorrectionRequest.id });
@@ -1258,8 +1337,8 @@ multiDispatchStore.dispatch({
   activityLogs: []
 });
 [
-  { productId: "MULTI-A", name: "Plantain Chips 50g", stock: 20, unitPrice: 500 },
-  { productId: "MULTI-B", name: "Kuli Kuli 100g", stock: 15, unitPrice: 800 },
+  { productId: "MULTI-A", name: "Plantain Chips 50g", stock: 20, unitPrice: 500, packagingConversions: { carton: 10 } },
+  { productId: "MULTI-B", name: "Kuli Kuli 100g", stock: 15, unitPrice: 800, packagingConversions: { carton: 5 } },
   { productId: "MULTI-RAW", name: "Groundnut", stock: 40, unitPrice: 450, stockCategory: "raw_materials", unit: "kg" }
 ].forEach((product) => multiDispatchStore.dispatch({
   type: "UPSERT_PRODUCT",
@@ -1490,7 +1569,7 @@ assert.equal(stockRequest.items.length, 2);
 
 authenticateMulti("multi-admin-user");
 assert.equal(currentUserRole(multiDispatchStore.getState()), "admin", "Admin must remain a distinct role");
-assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "orders", "inventory", "invoices", "activity-log", "settings"]);
+assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"]);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canCoordinateStockRequests, false);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canDispatchStock, false);
 globalThis.window.location.hash = "#/inventory?tab=adjustments";
@@ -1498,6 +1577,8 @@ assert.match(renderInventory({ state: multiDispatchStore.getState() }), /class="
 const adminDashboard = renderDashboard({ state: multiDispatchStore.getState() });
 assert.match(adminDashboard, /Admin portal/);
 assert.match(adminDashboard, /Company overview/);
+assert.match(adminDashboard, /admin-dashboard ceo-dashboard/, "Admin dashboard must retain its role-specific layout hook");
+assert.match(adminDashboard, /ceo-command-strip admin-command-strip/, "Admin portal heading must retain its dedicated green-surface hook");
 assert.match(adminDashboard, /Sales trend/);
 assert.match(adminDashboard, /Last 4 days/);
 assert.equal((adminDashboard.match(/class="ceo-chart-column"/g) || []).length, 4, "Admin sales trend must show four days");
@@ -1512,9 +1593,23 @@ assert.match(adminDashboard, /Today's factory stock/);
 assert.match(adminDashboard, /Stock split/);
 assert.match(adminDashboard, /js-toggle-product-types/);
 assert.doesNotMatch(adminDashboard, /Purchase Orders|Admin Operations/);
+const adminTeam = renderTeam({ state: multiDispatchStore.getState() });
+assert.match(adminTeam, /Staff accounts/, "Admin must be able to view the staff directory");
+assert.match(adminTeam, /team-member-list/);
+assert.match(adminTeam, /team-account-modal/);
+assert.doesNotMatch(adminTeam, /id="account-form"|Add Staff|Create staff/, "Admin staff access must remain read-only");
+const adminSavedCustomer = { id: "RTL-ADMIN-VIEW", name: "Admin View Supermarket", channel: "Supermarket", status: "active", stateName: "Kaduna", lga: "Chikun", address: "Central Market" };
+const adminCustomers = renderRetailers({ state: { ...multiDispatchStore.getState(), retailers: [adminSavedCustomer] } });
+assert.match(adminCustomers, /Customer outlets/);
+assert.match(adminCustomers, /Admin View Supermarket/, "Admin must be able to view saved customers");
+assert.match(adminCustomers, /customer-details-modal/, "Admin must be able to open saved customer details");
+assert.doesNotMatch(adminCustomers, /id="retailer-form"|Add Customer|Save customer/, "Admin customer access must remain read-only");
+const adminCustomerDetails = renderCustomerDetails(adminSavedCustomer, { ...multiDispatchStore.getState(), retailers: [adminSavedCustomer] }, currentUserPermissions(multiDispatchStore.getState()));
+assert.doesNotMatch(adminCustomerDetails, /Edit customer|Deactivate customer|Activate customer/, "Admin must not change saved customers");
 const adminInvoices = renderInvoices({ state: multiDispatchStore.getState() });
 assert.match(adminInvoices, /data-invoice-filter/);
 assert.match(adminInvoices, /data-invoice-status-filter/);
+assert.match(adminInvoices, /js-print-invoice-list/);
 assert.match(adminInvoices, />Invoices</);
 const adminSettings = renderSettings({ state: multiDispatchStore.getState() });
 assert.ok(adminSettings.indexOf("My profile") < adminSettings.indexOf("Sales packaging"), "Admin Sales packaging settings must appear below My profile");
@@ -1568,6 +1663,10 @@ const multiStoreDashboard = renderDashboard({ state: multiDispatchStore.getState
 assert.doesNotMatch(multiStoreDashboard, /Forwarded Purchase Orders/);
 assert.match(multiStoreDashboard, /storekeeper-factory-stock-dropdown/);
 assert.doesNotMatch(multiStoreDashboard, /<details\s+open/);
+assert.match(multiStoreDashboard, /js-open-stock-modal/, "Store Keeper dashboard must offer Add stock beside Record dispatch");
+assert.match(multiStoreDashboard, /js-open-dashboard-dispatch/);
+assert.match(multiStoreDashboard, /id="stock-product-modal" class="stock-modal-backdrop" hidden/);
+assert.match(multiStoreDashboard, /Finished products[\s\S]*<strong>[^<]*cartons<\/strong>[\s\S]*storekeeper-category-pieces[^>]*>[^<]*pieces<\/b>/, "Store Keeper finished products must show packages first and pieces below");
 const invoiceIdsBeforePoIssue = new Set(multiDispatchStore.getState().invoices.map((invoice) => invoice.id));
 const dispatchIdsBeforePoIssue = new Set(multiDispatchStore.getState().stockTransactions.map((transaction) => transaction.dispatchId).filter(Boolean));
 multiDispatchStore.dispatch({
@@ -1639,6 +1738,8 @@ assert.equal(onboardingStore.getState().session?.user?.id, "new-ceo", "creating 
 assert.equal(onboardingStore.getState().backend.status, "authenticated");
 assert.ok([...browserStorage.keys()].some((key) => key.endsWith(":client-onboarding")));
 onboardingStore.dispatch({ type: "DELETE_CLIENT_ACCOUNT" });
+assert.equal(onboardingStore.getState().session, null, "deleting a company must clear the deleted CEO session");
+assert.equal(onboardingStore.getState().user, null, "deleting a company must clear the deleted CEO identity");
 assert.ok(
   [...browserStorage.keys()].every((key) => !key.endsWith(":client-onboarding")),
   "deleting a company must remove its tenant-scoped browser state"

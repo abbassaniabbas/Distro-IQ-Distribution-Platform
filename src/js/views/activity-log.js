@@ -303,17 +303,13 @@ function renderRows(logs) {
     const actionLabel = actionTypeLabel(entry.actionType);
     const recordLabel = recordTypeLabel(entry.recordType);
     const userLabel = entry.actorEmail ? `${entry.actorName} ${entry.actorEmail}` : entry.actorName;
-    const detailLines = Array.isArray(entry.details)
-      ? entry.details.map((detail) => detail.summary).filter(Boolean)
-      : [];
     const searchIndex = [
       actionLabel,
       recordLabel,
       entry.recordLabel,
       entry.actorName,
       entry.actorEmail,
-      entry.summary,
-      detailLines.join(" ")
+      entry.summary
     ]
       .join(" ")
       .toLowerCase();
@@ -338,7 +334,6 @@ function renderRows(logs) {
         </td>
         <td>
           ${escapeHtml(entry.summary || "Record updated")}
-          ${detailLines.length ? `<div class="muted">${detailLines.map(escapeHtml).join("<br>")}</div>` : ""}
         </td>
       </tr>
     `;

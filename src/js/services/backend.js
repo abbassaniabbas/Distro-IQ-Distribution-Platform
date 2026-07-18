@@ -741,18 +741,28 @@ export async function reviewPackagingSettingsChange({ clientId, requestId, decis
   return loadWorkspace();
 }
 
-export async function deleteWorkspace({ clientId }) {
+export async function deleteWorkspace({ clientId, confirmationName }) {
   throwIfBackendMissing();
 
   const supabase = await getSupabaseClient();
-  const { error } = await supabase
-    .from("clients")
-    .delete()
-    .eq("id", clientId);
+  const { data, error } = await supabase.functions.invoke("delete-workspace", {
+    body: { clientId, confirmationName }
+  });
 
   if (error) {
-    throw new Error(error.message);
+    const functionMessage = await readEdgeFunctionError(error);
+    const rawMessage = String(functionMessage || error.message || "").trim();
+    const lowerMessage = rawMessage.toLowerCase();
+    if (lowerMessage.includes("failed to send a request") || lowerMessage.includes("failed to fetch")) {
+      throw new Error("Network error: the factory deletion service could not be reached. Check your connection and try again.");
+    }
+    throw new Error(rawMessage || "Backend error: the factory could not be deleted.");
   }
+  if (data?.error) {
+    throw new Error(String(data.error));
+  }
+
+  return data;
 }
 
 export async function updateMyMembershipProfile({ clientId, name, phoneNumber, staffImageUrl = "" }) {
@@ -767,6 +777,9 @@ export async function updateMyMembershipProfile({ clientId, name, phoneNumber, s
   });
 
   if (error) {
+    if (isSchemaCacheError(error, "update_my_membership_profile")) {
+      throw new Error("Database setup error: the profile update function is outdated. Apply supabase/staff-image-column-migration.sql and try again.");
+    }
     throw new Error(error.message);
   }
 

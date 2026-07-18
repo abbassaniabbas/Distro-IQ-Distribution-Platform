@@ -1136,6 +1136,12 @@
   font-size: 0.8rem;
 }
 
+.storekeeper-category-pieces {
+  color: var(--ink);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
 .storekeeper-dispatch-list {
   display: grid;
   gap: 10px;
@@ -1421,6 +1427,20 @@
 .rep-log-form select {
   min-height: 46px;
   font-weight: 850;
+}
+
+.rep-return-quantity-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: minmax(92px, 0.42fr) minmax(180px, 1fr);
+  align-items: start;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rep-return-quantity-row .field {
+  align-content: start;
+  min-width: 0;
 }
 
 .rep-form-message {
@@ -1753,6 +1773,8 @@
   display: grid;
   grid-column: 1 / -1;
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
@@ -1769,16 +1791,49 @@
 .rep-sale-item-list {
   display: grid;
   gap: 9px;
+  min-width: 0;
 }
 
 .rep-sale-item-row {
   display: grid;
-  grid-template-columns: minmax(180px, 2fr) minmax(80px, 0.7fr) minmax(110px, 1fr) minmax(110px, 1fr) auto;
+  grid-template-areas:
+    "product product remove"
+    "quantity packaging price";
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: end;
   gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+}
+
+.rep-sale-item-row > * {
+  min-width: 0;
+}
+
+.rep-sale-item-product {
+  grid-area: product;
+}
+
+.rep-sale-item-quantity {
+  grid-area: quantity;
+}
+
+.rep-sale-item-packaging {
+  grid-area: packaging;
+}
+
+.rep-sale-item-price {
+  grid-area: price;
 }
 
 .rep-sale-item-remove {
+  grid-area: remove;
+  align-self: end;
+  justify-self: end;
   padding-bottom: 2px;
 }
 
@@ -3769,6 +3824,29 @@
   padding: 4px 0 12px;
 }
 
+.profile-image-control {
+  position: relative;
+  display: inline-grid;
+}
+
+.profile-image-remove {
+  position: absolute;
+  right: -5px;
+  bottom: 3px;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-color: rgba(192, 57, 47, 0.22);
+  background: #ffffff;
+  color: var(--red);
+  box-shadow: 0 4px 12px rgba(7, 26, 47, 0.14);
+}
+
+.profile-image-remove:disabled {
+  opacity: 0;
+  pointer-events: none;
+}
+
 .staff-create-compact {
   display: grid;
   grid-template-columns: 112px minmax(0, 1fr);
@@ -5248,6 +5326,17 @@
   font-size: 0.95rem;
 }
 
+.stock-journey-figures strong.stock-journey-package-quantity {
+  font-size: 1.05rem;
+}
+
+.stock-journey-figures small {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
 .stock-meta {
   display: flex;
   justify-content: space-between;
@@ -5686,7 +5775,18 @@
   }
 
   .rep-sale-item-row {
+    grid-template-areas:
+      "product"
+      "quantity"
+      "packaging"
+      "price"
+      "remove";
     grid-template-columns: 1fr;
+  }
+
+  .rep-sale-item-remove {
+    justify-self: end;
+    padding-bottom: 0;
   }
 
   .dispatch-item-remove {
@@ -5771,6 +5871,10 @@
   .rep-log-form,
   .rep-report-grid {
     grid-template-columns: 1fr;
+  }
+
+  .rep-return-quantity-row {
+    grid-template-columns: minmax(84px, 0.42fr) minmax(150px, 1fr);
   }
 
   .rep-activity-item {
@@ -5908,6 +6012,10 @@
   border: 1px solid var(--line);
   border-radius: 20px;
   background: linear-gradient(135deg, color-mix(in srgb, var(--teal) 12%, white), white 68%);
+}
+
+.admin-command-strip {
+  background: linear-gradient(135deg, var(--mint-soft) 0%, #ffffff 78%);
 }
 
 .admin-command-strip h2,

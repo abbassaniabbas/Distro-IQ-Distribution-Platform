@@ -261,7 +261,8 @@ function renderTeamAccountModal() {
 function renderTeamAccountDetails(account, state) {
   const isActive = accountIsActive(account);
   const isCurrentAccount = account.userId === state.user?.id;
-  const canDeleteAccount = !isCurrentAccount && normalizeRole(account.role) !== "ceo";
+  const canManageUsers = currentUserPermissions(state).canManageUsers;
+  const canDeleteAccount = canManageUsers && !isCurrentAccount && normalizeRole(account.role) !== "ceo";
 
   return `
     <div class="team-account-summary">
@@ -276,7 +277,7 @@ function renderTeamAccountDetails(account, state) {
         <div><span>Created</span><strong>${formatDate(account.createdAt?.slice(0, 10))}</strong></div>
         <div><span>Password</span><strong>${account.passwordResetRequired ? "Change required" : "Password set"}</strong></div>
       </div>
-      <div class="team-account-actions">
+      ${canManageUsers ? `<div class="team-account-actions">
         ${canDeleteAccount ? `
           <div class="team-account-role-control">
             <label class="field"><span>Staff role</span><select data-team-account-role>${renderRoleOptions().replace(`value="${escapeHtml(normalizeRole(account.role))}"`, `value="${escapeHtml(normalizeRole(account.role))}" selected`)}</select></label>
@@ -293,7 +294,7 @@ function renderTeamAccountDetails(account, state) {
         ` : ""}
         ${isCurrentAccount ? '<span class="muted">You cannot deactivate the account you are currently using.</span>' : ""}
         <span class="field-error" data-team-account-message aria-live="polite"></span>
-      </div>
+      </div>` : ""}
     </div>
   `;
 }
@@ -315,7 +316,7 @@ export function renderTeam({ state }) {
   const accounts = getScopedAccounts(state);
   const permissions = currentUserPermissions(state);
 
-  if (!permissions.canManageUsers) {
+  if (!permissions.canManageUsers && currentUserRole(state) !== "admin") {
     return `
       <section class="view team-view">
         <section class="panel setup-card">
@@ -327,7 +328,7 @@ export function renderTeam({ state }) {
 
   return `
     <section class="view team-view">
-      <div class="staff-create-layout">
+      ${permissions.canManageUsers ? `<div class="staff-create-layout">
         <section class="panel">
           ${panelHeader("Add Staff", "")}
           <form id="account-form" class="form-grid" novalidate>
@@ -374,7 +375,7 @@ export function renderTeam({ state }) {
           </form>
         </section>
 
-      </div>
+      </div>` : ""}
 
       <section class="panel team-layout">
         ${panelHeader("Staff accounts", "")}

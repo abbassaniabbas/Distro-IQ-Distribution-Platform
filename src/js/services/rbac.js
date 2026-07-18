@@ -79,7 +79,7 @@ const ROLE_PERMISSIONS = {
     canFulfillPurchaseOrders: false
   },
   admin: {
-    nav: ["dashboard", "orders", "inventory", "invoices", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,

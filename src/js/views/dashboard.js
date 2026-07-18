@@ -27,7 +27,7 @@ import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { requestNumberDialog } from "../ui/action-dialog.js";
-import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
+import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
 import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
@@ -1481,14 +1481,20 @@ function storeKeeperCategorySummary(state) {
 function renderStoreKeeperCategoryCards(state) {
   return `
     <div class="storekeeper-category-grid">
-      ${storeKeeperCategorySummary(state).map((category) => `
+      ${storeKeeperCategorySummary(state).map((category) => {
+        const packageSummary = category.id === "finished_products"
+          ? aggregatePackageQuantityLabel(state, category.products.map((product) => ({ product, pieces: product.stock || 0 })))
+          : "";
+        const hasPackageSummary = packageSummary && packageSummary !== "Package conversion not set";
+        return `
         <a class="storekeeper-category-card" href="${escapeHtml(category.href)}" data-search-index="${escapeHtml(category.label.toLowerCase())}">
           <span class="eyebrow">${escapeHtml(category.label)}</span>
-          <strong>${formatNumber(category.units)}</strong>
+          <strong>${escapeHtml(hasPackageSummary ? packageSummary : `${formatNumber(category.units)} pieces`)}</strong>
+          ${hasPackageSummary ? `<b class="storekeeper-category-pieces">${formatNumber(category.units)} pieces</b>` : ""}
           <p>${formatNumber(category.products.length)} item${category.products.length === 1 ? "" : "s"} - ${formatNumber(category.lowCount)} low</p>
           ${category.lowCount ? statusPill("low") : ""}
         </a>
-      `).join("")}
+      `;}).join("")}
     </div>
   `;
 }
@@ -2467,10 +2473,10 @@ function renderRepReturnCustomerField() {
 function renderRepSaleItemRow(assignments, { removable = false } = {}) {
   return `
     <div class="rep-sale-item-row" data-rep-sale-item-row>
-      <label class="field"><span>Product</span><select name="saleAssignmentId" data-rep-sale-product required><option value="">Pick product</option>${renderRepAssignmentOptions(assignments, "sale")}</select></label>
-      <label class="field"><span>Quantity</span><input name="saleQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
-      <label class="field"><span>Packaging</span><select name="salePackagingType" data-rep-sale-packaging required><option value="piece">Pieces</option></select></label>
-      <label class="field"><span>Price</span><input data-rep-sale-package-price value="0" readonly aria-label="Selected package selling price"></label>
+      <label class="field rep-sale-item-product"><span>Product</span><select name="saleAssignmentId" data-rep-sale-product required><option value="">Pick product</option>${renderRepAssignmentOptions(assignments, "sale")}</select></label>
+      <label class="field rep-sale-item-quantity"><span>Quantity</span><input name="saleQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required></label>
+      <label class="field rep-sale-item-packaging"><span>Packaging</span><select name="salePackagingType" data-rep-sale-packaging required><option value="piece">Pieces</option></select></label>
+      <label class="field rep-sale-item-price"><span>Price</span><input data-rep-sale-package-price value="0" readonly aria-label="Selected package selling price"></label>
       <div class="rep-sale-item-remove">${iconButton({ iconName: "trash", label: "Remove sale item", className: "js-remove-rep-sale-item warning-icon", disabled: !removable })}</div>
     </div>
   `;
@@ -2526,12 +2532,22 @@ function renderRepQuickLog(state, assignments) {
             </select>
           </label>
 
-          <label class="field">
-            <span>How many?</span>
-            <input name="returnQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
-          </label>
-
           ${renderRepReturnCustomerField()}
+
+          <div class="rep-return-quantity-row">
+            <label class="field rep-return-quantity-field">
+              <span>How many?</span>
+              <input name="returnQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+            </label>
+
+            <label class="field rep-return-packaging-field">
+              <span>Packaging</span>
+              <select name="returnPackagingType" data-rep-return-packaging required>
+                <option value="piece">Pieces</option>
+              </select>
+              <small class="muted" data-rep-return-package-summary>Enter the quantity to see the exact pieces.</small>
+            </label>
+          </div>
 
           <label class="field">
             <span>Adjustment</span>
@@ -2563,16 +2579,26 @@ function renderRepQuickLog(state, assignments) {
 
           <label class="field">
             <span>Product</span>
-            <select name="factoryReturnProductId" required>
+            <select name="factoryReturnProductId" data-rep-factory-return-product required>
               <option value="">Pick product</option>
               ${renderRepAssignmentOptions(assignments, "sale")}
             </select>
           </label>
 
-          <label class="field">
-            <span>How many?</span>
-            <input name="factoryReturnQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
-          </label>
+          <div class="rep-return-quantity-row">
+            <label class="field rep-return-quantity-field">
+              <span>How many?</span>
+              <input name="factoryReturnQuantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+            </label>
+
+            <label class="field rep-return-packaging-field">
+              <span>Packaging</span>
+              <select name="factoryReturnPackagingType" data-rep-factory-return-packaging required>
+                <option value="piece">Pieces</option>
+              </select>
+              <small class="muted" data-rep-factory-return-package-summary>Enter the quantity to see the exact pieces.</small>
+            </label>
+          </div>
 
           <label class="field">
             <span>Reason</span>
@@ -3588,9 +3614,18 @@ function bindSalesRepDashboard({ root, store }) {
   const walkInPaymentNote = qs("[data-walk-in-payment-note]", root);
   const returnProductSelect = qs('select[name="returnAssignmentId"]', root);
   const returnCustomerSelect = qs("[data-rep-return-customer]", root);
+  const returnPackagingSelect = qs("[data-rep-return-packaging]", root);
+  const returnQuantityInput = returnForm?.elements.returnQuantity;
+  const returnPackageSummary = qs("[data-rep-return-package-summary]", root);
+  const factoryReturnProductSelect = qs("[data-rep-factory-return-product]", root);
+  const factoryReturnPackagingSelect = qs("[data-rep-factory-return-packaging]", root);
+  const factoryReturnQuantityInput = factoryReturnForm?.elements.factoryReturnQuantity;
+  const factoryReturnPackageSummary = qs("[data-rep-factory-return-package-summary]", root);
   const correctionModal = qs("#record-correction-modal", root);
   const correctionForm = qs("#record-correction-form", root);
   const correctionMessage = qs("#record-correction-message", root);
+  const correctionPackagingSelect = qs("[data-correction-packaging]", correctionForm || root);
+  const correctionPackageSummary = qs("[data-correction-package-summary]", correctionForm || root);
   const productSizeModal = qs("#rep-product-size-modal", root);
   const productSizeTitle = qs("#rep-product-size-title", root);
   const selectedProductDetail = qs("[data-rep-selected-size-detail]", root);
@@ -3703,18 +3738,28 @@ function bindSalesRepDashboard({ root, store }) {
         .filter((assignment) => assignmentIds.has(assignment.id))
         .reduce((total, assignment) => total + assignmentOutstanding(assignment), 0);
       const maximumCorrectQuantity = Number(transaction?.quantity || 0) + stockInHand;
+      const product = (state.products || []).find((item) => item.id === transaction?.productId);
       correctionForm.reset();
       correctionForm.elements.transactionId.value = button.dataset.transactionId || "";
-      correctionForm.elements.requestedQuantity.value = button.dataset.quantity || "";
-      correctionForm.elements.requestedQuantity.max = String(maximumCorrectQuantity);
+      correctionForm.dataset.maximumPieces = String(maximumCorrectQuantity);
+      if (correctionPackagingSelect) {
+        correctionPackagingSelect.innerHTML = productPackagingTypes(state.client, product)
+          .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(packagingOption(type).label)}</option>`)
+          .join("");
+        correctionPackagingSelect.value = [...correctionPackagingSelect.options].some((option) => option.value === String(transaction?.packagingType || "piece"))
+          ? String(transaction?.packagingType || "piece")
+          : "piece";
+      }
+      correctionForm.elements.requestedQuantity.value = transaction?.packagingQuantity || button.dataset.quantity || "";
+      updateCorrectionQuantityLimit();
       const quantityLimit = qs("[data-correction-quantity-limit]", correctionModal);
       if (quantityLimit) {
         quantityLimit.hidden = false;
-        quantityLimit.textContent = `Maximum ${formatNumber(maximumCorrectQuantity)} total units based on the stock still in your hand.`;
       }
       const label = qs("[data-correction-record-label]", correctionModal);
       if (label) label.textContent = button.dataset.recordLabel || "Saved sale";
       if (correctionMessage) correctionMessage.textContent = "";
+      updateCorrectionPackageSummary();
       correctionModal.hidden = false;
       correctionForm.elements.requestedQuantity.focus();
     });
@@ -3725,18 +3770,70 @@ function bindSalesRepDashboard({ root, store }) {
   correctionModal?.addEventListener("click", (event) => {
     if (event.target === correctionModal) correctionModal.hidden = true;
   });
+
+  function correctionProduct() {
+    const state = store.getState();
+    const transaction = (state.stockTransactions || []).find((item) => item.id === correctionForm?.elements.transactionId.value);
+    return (state.products || []).find((item) => item.id === transaction?.productId);
+  }
+
+  function correctionQuantityInPieces() {
+    return quantityInPieces(
+      correctionProduct(),
+      Number(correctionForm?.elements.requestedQuantity.value || 0),
+      correctionPackagingSelect?.value || "piece",
+      store.getState().client
+    );
+  }
+
+  function updateCorrectionQuantityLimit() {
+    if (!correctionForm) return;
+    const maximumPieces = Number(correctionForm.dataset.maximumPieces || 0);
+    const packagingType = correctionPackagingSelect?.value || "piece";
+    const multiplier = quantityInPieces(correctionProduct(), 1, packagingType, store.getState().client) || 1;
+    const maximumPackages = Math.floor(maximumPieces / multiplier);
+    correctionForm.elements.requestedQuantity.max = String(maximumPackages);
+    const quantityLimit = qs("[data-correction-quantity-limit]", correctionModal);
+    if (quantityLimit) {
+      quantityLimit.textContent = packagingType === "piece"
+        ? `Maximum ${formatNumber(maximumPieces)} pieces based on the stock still in your hand.`
+        : `Maximum ${packagingQuantityLabel(maximumPackages, packagingType)} (${formatNumber(maximumPackages * multiplier)} pieces) based on the stock still in your hand.`;
+    }
+  }
+
+  function updateCorrectionPackageSummary() {
+    if (!correctionPackageSummary) return;
+    const enteredQuantity = Number(correctionForm?.elements.requestedQuantity.value || 0);
+    const packagingType = correctionPackagingSelect?.value || "piece";
+    const exactPieces = correctionQuantityInPieces();
+    correctionPackageSummary.textContent = enteredQuantity > 0
+      ? `${packagingQuantityLabel(enteredQuantity, packagingType)} = ${formatNumber(exactPieces)} piece${exactPieces === 1 ? "" : "s"}`
+      : "Enter the corrected quantity to see the exact pieces.";
+  }
+
+  correctionPackagingSelect?.addEventListener("change", () => {
+    correctionForm.elements.requestedQuantity.value = "";
+    updateCorrectionQuantityLimit();
+    updateCorrectionPackageSummary();
+    correctionForm.elements.requestedQuantity.focus();
+  });
   correctionForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     const formData = new FormData(correctionForm);
     const transactionId = String(formData.get("transactionId") || "");
-    const requestedQuantity = Number(formData.get("requestedQuantity") || 0);
+    const requestedPackagingQuantity = Number(formData.get("requestedQuantity") || 0);
+    const requestedPackagingType = String(formData.get("requestedPackagingType") || "piece");
+    const requestedQuantity = correctionQuantityInPieces();
     const reason = String(formData.get("reason") || "").trim();
     const transaction = (store.getState().stockTransactions || []).find((item) => item.id === transactionId);
-    const maximumCorrectQuantity = Number(correctionForm.elements.requestedQuantity.max || 0);
+    const maximumCorrectQuantity = Number(correctionForm.dataset.maximumPieces || 0);
     if (correctionMessage) correctionMessage.textContent = "";
     if (maximumCorrectQuantity > 0 && requestedQuantity > maximumCorrectQuantity) {
-      if (correctionMessage) correctionMessage.textContent = `The corrected quantity cannot exceed ${formatNumber(maximumCorrectQuantity)} units available for this sale.`;
-      correctionForm.elements.requestedQuantity.value = String(maximumCorrectQuantity);
+      const maximumPackages = Number(correctionForm.elements.requestedQuantity.max || 0);
+      const maximumLabel = packagingQuantityLabel(maximumPackages, requestedPackagingType);
+      if (correctionMessage) correctionMessage.textContent = `The corrected quantity cannot exceed ${maximumLabel} (${formatNumber(maximumCorrectQuantity)} pieces) available for this sale.`;
+      correctionForm.elements.requestedQuantity.value = String(maximumPackages);
+      updateCorrectionPackageSummary();
       correctionForm.elements.requestedQuantity.focus();
       return;
     }
@@ -3748,6 +3845,8 @@ function bindSalesRepDashboard({ root, store }) {
       type: "REQUEST_RECORD_CORRECTION",
       transactionId,
       requestedQuantity,
+      requestedPackagingType,
+      requestedPackagingQuantity,
       reason,
       message: "Correction sent for approval"
     });
@@ -3756,10 +3855,12 @@ function bindSalesRepDashboard({ root, store }) {
 
   correctionForm?.elements.requestedQuantity?.addEventListener("input", () => {
     const input = correctionForm.elements.requestedQuantity;
-    const maximum = Number(input.max || 0);
-    if (!maximum || Number(input.value || 0) <= maximum) return;
-    input.value = String(maximum);
-    if (correctionMessage) correctionMessage.textContent = `You cannot enter more than ${formatNumber(maximum)} units available for this sale.`;
+    const maximumPackages = Number(input.max || 0);
+    if (maximumPackages > 0 && Number(input.value || 0) > maximumPackages) {
+      input.value = String(maximumPackages);
+      if (correctionMessage) correctionMessage.textContent = `You cannot enter more than ${packagingQuantityLabel(maximumPackages, correctionPackagingSelect?.value || "piece")} available for this sale.`;
+    }
+    updateCorrectionPackageSummary();
   });
 
   function applyWalkInPaymentRule() {
@@ -3853,8 +3954,79 @@ function bindSalesRepDashboard({ root, store }) {
     returnCustomerSelect.disabled = !choices.length;
   }
 
-  returnProductSelect?.addEventListener("change", updateReturnCustomerOptions);
+  function updateReturnPackageSummary() {
+    if (!returnPackageSummary) return;
+    const state = store.getState();
+    const product = (state.products || []).find((item) => item.id === returnProductSelect?.value);
+    const packagingType = returnPackagingSelect?.value || "piece";
+    const packagingQuantity = Number(returnQuantityInput?.value || 0);
+    const exactPieces = quantityInPieces(product, packagingQuantity, packagingType, state.client);
+    const packageLabel = packagingQuantityLabel(packagingQuantity || 1, packagingType);
+    const singlePackagePieces = quantityInPieces(product, 1, packagingType, state.client);
+
+    returnPackageSummary.textContent = packagingQuantity > 0
+      ? `${packageLabel} = ${formatNumber(exactPieces)} piece${exactPieces === 1 ? "" : "s"}`
+      : packagingType === "piece"
+        ? "Enter the number of pieces being returned."
+        : `1 ${packagingOption(packagingType).singular} = ${formatNumber(singlePackagePieces)} pieces`;
+  }
+
+  function updateReturnPackagingOptions() {
+    if (!returnPackagingSelect) return;
+    const state = store.getState();
+    const product = (state.products || []).find((item) => item.id === returnProductSelect?.value);
+    const previousValue = returnPackagingSelect.value || "piece";
+    returnPackagingSelect.innerHTML = productPackagingTypes(state.client, product)
+      .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(packagingOption(type).label)}</option>`)
+      .join("");
+    returnPackagingSelect.value = [...returnPackagingSelect.options].some((option) => option.value === previousValue)
+      ? previousValue
+      : "piece";
+    updateReturnPackageSummary();
+  }
+
+  returnProductSelect?.addEventListener("change", () => {
+    updateReturnCustomerOptions();
+    updateReturnPackagingOptions();
+  });
+  returnPackagingSelect?.addEventListener("change", updateReturnPackageSummary);
+  returnQuantityInput?.addEventListener("input", updateReturnPackageSummary);
   updateReturnCustomerOptions();
+  updateReturnPackagingOptions();
+
+  function updateFactoryReturnPackageSummary() {
+    if (!factoryReturnPackageSummary) return;
+    const state = store.getState();
+    const product = (state.products || []).find((item) => item.id === factoryReturnProductSelect?.value);
+    const packagingType = factoryReturnPackagingSelect?.value || "piece";
+    const packagingQuantity = Number(factoryReturnQuantityInput?.value || 0);
+    const exactPieces = quantityInPieces(product, packagingQuantity, packagingType, state.client);
+    const singlePackagePieces = quantityInPieces(product, 1, packagingType, state.client);
+    factoryReturnPackageSummary.textContent = packagingQuantity > 0
+      ? `${packagingQuantityLabel(packagingQuantity, packagingType)} = ${formatNumber(exactPieces)} piece${exactPieces === 1 ? "" : "s"}`
+      : packagingType === "piece"
+        ? "Enter the number of pieces being returned."
+        : `1 ${packagingOption(packagingType).singular} = ${formatNumber(singlePackagePieces)} pieces`;
+  }
+
+  function updateFactoryReturnPackagingOptions() {
+    if (!factoryReturnPackagingSelect) return;
+    const state = store.getState();
+    const product = (state.products || []).find((item) => item.id === factoryReturnProductSelect?.value);
+    const previousValue = factoryReturnPackagingSelect.value || "piece";
+    factoryReturnPackagingSelect.innerHTML = productPackagingTypes(state.client, product)
+      .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(packagingOption(type).label)}</option>`)
+      .join("");
+    factoryReturnPackagingSelect.value = [...factoryReturnPackagingSelect.options].some((option) => option.value === previousValue)
+      ? previousValue
+      : "piece";
+    updateFactoryReturnPackageSummary();
+  }
+
+  factoryReturnProductSelect?.addEventListener("change", updateFactoryReturnPackagingOptions);
+  factoryReturnPackagingSelect?.addEventListener("change", updateFactoryReturnPackageSummary);
+  factoryReturnQuantityInput?.addEventListener("input", updateFactoryReturnPackageSummary);
+  updateFactoryReturnPackagingOptions();
 
   qsa(".js-fill-rep-product", root).forEach((button) => {
     button.addEventListener("click", () => {
@@ -4001,8 +4173,12 @@ function bindSalesRepDashboard({ root, store }) {
           : assignment.outstanding > 0
       ));
     const product = (state.products || []).find((item) => item.id === productId);
-    const packagingType = "piece";
-    const quantity = enteredQuantity;
+    const packagingType = transactionType === "return"
+      ? String(formData.get("returnPackagingType") || "piece")
+      : "piece";
+    const quantity = transactionType === "return"
+      ? quantityInPieces(product, enteredQuantity, packagingType, state.client)
+      : enteredQuantity;
     const customer = (state.retailers || []).find((item) => item.id === customerId);
     const customerName = transactionType === "return"
       ? returnCustomerName
@@ -4035,7 +4211,7 @@ function bindSalesRepDashboard({ root, store }) {
     }
 
     if (!Number.isFinite(quantity) || quantity <= 0) {
-      setRepMessage(message, "Enter how many.", "error");
+      setRepMessage(message, transactionType === "return" ? "Enter a valid package quantity to return." : "Enter how many.", "error");
       return;
     }
 
@@ -4051,7 +4227,7 @@ function bindSalesRepDashboard({ root, store }) {
     }
 
     if (transactionType === "return" && quantity > returnableCustomerQuantity) {
-      setRepMessage(message, `Only ${formatNumber(returnableCustomerQuantity)} sold to this customer can be returned.`, "error");
+      setRepMessage(message, `Only ${formatNumber(returnableCustomerQuantity)} pieces sold to this customer can be returned.`, "error");
       return;
     }
 
@@ -4124,9 +4300,12 @@ function bindSalesRepDashboard({ root, store }) {
     event.preventDefault();
     const formData = new FormData(factoryReturnForm);
     const productId = String(formData.get("factoryReturnProductId") || "");
-    const quantity = Number(formData.get("factoryReturnQuantity") || 0);
+    const packagingQuantity = Number(formData.get("factoryReturnQuantity") || 0);
+    const packagingType = String(formData.get("factoryReturnPackagingType") || "piece");
     const reason = String(formData.get("factoryReturnReason") || "Unsold stock");
     const state = store.getState();
+    const product = (state.products || []).find((item) => item.id === productId);
+    const quantity = quantityInPieces(product, packagingQuantity, packagingType, state.client);
     const repName = currentRepName(state);
     const assignments = buildRepAssignments(state, repName).filter((assignment) => assignment.productId === productId && assignment.outstanding > 0);
     const available = assignments.reduce((total, assignment) => total + assignment.outstanding, 0);
@@ -4137,12 +4316,12 @@ function bindSalesRepDashboard({ root, store }) {
       setRepMessage(message, "Pick a product currently in your stock.", "error");
       return;
     }
-    if (!Number.isFinite(quantity) || quantity <= 0) {
-      setRepMessage(message, "Enter how many you are returning.", "error");
+    if (!Number.isFinite(packagingQuantity) || packagingQuantity <= 0 || !Number.isFinite(quantity) || quantity <= 0) {
+      setRepMessage(message, "Enter a valid package quantity to return.", "error");
       return;
     }
     if (quantity > available) {
-      setRepMessage(message, `You only have ${formatNumber(available)} of this product in hand.`, "error");
+      setRepMessage(message, `You only have ${formatNumber(available)} pieces of this product in hand.`, "error");
       return;
     }
 
@@ -4151,6 +4330,8 @@ function bindSalesRepDashboard({ root, store }) {
       assignmentIds: assignments.map((assignment) => assignment.id),
       productId,
       quantity,
+      packagingType,
+      packagingQuantity,
       reason,
       repName,
       message: "Stock returned to factory"

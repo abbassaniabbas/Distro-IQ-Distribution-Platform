@@ -1,5 +1,6 @@
 import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
+import { printTabularReport } from "../services/report-export.js";
 import { currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table } from "../ui/components.js";
@@ -14,9 +15,13 @@ function invoiceProductSummary(invoice) {
   return `${first.productName || first.productId || "Product"}${remaining ? ` +${remaining} more` : ""}`;
 }
 
+function invoiceSearchIndex(invoice) {
+  return `${invoice.id} ${invoice.customerName} ${invoice.repName} ${invoice.paymentType} ${invoice.status} ${invoiceProductSummary(invoice)}`.toLowerCase();
+}
+
 function renderInvoiceRows(invoices) {
   return invoices.map((invoice, index) => `
-    <tr ${index >= INVOICE_PAGE_SIZE ? "hidden " : ""}data-rep-invoice-row data-invoice-status="${escapeHtml(invoice.status || "open")}" data-search-index="${escapeHtml(`${invoice.id} ${invoice.customerName} ${invoice.repName} ${invoice.paymentType} ${invoice.status} ${invoiceProductSummary(invoice)}`.toLowerCase())}">
+    <tr ${index >= INVOICE_PAGE_SIZE ? "hidden " : ""}data-rep-invoice-row data-invoice-status="${escapeHtml(invoice.status || "open")}" data-search-index="${escapeHtml(invoiceSearchIndex(invoice))}">
       <td><strong>${escapeHtml(invoice.id)}</strong><div class="muted">${formatDate(invoice.issuedAt)}</div></td>
       <td>${escapeHtml(invoice.customerName || "Customer")}</td>
       <td>${escapeHtml(invoiceProductSummary(invoice))}</td>
@@ -52,7 +57,13 @@ export function renderInvoices({ state }) {
         ${metricCard({ label: "Still unpaid", value: formatCurrency(openValue), meta: "Credit invoices awaiting payment", iconName: "wallet" })}
       </div>
       <section class="panel">
-        ${panelHeader(heading, "Download or print a customer invoice after recording a sale")}
+        ${panelHeader(
+          heading,
+          "Download or print a customer invoice after recording a sale",
+          `<div class="table-document-actions" aria-label="Invoice list actions">
+            ${iconButton({ iconName: "print", label: "Print invoice list", className: "js-print-invoice-list", disabled: !invoices.length })}
+          </div>`
+        )}
         <div class="invoice-simple-filters" aria-label="Invoice filters">
           <label class="field">
             <span>Find invoice</span>
@@ -116,7 +127,49 @@ export function bindInvoices({ root, store, signal }) {
   const localSearch = qs("[data-invoice-filter]", root);
   const statusFilter = qs("[data-invoice-status-filter]", root);
   const globalSearch = qs("#global-search", document);
+  const printListButton = qs(".js-print-invoice-list", root);
   let currentPage = 1;
+
+  function filteredInvoices() {
+    const globalQuery = String(globalSearch?.value || "").trim().toLowerCase();
+    const localQuery = String(localSearch?.value || "").trim().toLowerCase();
+    const selectedStatus = String(statusFilter?.value || "all");
+
+    return getInvoiceRecords(store.getState()).filter((invoice) => {
+      const searchIndex = invoiceSearchIndex(invoice);
+      return (
+        (!globalQuery || searchIndex.includes(globalQuery)) &&
+        (!localQuery || searchIndex.includes(localQuery)) &&
+        (selectedStatus === "all" || (invoice.status || "open") === selectedStatus)
+      );
+    });
+  }
+
+  printListButton?.addEventListener("click", () => {
+    const invoices = filteredInvoices();
+    const section = {
+      title: "Invoices",
+      headers: ["Invoice", "Issued", "Customer", "Products", "Payment", "Total", "Status"],
+      rows: invoices.map((invoice) => ({
+        cells: [
+          invoice.id,
+          formatDate(invoice.issuedAt),
+          invoice.customerName || "Customer",
+          invoiceProductSummary(invoice),
+          statusText(invoice.paymentType || "cash"),
+          formatCurrency(invoice.amount),
+          statusText(invoice.status || "open")
+        ]
+      }))
+    };
+
+    printTabularReport({
+      title: "DistroIQ Invoice List",
+      subtitle: "Invoices shown by the selected filters",
+      sections: [section],
+      filename: `distroiq-invoice-list-${new Date().toISOString().slice(0, 10)}.html`
+    });
+  });
 
   if (!rows.length || !pagination || !status) return;
 
@@ -138,6 +191,7 @@ export function bindInvoices({ root, store, signal }) {
     visibleRows.forEach((row, index) => { row.hidden = Math.floor(index / INVOICE_PAGE_SIZE) + 1 !== currentPage; });
     pagination.hidden = visibleRows.length <= INVOICE_PAGE_SIZE;
     status.textContent = `${formatNumber(visibleRows.length)} invoice${visibleRows.length === 1 ? "" : "s"} - page ${formatNumber(currentPage)} of ${formatNumber(totalPages)}`;
+    if (printListButton) printListButton.disabled = !visibleRows.length;
     if (previous) previous.disabled = currentPage === 1;
     if (next) next.disabled = currentPage === totalPages;
   }

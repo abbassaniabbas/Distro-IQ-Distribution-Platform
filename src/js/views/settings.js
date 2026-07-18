@@ -1,4 +1,4 @@
-import { signInWithPassword, updateCurrentUserPassword, updateCurrentUserProfile } from "../services/auth.js";
+import { signInWithPassword, signOut, updateCurrentUserPassword, updateCurrentUserProfile } from "../services/auth.js";
 import {
   deleteWorkspace,
   loadWorkspace,
@@ -194,6 +194,7 @@ function renderFactoryDeletion(state) {
           <button class="icon-button" type="button" data-close-delete-factory aria-label="Close">${icon("x")}</button>
         </header>
         <form id="delete-factory-form" class="form-grid" novalidate>
+        <p class="field-help span-full">This permanently deletes the factory records and linked staff sign-ins.</p>
         <label class="field span-full">
           <span>Enter ${escapeHtml(state.client.companyName)} to confirm</span>
           <input name="confirmCompanyName" autocomplete="off" placeholder="${escapeHtml(state.client.companyName)}">
@@ -290,12 +291,20 @@ function renderProfileSettings(state, account) {
       ${panelHeader("My profile", "")}
       <form id="profile-settings-form" class="form-grid" novalidate>
         <div class="span-full staff-image-picker-row">
-          <button class="staff-image-preview staff-image-picker" type="button" aria-label="Choose profile picture">
-            ${account?.staffImageUrl
-              ? `<img src="${escapeHtml(account.staffImageUrl)}" alt="${escapeHtml(name || "Staff member")}">`
-              : escapeHtml(String(name || "ST").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())}
-          </button>
-          <input class="sr-only" id="profile-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}" tabindex="-1">
+          <div class="profile-image-control">
+            <button class="staff-image-preview staff-image-picker" type="button" aria-label="Choose profile picture">
+              ${account?.staffImageUrl
+                ? `<img src="${escapeHtml(account.staffImageUrl)}" alt="${escapeHtml(name || "Staff member")}">`
+                : escapeHtml(String(name || "ST").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase())}
+            </button>
+            ${iconButton({
+              iconName: "trash",
+              label: "Remove profile picture",
+              className: "profile-image-remove js-remove-profile-image",
+              disabled: !account?.staffImageUrl
+            })}
+            <input class="sr-only" id="profile-staff-image" type="file" accept="${STAFF_IMAGE_ACCEPT}" tabindex="-1">
+          </div>
         </div>
         <label class="field">
           <span>Full name</span>
@@ -493,6 +502,7 @@ export function bindSettings({ root, store }) {
   const currentAccount = getCurrentAccount(state);
   const profileImageInput = qs("#profile-staff-image", profileForm || root);
   const profileImagePreview = qs(".staff-image-preview", profileForm || root);
+  const removeProfileImageButton = qs(".js-remove-profile-image", profileForm || root);
   let profileStaffImageUrl = String(currentAccount?.staffImageUrl || "");
 
   function updateProfileImagePreview() {
@@ -500,6 +510,7 @@ export function bindSettings({ root, store }) {
     profileImagePreview.innerHTML = profileStaffImageUrl
       ? `<img src="${escapeHtml(profileStaffImageUrl)}" alt="Profile image preview">`
       : escapeHtml(String(profileForm?.elements.name?.value || currentAccount?.name || "ST").split(/\s+/).slice(0, 2).map((part) => part[0]).join("").toUpperCase());
+    if (removeProfileImageButton) removeProfileImageButton.disabled = !profileStaffImageUrl;
   }
 
   profileImagePreview?.addEventListener("click", () => profileImageInput?.click());
@@ -522,6 +533,14 @@ export function bindSettings({ root, store }) {
       if (message) message.textContent = readError.message;
       profileImageInput.value = "";
     }
+  });
+
+  removeProfileImageButton?.addEventListener("click", () => {
+    profileStaffImageUrl = "";
+    if (profileImageInput) profileImageInput.value = "";
+    const message = qs("#profile-settings-message", profileForm);
+    if (message) message.textContent = "";
+    updateProfileImagePreview();
   });
 
   profileForm?.elements.name?.addEventListener("input", () => {
@@ -857,18 +876,28 @@ export function bindSettings({ root, store }) {
     submitButton.disabled = true;
 
     try {
-      if (isBackendConfigured()) {
-        await deleteWorkspace({
-          clientId: currentState.client.id
-        });
+      if (!isBackendConfigured()) {
+        throw new Error("Backend setup error: connect Supabase before deleting the factory.");
+      }
+      const deletionResult = await deleteWorkspace({
+        clientId: currentState.client.id,
+        confirmationName: typedName
+      });
+
+      try {
+        await signOut();
+      } catch (signOutError) {
+        console.warn("The deleted factory session could not be signed out remotely:", signOutError.message);
       }
 
       store.dispatch({
         type: "DELETE_CLIENT_ACCOUNT",
-        message: "Factory account deleted"
+        message: deletionResult?.authenticationCleanupComplete === false
+          ? `Factory deleted. Backend warning: ${Number(deletionResult.failedAuthenticationDeletes || 0)} authentication account${Number(deletionResult.failedAuthenticationDeletes || 0) === 1 ? "" : "s"} could not be removed.`
+          : "Factory and linked staff accounts deleted"
       });
 
-      window.location.hash = "#/onboarding";
+      window.location.hash = "#/login";
     } catch (error) {
       message.textContent = error.message;
     } finally {

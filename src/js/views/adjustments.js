@@ -4,6 +4,15 @@ import { escapeHtml, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { requestTextDialog } from "../ui/action-dialog.js";
+import { packagingQuantityLabel } from "../services/packaging.js";
+
+function correctionQuantityLabel(request, prefix) {
+  const packagingType = String(request[`${prefix}PackagingType`] || "piece");
+  const pieces = Number(request[`${prefix}Quantity`] || 0);
+  const packagingQuantity = Number(request[`${prefix}PackagingQuantity`] ?? pieces);
+  if (packagingType === "piece") return `${formatNumber(pieces)} piece${pieces === 1 ? "" : "s"}`;
+  return `${packagingQuantityLabel(packagingQuantity, packagingType)} (${formatNumber(pieces)} pieces)`;
+}
 
 function adjustmentRows(state) {
   return [...(state.correctionRequests || [])]
@@ -18,7 +27,7 @@ function renderRows(state, role) {
         <td><strong>${escapeHtml(request.id)}</strong><div class="muted">${formatDateTime(request.createdAt)}</div></td>
         <td><strong>${escapeHtml(request.requestedBy || "Staff member")}</strong><div class="muted">${escapeHtml(roleLabel(request.requestedByRole))}</div></td>
         <td><strong>${escapeHtml(request.productName || "Stock record")}</strong><div class="muted">${escapeHtml(statusText(request.recordType))} · ${escapeHtml(request.transactionId)}</div></td>
-        <td><strong>${formatNumber(request.originalQuantity)} → ${formatNumber(request.requestedQuantity)}</strong><div class="muted">${escapeHtml(request.reason)}</div></td>
+        <td><strong>${escapeHtml(correctionQuantityLabel(request, "original"))} → ${escapeHtml(correctionQuantityLabel(request, "requested"))}</strong><div class="muted">${escapeHtml(request.reason)}</div></td>
         <td>${statusPill(request.status)}</td>
         <td>${canReview ? `<div class="row-actions">${iconButton({ iconName: "check", label: "Approve adjustment", className: "js-approve-adjustment", data: { "request-id": request.id } })}${iconButton({ iconName: "x", label: "Reject adjustment", className: "js-reject-adjustment", data: { "request-id": request.id } })}</div>` : `<span class="muted">${escapeHtml(request.reviewedBy || "Awaiting review")}</span>`}</td>
       </tr>

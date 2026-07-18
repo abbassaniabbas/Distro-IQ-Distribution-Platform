@@ -177,20 +177,51 @@ function stockJourneyPayment(state, productIds) {
   }, { total: 0, paid: 0 });
 }
 
+function stockJourneyPackageSummary(state, entries) {
+  const packageTotals = new Map();
+
+  entries.forEach(({ product, pieces }) => {
+    if (stockCategoryIdForProduct(product) !== FINISHED_PRODUCTS_CATEGORY) return;
+    const availableTypes = productPackagingTypes(state.client, product).filter((type) => type !== "piece");
+    const packageType = availableTypes.includes("carton") ? "carton" : availableTypes[0];
+    if (!packageType) return;
+
+    const piecesPerPackage = packagingMultiplier(product, packageType, state.client);
+    if (piecesPerPackage <= 0) return;
+
+    const packageCount = Math.floor(Math.max(0, Number(pieces || 0)) / piecesPerPackage);
+    packageTotals.set(packageType, (packageTotals.get(packageType) || 0) + packageCount);
+  });
+
+  return [...packageTotals.entries()].map(([type, quantity]) => {
+    const option = packagingOption(type);
+    return `${formatNumber(quantity)} ${quantity === 1 ? option.singular : option.label.toLowerCase()}`;
+  }).join(" · ");
+}
+
 function stockJourneyCategory(state, definition) {
   const products = (state.products || []).filter((product) => (
     product.status !== "inactive" && stockCategoryIdForProduct(product) === definition.id
   ));
   const productIds = new Set(products.map((product) => product.id));
   const payment = stockJourneyPayment(state, productIds);
+  const atFactoryEntries = products.map((product) => ({ product, pieces: Number(product.stock || 0) }));
+  const representativeEntries = products.map((product) => ({
+    product,
+    pieces: (state.stockAssignments || [])
+      .filter((assignment) => assignment.productId === product.id)
+      .reduce((total, assignment) => total + Math.max(0, assignmentInHand(assignment)), 0)
+  }));
 
   return {
     ...definition,
-    atFactory: products.reduce((total, product) => total + Number(product.stock || 0), 0),
+    atFactoryEntries,
+    representativeEntries,
+    atFactory: atFactoryEntries.reduce((total, entry) => total + entry.pieces, 0),
+    atFactoryPackages: stockJourneyPackageSummary(state, atFactoryEntries),
     runningLow: products.filter((product) => getStockHealth(product).status !== "ready").length,
-    withRepresentatives: (state.stockAssignments || [])
-      .filter((assignment) => productIds.has(assignment.productId))
-      .reduce((total, assignment) => total + Math.max(0, assignmentInHand(assignment)), 0),
+    withRepresentatives: representativeEntries.reduce((total, entry) => total + entry.pieces, 0),
+    representativePackages: stockJourneyPackageSummary(state, representativeEntries),
     updates: (state.stockTransactions || []).filter((transaction) => productIds.has(transaction.productId)).length,
     paidValue: payment.paid,
     salesValue: payment.total,
@@ -200,19 +231,20 @@ function stockJourneyCategory(state, definition) {
 
 function renderJourneyFigures(row) {
   const figures = [
-    ["At factory", formatNumber(row.atFactory)],
-    ["Running low", formatNumber(row.runningLow)],
-    ["With sales representatives", formatNumber(row.withRepresentatives)],
-    ["Stock updates", formatNumber(row.updates)],
-    ["Paid", row.salesValue ? formatPercent(row.paidPercent) : "No sales yet"]
+    { label: "At factory", value: row.atFactoryPackages || formatNumber(row.atFactory), exact: row.atFactoryPackages ? `${formatNumber(row.atFactory)} ${row.quantityLabel}` : "" },
+    { label: "Running low", value: formatNumber(row.runningLow) },
+    { label: "With sales representatives", value: row.representativePackages || formatNumber(row.withRepresentatives), exact: row.representativePackages ? `${formatNumber(row.withRepresentatives)} ${row.quantityLabel}` : "" },
+    { label: "Stock updates", value: formatNumber(row.updates) },
+    { label: "Paid", value: row.salesValue ? formatPercent(row.paidPercent) : "No sales yet" }
   ];
 
   return `
     <div class="stock-journey-figures">
-      ${figures.map(([label, value]) => `
+      ${figures.map(({ label, value, exact }) => `
         <div>
           <span>${escapeHtml(label)}</span>
-          <strong>${escapeHtml(value)}</strong>
+          <strong class="${exact ? "stock-journey-package-quantity" : ""}">${escapeHtml(value)}</strong>
+          ${exact ? `<small>${escapeHtml(exact)}</small>` : ""}
         </div>
       `).join("")}
     </div>
@@ -224,17 +256,20 @@ function renderLifecycle(state) {
     {
       id: "raw_materials",
       label: "Raw materials",
-      meaning: "Ingredients and packaging used to make products."
+      meaning: "Ingredients and packaging used to make products.",
+      quantityLabel: "units"
     },
     {
       id: "finished_products",
       label: "Finished products",
-      meaning: "Packed products that are ready to sell."
+      meaning: "Packed products that are ready to sell.",
+      quantityLabel: "pieces"
     },
     {
       id: "equipment",
       label: "Equipment",
-      meaning: "Machines and tools owned by the factory or available for sale."
+      meaning: "Machines and tools owned by the factory or available for sale.",
+      quantityLabel: "units"
     }
   ].map((definition) => stockJourneyCategory(state, definition));
   const overall = categories.reduce((summary, row) => ({
@@ -244,9 +279,14 @@ function renderLifecycle(state) {
     updates: summary.updates + row.updates,
     paidValue: summary.paidValue + row.paidValue,
     salesValue: summary.salesValue + row.salesValue,
+    atFactoryEntries: [...summary.atFactoryEntries, ...row.atFactoryEntries],
+    representativeEntries: [...summary.representativeEntries, ...row.representativeEntries],
     paidPercent: 0
-  }), { atFactory: 0, runningLow: 0, withRepresentatives: 0, updates: 0, paidValue: 0, salesValue: 0, paidPercent: 0 });
+  }), { atFactory: 0, runningLow: 0, withRepresentatives: 0, updates: 0, paidValue: 0, salesValue: 0, paidPercent: 0, atFactoryEntries: [], representativeEntries: [] });
   overall.paidPercent = overall.salesValue ? (overall.paidValue / overall.salesValue) * 100 : 0;
+  overall.atFactoryPackages = stockJourneyPackageSummary(state, overall.atFactoryEntries);
+  overall.representativePackages = stockJourneyPackageSummary(state, overall.representativeEntries);
+  overall.quantityLabel = "total units";
 
   return `
     <section class="panel stock-journey-panel">
@@ -761,15 +801,6 @@ function renderProductListRow(product, state, permissions) {
   const canManageProducts = permissions.canManageProducts;
   const stockCategory = stockCategoryIdForProduct(product);
   const isRawMaterial = stockCategory === RAW_MATERIALS_CATEGORY;
-  const isFinishedProduct = stockCategory === FINISHED_PRODUCTS_CATEGORY;
-  const productionBatches = isFinishedProduct ? productionBatchesForProduct(state, product.id) : [];
-  const batchesUsingStockMaterials = productionBatches.filter((batch) => (batch.materials || []).length > 0);
-  const hasStockMaterialUsage = batchesUsingStockMaterials.length > 0;
-  const latestBatch = productionBatches[0];
-  const lineageTitle = hasStockMaterialUsage ? "Made using stock raw materials" : "No stock-material usage recorded";
-  const lineageDescription = hasStockMaterialUsage
-    ? `${formatNumber(batchesUsingStockMaterials.length)} linked batch${batchesUsingStockMaterials.length === 1 ? "" : "es"}${latestBatch ? ` - latest ${productionBatchReference(latestBatch)}` : ""}`
-    : "Production batches with raw materials will appear here.";
   const searchIndex = [product.id, product.name, product.productType, product.size, product.category, product.region, product.warehouse]
     .join(" ")
     .toLowerCase();
@@ -823,9 +854,6 @@ function renderProductListRow(product, state, permissions) {
           ${isRawMaterial && Number(product.stock || 0) > 0 && (canManageProducts || canReduceStock)
             ? iconButton({ iconName: "wallet", label: "Sell raw material", className: "js-sell-raw-material", data: { "product-id": product.id } })
             : ""}
-          ${isFinishedProduct
-            ? iconButton({ iconName: hasStockMaterialUsage ? "eye" : "history", label: `${lineageTitle}. ${lineageDescription}`, className: `js-open-production-traceability${hasStockMaterialUsage ? " has-lineage" : ""}`, data: { "product-id": product.id } })
-            : ""}
         </div>
       </td>
     </tr>
@@ -856,13 +884,6 @@ function renderStockGridCard(product, state, permissions) {
   const canManageProducts = permissions.canManageProducts;
   const stockCategory = stockCategoryIdForProduct(product);
   const isRawMaterial = stockCategory === RAW_MATERIALS_CATEGORY;
-  const isFinishedProduct = stockCategory === FINISHED_PRODUCTS_CATEGORY;
-  const productionBatches = isFinishedProduct ? productionBatchesForProduct(state, product.id) : [];
-  const hasStockMaterialUsage = productionBatches.some((batch) => (batch.materials || []).length > 0);
-  const lineageTitle = hasStockMaterialUsage ? "Made using stock raw materials" : "No stock-material usage recorded";
-  const lineageDescription = hasStockMaterialUsage
-    ? `${formatNumber(productionBatches.length)} linked production batch${productionBatches.length === 1 ? "" : "es"}`
-    : "Production batches with raw materials will appear here.";
   const searchIndex = [product.id, product.name, product.productType, product.size, product.category, product.region, product.warehouse]
     .join(" ")
     .toLowerCase();
@@ -915,9 +936,6 @@ function renderStockGridCard(product, state, permissions) {
           ${canReduceStock ? iconButton({ iconName: "alert", label: "Reduce stock", className: "js-reduce-stock", disabled: Number(product.stock || 0) <= 0, data: { "product-id": product.id } }) : ""}
           ${isRawMaterial && Number(product.stock || 0) > 0 && (canManageProducts || canReduceStock)
             ? iconButton({ iconName: "wallet", label: "Sell raw material", className: "js-sell-raw-material", data: { "product-id": product.id } })
-            : ""}
-          ${isFinishedProduct
-            ? iconButton({ iconName: hasStockMaterialUsage ? "eye" : "history", label: `${lineageTitle}. ${lineageDescription}`, className: `js-open-production-traceability${hasStockMaterialUsage ? " has-lineage" : ""}`, data: { "product-id": product.id } })
             : ""}
         </div>
       </div>
@@ -1282,6 +1300,13 @@ export function renderRecordCorrectionModal(submitLabel = "Send for approval") {
             <input name="requestedQuantity" type="number" min="0.01" step="0.01" inputmode="decimal" required>
             <small class="field-help" data-correction-quantity-limit hidden></small>
           </label>
+          <label class="field">
+            <span>Packaging</span>
+            <select name="requestedPackagingType" data-correction-packaging required>
+              <option value="piece">Pieces</option>
+            </select>
+            <small class="field-help" data-correction-package-summary>Enter the corrected quantity to see the exact pieces.</small>
+          </label>
           <label class="field span-full">
             <span>Reason for adjustment</span>
             <textarea name="reason" rows="3" maxlength="500" placeholder="Explain the mistake and why this quantity should change" required></textarea>
@@ -1300,10 +1325,14 @@ export function renderStoreKeeperDispatchAction(state) {
   const permissions = currentUserPermissions(state);
 
   return `
-    <button class="button primary js-open-dashboard-dispatch" type="button">
-      ${icon("truck")}
-      <span>Record dispatch</span>
-    </button>
+    <div class="ceo-quick-actions">
+      <button class="button compact js-open-stock-modal" type="button">${icon("plus")}<span>Add stock</span></button>
+      <button class="button primary compact js-open-dashboard-dispatch" type="button">
+        ${icon("truck")}
+        <span>Record dispatch</span>
+      </button>
+    </div>
+    ${renderStockProductModal(state, permissions)}
     ${renderDashboardDispatchModal(state, permissions)}
     ${renderRecordCorrectionModal()}
   `;
@@ -2067,6 +2096,8 @@ export function bindInventory({ root, store, signal }) {
   const correctionModal = qs("#record-correction-modal", root);
   const correctionForm = qs("#record-correction-form", root);
   const correctionMessage = qs("#record-correction-message", root);
+  const correctionPackagingSelect = qs("[data-correction-packaging]", correctionForm || root);
+  const correctionPackageSummary = qs("[data-correction-package-summary]", correctionForm || root);
   const affiliatedProductProgress = qs("[data-affiliated-product-progress]", productForm || root);
   const affiliatedProductList = qs("[data-affiliated-product-list]", productForm || root);
   const addAffiliatedProductButton = qs(".js-add-affiliated-product", productForm || root);
@@ -2208,16 +2239,57 @@ export function bindInventory({ root, store, signal }) {
   qsa(".js-open-record-correction", root).forEach((button) => {
     button.addEventListener("click", () => {
       if (!correctionModal || !correctionForm) return;
+      const state = store.getState();
+      const transaction = (state.stockTransactions || []).find((item) => item.id === button.dataset.transactionId);
+      const product = (state.products || []).find((item) => item.id === transaction?.productId);
       correctionForm.reset();
       correctionForm.elements.transactionId.value = button.dataset.transactionId || "";
-      correctionForm.elements.requestedQuantity.value = button.dataset.quantity || "";
+      if (correctionPackagingSelect) {
+        correctionPackagingSelect.innerHTML = productPackagingTypes(state.client, product)
+          .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(packagingOption(type).label)}</option>`)
+          .join("");
+        correctionPackagingSelect.value = [...correctionPackagingSelect.options].some((option) => option.value === String(transaction?.packagingType || "piece"))
+          ? String(transaction?.packagingType || "piece")
+          : "piece";
+      }
+      correctionForm.elements.requestedQuantity.value = transaction?.packagingQuantity || button.dataset.quantity || "";
       const label = qs("[data-correction-record-label]", correctionModal);
       if (label) label.textContent = button.dataset.recordLabel || "Saved record";
       if (correctionMessage) correctionMessage.textContent = "";
+      updateCorrectionPackageSummary();
       correctionModal.hidden = false;
       correctionForm.elements.requestedQuantity.focus();
     });
   });
+
+  function correctionQuantityInPieces() {
+    if (!correctionForm) return 0;
+    const transaction = (store.getState().stockTransactions || []).find((item) => item.id === correctionForm.elements.transactionId.value);
+    const product = (store.getState().products || []).find((item) => item.id === transaction?.productId);
+    return quantityInPieces(
+      product,
+      Number(correctionForm.elements.requestedQuantity.value || 0),
+      correctionPackagingSelect?.value || "piece",
+      store.getState().client
+    );
+  }
+
+  function updateCorrectionPackageSummary() {
+    if (!correctionForm || !correctionPackageSummary) return;
+    const enteredQuantity = Number(correctionForm.elements.requestedQuantity.value || 0);
+    const packagingType = correctionPackagingSelect?.value || "piece";
+    const exactPieces = correctionQuantityInPieces();
+    correctionPackageSummary.textContent = enteredQuantity > 0
+      ? `${packagingQuantityLabel(enteredQuantity, packagingType)} = ${formatNumber(exactPieces)} piece${exactPieces === 1 ? "" : "s"}`
+      : "Enter the corrected quantity to see the exact pieces.";
+  }
+
+  correctionPackagingSelect?.addEventListener("change", () => {
+    correctionForm.elements.requestedQuantity.value = "";
+    updateCorrectionPackageSummary();
+    correctionForm.elements.requestedQuantity.focus();
+  });
+  correctionForm?.elements.requestedQuantity?.addEventListener("input", updateCorrectionPackageSummary);
 
   qsa(".js-close-record-correction", root).forEach((button) => {
     button.addEventListener("click", () => { correctionModal.hidden = true; });
@@ -2229,7 +2301,9 @@ export function bindInventory({ root, store, signal }) {
     event.preventDefault();
     const formData = new FormData(correctionForm);
     const transactionId = String(formData.get("transactionId") || "");
-    const requestedQuantity = Number(formData.get("requestedQuantity") || 0);
+    const requestedPackagingQuantity = Number(formData.get("requestedQuantity") || 0);
+    const requestedPackagingType = String(formData.get("requestedPackagingType") || "piece");
+    const requestedQuantity = correctionQuantityInPieces();
     const reason = String(formData.get("reason") || "").trim();
     const transaction = (store.getState().stockTransactions || []).find((item) => item.id === transactionId);
 
@@ -2244,12 +2318,16 @@ export function bindInventory({ root, store, signal }) {
       type: "DIRECT_RECORD_CORRECTION",
       transactionId,
       requestedQuantity,
+      requestedPackagingType,
+      requestedPackagingQuantity,
       reason,
       message: "Dispatch adjustment saved"
     } : {
       type: "REQUEST_RECORD_CORRECTION",
       transactionId,
       requestedQuantity,
+      requestedPackagingType,
+      requestedPackagingQuantity,
       reason,
       message: "Correction sent for approval"
     });

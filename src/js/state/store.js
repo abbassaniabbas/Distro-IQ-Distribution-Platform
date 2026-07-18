@@ -9,7 +9,7 @@ import {
 import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js";
-import { effectivePiecePrice, packagingLineAmount, packagingUnitPrice, quantityInPieces } from "../services/packaging.js";
+import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../services/packaging.js";
 
 function clone(value) {
   if (typeof structuredClone === "function") {
@@ -483,7 +483,31 @@ function productActivitySummary(previousProduct, nextProduct) {
     return `Added stock ${nextProduct.name} with ${nextProduct.stock} ${nextProduct.unit}`;
   }
 
-  return `Updated stock ${nextProduct.name}`;
+  if (Number(previousProduct.stock || 0) !== Number(nextProduct.stock || 0)) {
+    const unit = nextProduct.stockCategory === "finished_products" ? "pieces" : nextProduct.unit || "units";
+    return `Updated ${nextProduct.name} stock from ${Number(previousProduct.stock || 0).toLocaleString("en-NG")} to ${Number(nextProduct.stock || 0).toLocaleString("en-NG")} ${unit}.`;
+  }
+
+  if (String(previousProduct.imageUrl || "") !== String(nextProduct.imageUrl || "")) {
+    return `${nextProduct.imageUrl ? "Updated" : "Removed"} the picture for ${nextProduct.name}.`;
+  }
+
+  if (String(previousProduct.name || "") !== String(nextProduct.name || "")) {
+    return `Renamed ${previousProduct.name} to ${nextProduct.name}.`;
+  }
+
+  if (String(previousProduct.status || "") !== String(nextProduct.status || "")) {
+    return `Changed ${nextProduct.name} status to ${nextProduct.status}.`;
+  }
+
+  if (
+    Number(previousProduct.unitCost || 0) !== Number(nextProduct.unitCost || 0) ||
+    Number(previousProduct.unitPrice || 0) !== Number(nextProduct.unitPrice || 0)
+  ) {
+    return `Updated pricing for ${nextProduct.name}.`;
+  }
+
+  return `Updated ${nextProduct.name}.`;
 }
 
 function freezeProductPricingOnExistingRecords(state, product) {
@@ -1074,6 +1098,8 @@ function reducer(currentState, action) {
     case "DELETE_CLIENT_ACCOUNT": {
       return {
         ...state,
+        session: null,
+        user: null,
         client: null,
         accounts: [],
         invites: [],
@@ -1099,7 +1125,12 @@ function reducer(currentState, action) {
         stockAssignments: [],
         stockTransactions: [],
         creditLimits: [],
-        invoices: []
+        invoices: [],
+        backend: {
+          ...state.backend,
+          status: "anonymous",
+          error: ""
+        }
       };
     }
 
@@ -1716,6 +1747,9 @@ function reducer(currentState, action) {
       const repName = action.repName || currentActorName(state);
       const requestedIds = new Set((action.assignmentIds || []).map((id) => String(id || "")));
       const product = state.products.find((item) => item.id === action.productId);
+      const packagingType = String(action.packagingType || "piece");
+      const packagingQuantity = Number(action.packagingQuantity ?? quantity);
+      const calculatedQuantity = quantityInPieces(product, packagingQuantity, packagingType, state.client);
       const assignments = (state.stockAssignments || [])
         .filter((assignment) => requestedIds.has(String(assignment.id)))
         .filter((assignment) => assignment.productId === action.productId)
@@ -1724,7 +1758,7 @@ function reducer(currentState, action) {
         .sort((a, b) => String(a.assignedAt || "").localeCompare(String(b.assignedAt || "")));
       const available = assignments.reduce((total, assignment) => total + assignmentOutstanding(assignment), 0);
 
-      if (!product || !quantity || quantity > available) return state;
+      if (!product || !quantity || calculatedQuantity !== quantity || quantity > available) return state;
 
       let remaining = quantity;
       const assignmentAllocations = [];
@@ -1748,6 +1782,8 @@ function reducer(currentState, action) {
         productId: product.id,
         productName: product.name,
         quantity,
+        packagingType,
+        packagingQuantity,
         amount: 0,
         partyType: "Sales Representative",
         partyName: repName,
@@ -1767,7 +1803,7 @@ function reducer(currentState, action) {
         actionType: "returned",
         recordType: "stock_movement",
         recordLabel: product.id,
-        summary: `${repName} returned ${quantity} ${product.name} to the factory - ${action.reason || "Unsold stock"}`
+        summary: `${repName} returned ${packagingQuantityLabel(packagingQuantity, packagingType)} (${quantity} pieces) of ${product.name} to the factory - ${action.reason || "Unsold stock"}`
       });
       return state;
     }
@@ -1936,15 +1972,14 @@ function reducer(currentState, action) {
       const availableQuantity = eligibleAssignments.reduce((total, assignment) => (
         total + (transactionType === "return" ? Number(assignment.sold || 0) : assignmentOutstanding(assignment))
       ), 0);
-      const transactionPackagingType = transactionType === "sale" ? String(action.packagingType || "piece") : "piece";
+      const transactionPackagingType = String(action.packagingType || "piece");
       const transactionPackagingQuantity = Number(action.packagingQuantity || quantity);
-      const transactionUnitPrice = transactionType === "sale"
-        ? effectivePiecePrice(product, transactionPackagingType, state.client)
-        : Number(product?.unitPrice || 0);
-      const transactionPackagingUnitPrice = transactionType === "sale"
-        ? packagingUnitPrice(product, transactionPackagingType, state.client)
-        : Number(product?.unitPrice || 0);
-      const amount = quantity * transactionUnitPrice;
+      const calculatedPackagingQuantity = quantityInPieces(product, transactionPackagingQuantity, transactionPackagingType, state.client);
+      const transactionUnitPrice = effectivePiecePrice(product, transactionPackagingType, state.client);
+      const transactionPackagingUnitPrice = packagingUnitPrice(product, transactionPackagingType, state.client);
+      const amount = transactionPackagingType === "piece"
+        ? quantity * transactionUnitPrice
+        : transactionPackagingQuantity * transactionPackagingUnitPrice;
       const isCreditImpact = String(paymentType).toLowerCase().includes("credit");
       const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
       const customerName = customer?.name || action.customerName || "Walk-in customer";
@@ -1962,7 +1997,7 @@ function reducer(currentState, action) {
           ))
         : null;
 
-      if (!product || !quantity || !eligibleAssignments.length || quantity > availableQuantity) return state;
+      if (!product || !quantity || calculatedPackagingQuantity !== quantity || !eligibleAssignments.length || quantity > availableQuantity) return state;
       if (isWalkInSale && normalized(paymentType) !== "cash") return state;
       if (transactionType === "return" && (!returnableCustomer || quantity > returnableCustomer.quantity)) return state;
 
@@ -2811,6 +2846,9 @@ function reducer(currentState, action) {
       const transaction = (state.stockTransactions || []).find((item) => item.id === action.transactionId);
       const product = state.products.find((item) => item.id === transaction?.productId);
       const nextQuantity = Number(action.requestedQuantity || 0);
+      const requestedPackagingType = String(action.requestedPackagingType || "piece");
+      const requestedPackagingQuantity = Number(action.requestedPackagingQuantity ?? nextQuantity);
+      const calculatedQuantity = quantityInPieces(product, requestedPackagingQuantity, requestedPackagingType, state.client);
       const previousQuantity = Number(transaction?.quantity || 0);
       const previousAmount = Number(transaction?.amount || 0);
       const reason = String(action.reason || "").trim();
@@ -2818,7 +2856,7 @@ function reducer(currentState, action) {
       const isDispatch = transaction?.movementDirection === "out" && ["supply", "internal movement"].includes(transactionType);
       const delta = nextQuantity - previousQuantity;
 
-      if (!transaction || !product || !isDispatch || !reason || !Number.isFinite(nextQuantity) || nextQuantity <= 0 || delta === 0) return state;
+      if (!transaction || !product || !isDispatch || !reason || !Number.isFinite(nextQuantity) || nextQuantity <= 0 || calculatedQuantity !== nextQuantity || delta === 0) return state;
 
       const assignment = (state.stockAssignments || []).find((item) => (
         item.transactionId === transaction.id || (
@@ -2881,7 +2919,11 @@ function reducer(currentState, action) {
     case "REQUEST_RECORD_CORRECTION": {
       const role = currentUserRole(state);
       const transaction = (state.stockTransactions || []).find((item) => item.id === action.transactionId);
+      const product = state.products.find((item) => item.id === transaction?.productId);
       const requestedQuantity = Number(action.requestedQuantity || 0);
+      const requestedPackagingType = String(action.requestedPackagingType || "piece");
+      const requestedPackagingQuantity = Number(action.requestedPackagingQuantity ?? requestedQuantity);
+      const calculatedQuantity = quantityInPieces(product, requestedPackagingQuantity, requestedPackagingType, state.client);
       const reason = String(action.reason || "").trim();
       const actorName = currentActorName(state);
       const transactionType = normalized(transaction?.type);
@@ -2897,7 +2939,7 @@ function reducer(currentState, action) {
         request.transactionId === transaction?.id && request.status === "pending"
       ));
 
-      if (!transaction || !mayRequest || alreadyPending || !reason || !Number.isFinite(requestedQuantity) || requestedQuantity <= 0 || requestedQuantity === Number(transaction.quantity || 0)) {
+      if (!transaction || !product || !mayRequest || alreadyPending || !reason || !Number.isFinite(requestedQuantity) || requestedQuantity <= 0 || calculatedQuantity !== requestedQuantity || requestedQuantity === Number(transaction.quantity || 0)) {
         return state;
       }
 
@@ -2909,7 +2951,11 @@ function reducer(currentState, action) {
         productId: transaction.productId,
         productName: transaction.productName || state.products.find((product) => product.id === transaction.productId)?.name || transaction.productId,
         originalQuantity: Number(transaction.quantity || 0),
+        originalPackagingType: String(transaction.packagingType || "piece"),
+        originalPackagingQuantity: Number(transaction.packagingQuantity ?? transaction.quantity ?? 0),
         requestedQuantity,
+        requestedPackagingType,
+        requestedPackagingQuantity,
         reason: reason.slice(0, 500),
         requestedBy: actorName,
         requestedByUserId: state.user?.id || "",
