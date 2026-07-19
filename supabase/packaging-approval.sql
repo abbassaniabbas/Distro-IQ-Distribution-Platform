@@ -2,7 +2,7 @@ create table if not exists public.packaging_change_requests (
   id uuid primary key default gen_random_uuid(),
   client_id uuid not null references public.clients(id) on delete cascade,
   requested_by_user_id uuid not null references auth.users(id) on delete restrict,
-  requested_by_name text not null default 'Store Keeper',
+  requested_by_name text not null default 'Staff member',
   packaging_types jsonb not null default '["piece"]'::jsonb,
   packaging_defaults jsonb not null default '{"piece":1}'::jsonb,
   status text not null default 'pending' check (status in ('pending', 'approved', 'rejected')),
@@ -30,7 +30,7 @@ to authenticated
 using (
   public.has_client_role(client_id, array['ceo'])
   or (
-    public.has_client_role(client_id, array['store_keeper'])
+    public.has_client_role(client_id, array['admin', 'store_keeper'])
     and requested_by_user_id = auth.uid()
   )
 );
@@ -51,8 +51,8 @@ declare
   v_types text[];
   v_defaults jsonb;
 begin
-  if not public.has_client_role(p_client_id, array['store_keeper']) then
-    raise exception 'Store Keeper access required';
+  if not public.has_client_role(p_client_id, array['admin', 'store_keeper']) then
+    raise exception 'Admin or Store Keeper access required';
   end if;
 
   if exists (
@@ -101,7 +101,7 @@ begin
   ) values (
     p_client_id,
     auth.uid(),
-    coalesce(v_requester_name, 'Store Keeper'),
+    coalesce(v_requester_name, 'Staff member'),
     to_jsonb(coalesce(v_types, array['piece'])),
     coalesce(v_defaults, '{"piece":1}'::jsonb)
   ) returning id into v_request_id;
@@ -111,8 +111,8 @@ begin
     actor_user_id, actor_name, summary
   ) values (
     p_client_id, 'requested', 'packaging_settings', v_request_id::text,
-    auth.uid(), coalesce(v_requester_name, 'Store Keeper'),
-    coalesce(v_requester_name, 'Store Keeper') || ' requested a Sales Packaging change'
+    auth.uid(), coalesce(v_requester_name, 'Staff member'),
+    coalesce(v_requester_name, 'Staff member') || ' requested a Sales Packaging change'
   );
 
   return v_request_id;

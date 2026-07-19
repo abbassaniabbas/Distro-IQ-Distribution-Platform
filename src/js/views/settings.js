@@ -218,7 +218,7 @@ function renderFactoryDeletion(state) {
 function renderPackagingSettings(state) {
   if (!canViewPackagingSettings(state)) return "";
   const role = currentUserRole(state);
-  const requiresApproval = role === "store_keeper";
+  const requiresApproval = ["admin", "store_keeper"].includes(role);
   const selected = new Set(enabledPackagingTypes(state.client));
   const requests = state.packagingChangeRequests || [];
   const pendingRequest = requests.find((request) => (
@@ -245,7 +245,7 @@ function renderPackagingSettings(state) {
           ${pendingApprovals.map((request) => `
             <article class="packaging-approval-request">
               <div>
-                <strong>${escapeHtml(request.requestedBy || "Store Keeper")}</strong>
+                <strong>${escapeHtml(request.requestedBy || "Staff member")}</strong>
                 <span>${escapeHtml(packageSummary(request))}</span>
               </div>
               <div class="row-actions">
@@ -260,10 +260,14 @@ function renderPackagingSettings(state) {
         <fieldset class="span-full packaging-settings-options" aria-describedby="packaging-selection-summary">
           <legend>Packaging used by the factory — select all that apply</legend>
           ${PACKAGING_OPTIONS.map((option) => `
-            <label class="packaging-setting-option ${selected.has(option.value) ? "is-selected" : ""}" data-packaging-option>
-              <input type="checkbox" name="packagingTypes" value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""} ${option.value === "piece" ? "disabled" : ""}>
-              <span><strong>${escapeHtml(option.label)}</strong><small>${option.value === "piece" ? "Base stock unit" : "Set the quantity inside each stock item"}</small></span>
-            </label>
+            <div class="packaging-setting-option ${selected.has(option.value) ? "is-selected" : ""}" data-packaging-option>
+              <input class="sr-only" type="checkbox" name="packagingTypes" value="${escapeHtml(option.value)}" ${selected.has(option.value) ? "checked" : ""} ${option.value === "piece" ? "disabled" : ""}>
+              <button class="packaging-option-toggle" type="button" data-packaging-toggle aria-pressed="${selected.has(option.value) ? "true" : "false"}" ${option.value === "piece" ? "disabled" : ""}>
+                <span class="packaging-option-check" aria-hidden="true">${icon("check")}</span>
+                <span class="packaging-option-copy"><strong>${escapeHtml(option.label)}</strong><small>${option.value === "piece" ? "Base stock unit" : "Set the quantity inside each stock item"}</small></span>
+                <small class="packaging-option-state" data-packaging-option-state>${option.value === "piece" ? "Required" : selected.has(option.value) ? "Selected" : "Select"}</small>
+              </button>
+            </div>
           `).join("")}
         </fieldset>
         <div id="packaging-selection-summary" class="packaging-selection-summary span-full" aria-live="polite">
@@ -556,7 +560,12 @@ export function bindSettings({ root, store }) {
     const selectedTypes = new Set(["piece", ...new FormData(packagingForm).getAll("packagingTypes").map(String)]);
     packagingForm.querySelectorAll("[data-packaging-option]").forEach((option) => {
       const checkbox = option.querySelector('input[name="packagingTypes"]');
-      option.classList.toggle("is-selected", selectedTypes.has(String(checkbox?.value || "")));
+      const isSelected = selectedTypes.has(String(checkbox?.value || ""));
+      option.classList.toggle("is-selected", isSelected);
+      const toggle = option.querySelector("[data-packaging-toggle]");
+      const stateLabel = option.querySelector("[data-packaging-option-state]");
+      if (toggle) toggle.setAttribute("aria-pressed", isSelected ? "true" : "false");
+      if (stateLabel) stateLabel.textContent = checkbox?.value === "piece" ? "Required" : isSelected ? "Selected" : "Select";
     });
     const summary = qs("[data-packaging-selection-summary]", packagingForm);
     if (summary) {
@@ -570,15 +579,24 @@ export function bindSettings({ root, store }) {
   packagingForm?.querySelectorAll('input[name="packagingTypes"]').forEach((checkbox) => {
     checkbox.addEventListener("change", updatePackagingSelectionSummary);
   });
+  packagingForm?.querySelectorAll("[data-packaging-option]").forEach((option) => {
+    option.addEventListener("click", (event) => {
+      if (event.target.closest('input[name="packagingTypes"]')) return;
+      const checkbox = option?.querySelector('input[name="packagingTypes"]');
+      if (!checkbox || checkbox.disabled) return;
+      checkbox.checked = !checkbox.checked;
+      updatePackagingSelectionSummary();
+    });
+  });
   updatePackagingSelectionSummary();
 
   packagingForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const currentState = store.getState();
-    const requiresApproval = currentUserRole(currentState) === "store_keeper";
+    const requiresApproval = ["admin", "store_keeper"].includes(currentUserRole(currentState));
     const packagingTypes = ["piece", ...new FormData(packagingForm).getAll("packagingTypes").map(String)];
     const savedDefaults = packagingDefaults(currentState.client);
-    const packagingDefaults = Object.fromEntries(packagingTypes.map((type) => [
+    const nextPackagingDefaults = Object.fromEntries(packagingTypes.map((type) => [
       type,
       type === "piece" ? 1 : Math.max(1, Math.floor(Number(savedDefaults[type] || 1)))
     ]));
@@ -592,28 +610,32 @@ export function bindSettings({ root, store }) {
         const workspace = await requestPackagingSettingsChange({
           clientId: currentState.client.id,
           packagingTypes,
-          packagingDefaults
+          packagingDefaults: nextPackagingDefaults
         });
         store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Packaging change sent for CEO approval" });
       } else if (requiresApproval) {
         store.dispatch({
           type: "REQUEST_PACKAGING_SETTINGS_CHANGE",
           packagingTypes,
-          packagingDefaults,
+          packagingDefaults: nextPackagingDefaults,
           message: "Packaging change sent for CEO approval"
         });
       } else if (isBackendConfigured()) {
-        const workspace = await updatePackagingSettings({
+        const savedSettings = await updatePackagingSettings({
           clientId: currentState.client.id,
           packagingTypes,
-          packagingDefaults
+          packagingDefaults: nextPackagingDefaults
         });
-        store.dispatch({ type: "SET_WORKSPACE", ...workspace, message: "Packaging settings updated" });
+        store.dispatch({
+          type: "SYNC_CLIENT_SETTINGS",
+          payload: savedSettings,
+          message: "Packaging settings saved successfully"
+        });
       } else {
         store.dispatch({
           type: "UPDATE_CLIENT_SETTINGS",
-          payload: { packagingTypes, packagingDefaults },
-          message: "Packaging settings updated"
+          payload: { packagingTypes, packagingDefaults: nextPackagingDefaults },
+          message: "Packaging settings saved successfully"
         });
       }
     } catch (error) {
@@ -656,7 +678,7 @@ export function bindSettings({ root, store }) {
     button.addEventListener("click", async () => {
       const note = await requestTextDialog({
         title: "Reject Sales Packaging change",
-        message: "Give the Store Keeper a clear reason for rejecting this request.",
+        message: "Give the requester a clear reason for rejecting this request.",
         confirmLabel: "Reject request"
       });
       if (note === null) return;

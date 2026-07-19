@@ -1039,8 +1039,20 @@ function reducer(currentState, action) {
       };
     }
 
+    case "SYNC_CLIENT_SETTINGS": {
+      if (!state.client?.id) return state;
+
+      return {
+        ...state,
+        client: {
+          ...state.client,
+          ...action.payload
+        }
+      };
+    }
+
     case "REQUEST_PACKAGING_SETTINGS_CHANGE": {
-      if (!state.client?.id || currentUserRole(state) !== "store_keeper") return state;
+      if (!state.client?.id || !["admin", "store_keeper"].includes(currentUserRole(state))) return state;
       const allowedTypes = new Set(["piece", "carton", "pack", "tray", "pouch", "sachet", "jar", "display_box"]);
       const packagingTypes = [...new Set(["piece", ...(action.packagingTypes || [])])].filter((type) => allowedTypes.has(type));
       const packagingDefaults = Object.fromEntries(packagingTypes.map((type) => [

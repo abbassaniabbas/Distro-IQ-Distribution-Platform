@@ -5,6 +5,7 @@ import {
   normalized,
   relativeTime
 } from "../services/messages.js";
+import { currentUserRole } from "../services/rbac.js";
 import { escapeHtml } from "./dom.js";
 
 let activeNotificationPopover = null;
@@ -20,8 +21,14 @@ export function getTopbarNotificationItems(state) {
   const readAt = new Date(state.notificationReadAt || 0).getTime();
   const clearedAt = new Date(state.notificationClearedAt || 0).getTime();
   const dismissedIds = new Set((state.dismissedNotificationIds || []).map(String));
+  const role = currentUserRole(state);
   const activityItems = getScopedActivityLogs(state)
     .filter((entry) => entry.clientId === state.client.id)
+    .filter((entry) => !(
+      entry.recordType === "packaging_settings" &&
+      entry.actionType === "requested" &&
+      role !== "ceo"
+    ))
     .filter((entry) => entry.actorUserId !== state.user?.id)
     .filter((entry) => normalized(entry.actorEmail) !== normalized(account?.email))
     .filter((entry) => new Date(entry.createdAt || 0).getTime() > clearedAt)

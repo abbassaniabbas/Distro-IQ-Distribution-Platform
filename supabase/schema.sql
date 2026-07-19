@@ -835,8 +835,8 @@ as $$
 declare
   v_types text[];
 begin
-  if not public.has_client_role(p_client_id, array['ceo', 'admin']) then
-    raise exception 'CEO or Admin access required';
+  if not public.has_client_role(p_client_id, array['ceo']) then
+    raise exception 'CEO access required';
   end if;
 
   select array_agg(option_name order by option_order)

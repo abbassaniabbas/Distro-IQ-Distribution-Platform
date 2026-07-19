@@ -794,6 +794,16 @@ export async function updatePackagingSettings({ clientId, packagingTypes, packag
   });
   if (error) throw new Error(error.message);
 
+  const { data: savedSettings, error: confirmationError } = await supabase
+    .from("clients")
+    .select("packaging_types, packaging_defaults")
+    .eq("id", clientId)
+    .single();
+
+  if (confirmationError) {
+    console.warn("Saved packaging settings could not be reloaded:", confirmationError.message);
+  }
+
   await recordWorkspaceActivity({
     clientId,
     actionType: "updated",
@@ -801,7 +811,15 @@ export async function updatePackagingSettings({ clientId, packagingTypes, packag
     recordLabel: "Sales packaging",
     summary: "Updated factory packaging options"
   });
-  return loadWorkspace();
+
+  return {
+    packagingTypes: Array.isArray(savedSettings?.packaging_types)
+      ? savedSettings.packaging_types
+      : packagingTypes,
+    packagingDefaults: savedSettings?.packaging_defaults && typeof savedSettings.packaging_defaults === "object"
+      ? savedSettings.packaging_defaults
+      : packagingDefaults
+  };
 }
 
 export async function requestPackagingSettingsChange({ clientId, packagingTypes, packagingDefaults }) {

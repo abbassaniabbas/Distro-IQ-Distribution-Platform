@@ -173,9 +173,25 @@ assert.equal((managerSettings.match(/id="packaging-settings-form"/g) || []).leng
 assert.match(managerSettings, /name="packagingTypes" value="carton"/);
 assert.match(managerSettings, /name="packagingTypes" value="carton" checked/, "CEO packaging settings must retain multiple selected package types");
 assert.match(managerSettings, /name="packagingTypes" value="pack" checked/, "CEO packaging settings must allow more than one package type at once");
+assert.ok((managerSettings.match(/data-packaging-toggle aria-pressed="true"/g) || []).length >= 3, "CEO packaging settings must show every selected package type as active");
+assert.match(managerSettings, /data-packaging-option-state>Selected</, "CEO packaging choices must have an explicit selected state");
 assert.match(managerSettings, /data-packaging-selection-summary>Pieces · Cartons · Packs</, "CEO packaging settings must clearly summarize all selected package types");
 assert.doesNotMatch(managerSettings, /name="packagingDefault-|Default pieces per/);
 assert.match(managerSettings, /Set the quantity inside each stock item/);
+const managerAccountsBeforePackagingSync = store.getState().accounts.length;
+store.dispatch({
+  type: "SYNC_CLIENT_SETTINGS",
+  payload: {
+    packagingTypes: ["piece", "carton", "pack", "tray"],
+    packagingDefaults: { piece: 1, carton: 24, pack: 6, tray: 12 }
+  },
+  message: "Packaging settings saved successfully"
+});
+assert.deepEqual(store.getState().client.packagingTypes, ["piece", "carton", "pack", "tray"], "confirmed CEO packaging settings must update immediately");
+assert.equal(store.getState().accounts.length, managerAccountsBeforePackagingSync, "packaging confirmation must not clear unrelated workspace data");
+const settingsViewSource = readFileSync(new URL("../src/js/views/settings.js", import.meta.url), "utf8");
+assert.match(settingsViewSource, /message: "Packaging settings saved successfully"/, "CEO packaging save must emit a success confirmation banner");
+assert.doesNotMatch(settingsViewSource, /const packagingDefaults =/, "packaging submit must not shadow the packagingDefaults helper before saving");
 assert.doesNotMatch(managerSettings, /name="timezone"/);
 assert.doesNotMatch(managerSettings, /Saved delivery note preview/);
 assert.match(managerSettings, /data-open-password-modal/);
@@ -1654,6 +1670,8 @@ assert.match(adminInvoices, /js-print-invoice-list/);
 assert.match(adminInvoices, />Invoices</);
 const adminSettings = renderSettings({ state: multiDispatchStore.getState() });
 assert.ok(adminSettings.indexOf("My profile") < adminSettings.indexOf("Sales packaging"), "Admin Sales packaging settings must appear below My profile");
+assert.match(adminSettings, /Send for approval/, "Admin packaging changes must be sent to the CEO");
+assert.doesNotMatch(adminSettings, /Save packaging/, "Admin must not apply packaging settings directly");
 const stockBeforeUnauthorizedAdminDispatch = multiDispatchStore.getState().products.find((product) => product.id === "MULTI-A").stock;
 multiDispatchStore.dispatch({
   type: "RECORD_STOCK_DISPATCH",
@@ -1758,6 +1776,40 @@ multiDispatchStore.dispatch({ type: "APPROVE_PACKAGING_SETTINGS_CHANGE", request
 assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === packagingRequest.id).status, "approved");
 assert.deepEqual(multiDispatchStore.getState().client.packagingTypes, ["piece", "carton", "tray"]);
 assert.equal(multiDispatchStore.getState().client.packagingDefaults.carton, 12);
+
+authenticateMulti("multi-admin-user");
+const packagingBeforeAdminRequest = [...(multiDispatchStore.getState().client.packagingTypes || ["piece"])];
+multiDispatchStore.dispatch({
+  type: "REQUEST_PACKAGING_SETTINGS_CHANGE",
+  packagingTypes: ["piece", "pack", "pouch", "jar"],
+  packagingDefaults: { piece: 1, pack: 6, pouch: 10, jar: 18 }
+});
+const adminPackagingRequest = multiDispatchStore.getState().packagingChangeRequests.find((request) => request.status === "pending");
+assert.ok(adminPackagingRequest, "Admin must be able to request multiple Sales Packaging changes");
+assert.deepEqual(adminPackagingRequest.packagingTypes, ["piece", "pack", "pouch", "jar"]);
+assert.deepEqual(multiDispatchStore.getState().client.packagingTypes || ["piece"], packagingBeforeAdminRequest, "Admin requests must not apply before CEO approval");
+assert.match(renderSettings({ state: multiDispatchStore.getState() }), /Awaiting CEO approval/);
+const packagingNotificationState = multiDispatchStore.getState();
+const repPackagingNotifications = getTopbarNotificationItems({
+  ...packagingNotificationState,
+  user: { id: "multi-rep-user", email: "multi-rep@example.com" }
+});
+assert.equal(repPackagingNotifications.some((item) => item.body.includes("requested a Sales Packaging change")), false, "Packaging approval requests must not notify non-CEO staff");
+const ceoPackagingNotifications = getTopbarNotificationItems({
+  ...packagingNotificationState,
+  user: { id: "multi-ceo-user", email: "multi-ceo@example.com" }
+});
+assert.equal(ceoPackagingNotifications.some((item) => item.body.includes("requested a Sales Packaging change")), true, "Packaging approval requests must notify the CEO");
+multiDispatchStore.dispatch({ type: "APPROVE_PACKAGING_SETTINGS_CHANGE", requestId: adminPackagingRequest.id });
+assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === adminPackagingRequest.id).status, "pending", "Admin must not approve their own packaging request");
+multiDispatchStore.dispatch({ type: "REJECT_PACKAGING_SETTINGS_CHANGE", requestId: adminPackagingRequest.id, note: "Self review is not allowed" });
+assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === adminPackagingRequest.id).status, "pending", "Admin must not decline their own packaging request");
+
+authenticateMulti("multi-ceo-user");
+assert.match(renderSettings({ state: multiDispatchStore.getState() }), /Pending approval/);
+multiDispatchStore.dispatch({ type: "REJECT_PACKAGING_SETTINGS_CHANGE", requestId: adminPackagingRequest.id, note: "Use the approved factory packaging mix" });
+assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === adminPackagingRequest.id).status, "rejected", "Only CEO must be able to decline an Admin packaging request");
+assert.deepEqual(multiDispatchStore.getState().client.packagingTypes || ["piece"], packagingBeforeAdminRequest, "Declining a request must preserve the active packaging settings");
 
 const onboardingStore = createStore();
 onboardingStore.dispatch({
