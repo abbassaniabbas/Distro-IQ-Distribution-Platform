@@ -7,14 +7,16 @@ import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus, setM
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";
 import { formatDate } from "../services/formatters.js";
+import { actionTypeLabel, getScopedActivityLogs, recordTypeLabel } from "../services/activity.js";
 import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js";
-import { escapeHtml, qs } from "../ui/dom.js";
+import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { confirmActionDialog } from "../ui/action-dialog.js";
 import { renderStaffAvatar, staffInitials } from "../ui/staff-avatar.js";
 
 let activeLoginDetailsModal = null;
+const STAFF_ACTIVITY_PAGE_SIZE = 10;
 
 function renderRoleOptions() {
   return ROLE_OPTIONS
@@ -223,7 +225,7 @@ function accountIsActive(account) {
   return String(account.status || "").toLowerCase() === "active";
 }
 
-function renderAccountListItem(account) {
+function renderAccountListItem(account, state) {
   const searchIndex = [
     account.name,
     account.email,
@@ -233,14 +235,23 @@ function renderAccountListItem(account) {
     .join(" ")
     .toLowerCase();
 
+  const canViewActivity = ["ceo", "admin"].includes(currentUserRole(state));
+
   return `
-    <button class="team-member-row" type="button" data-team-account-id="${escapeHtml(account.id)}" data-search-index="${escapeHtml(searchIndex)}">
+    <div class="team-member-row" data-search-index="${escapeHtml(searchIndex)}">
+      <button class="team-member-details-trigger" type="button" data-team-account-id="${escapeHtml(account.id)}" aria-label="View ${escapeHtml(account.name)} details"></button>
       ${renderStaffAvatar(account)}
       <span class="team-member-primary"><strong>${escapeHtml(account.name)}</strong><small>${escapeHtml(account.email)}</small></span>
       <span class="team-member-role">${escapeHtml(roleLabel(account.role))}</span>
       ${statusPill(accountIsActive(account) ? "active" : "inactive")}
+      ${canViewActivity ? iconButton({
+        iconName: "activity",
+        label: `View ${account.name} activity`,
+        className: "team-member-activity-button",
+        data: { "team-activity-account-id": account.id }
+      }) : ""}
       <span class="team-member-open" aria-hidden="true">${icon("arrowRight")}</span>
-    </button>
+    </div>
   `;
 }
 
@@ -255,6 +266,86 @@ function renderTeamAccountModal() {
         <div id="team-account-modal-content"></div>
       </section>
     </div>
+  `;
+}
+
+function activityBelongsToAccount(entry, account) {
+  const userId = String(account.userId || "");
+  const email = String(account.email || "").trim().toLowerCase();
+  const name = String(account.name || "").trim().toLowerCase();
+  const actorUserId = String(entry.actorUserId || "");
+  const actorEmail = String(entry.actorEmail || "").trim().toLowerCase();
+  const actorName = String(entry.actorName || "").trim().toLowerCase();
+
+  return Boolean(
+    (userId && actorUserId === userId) ||
+    (email && actorEmail === email) ||
+    (name && actorName === name)
+  );
+}
+
+function renderStaffActivityTimestamp(value) {
+  const date = new Date(value || 0);
+  if (Number.isNaN(date.getTime())) return escapeHtml(value || "Not recorded");
+
+  const dateLabel = new Intl.DateTimeFormat("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).format(date);
+  const timeLabel = new Intl.DateTimeFormat("en-NG", {
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
+
+  return `<span class="activity-timestamp"><strong>${escapeHtml(dateLabel)}</strong><small>${escapeHtml(timeLabel)}</small></span>`;
+}
+
+function renderStaffActivityModal() {
+  return `
+    <div id="staff-activity-modal" class="stock-modal-backdrop" tabindex="-1" hidden>
+      <section class="stock-modal staff-activity-modal" role="dialog" aria-modal="true" aria-labelledby="staff-activity-modal-title">
+        <header class="stock-modal-header">
+          <div><span class="eyebrow">Staff activity</span><h2 id="staff-activity-modal-title">Activity log</h2></div>
+          <button class="icon-button js-close-staff-activity" type="button" title="Close staff activity" aria-label="Close staff activity">${icon("x")}</button>
+        </header>
+        <div id="staff-activity-modal-content"></div>
+      </section>
+    </div>
+  `;
+}
+
+function renderStaffActivityContent(account, state) {
+  const activities = getScopedActivityLogs(state).filter((entry) => activityBelongsToAccount(entry, account));
+
+  return `
+    <div class="staff-activity-summary">
+      ${renderStaffAvatar(account)}
+      <div><strong>${escapeHtml(account.name)}</strong><small>${escapeHtml(roleLabel(account.role))}</small></div>
+      <span>${activities.length} activit${activities.length === 1 ? "y" : "ies"}</span>
+    </div>
+    ${activities.length ? `
+      <div class="table-wrap staff-activity-table">
+        <table class="data-table">
+          <thead><tr><th>Timestamp</th><th>Action</th><th>Record</th><th>Details</th></tr></thead>
+          <tbody>
+            ${activities.map((entry) => `
+              <tr data-staff-activity-row>
+                <td>${renderStaffActivityTimestamp(entry.createdAt)}</td>
+                <td><span class="activity-action">${escapeHtml(actionTypeLabel(entry.actionType))}</span></td>
+                <td><strong>${escapeHtml(recordTypeLabel(entry.recordType))}</strong>${entry.recordLabel ? `<small>${escapeHtml(entry.recordLabel)}</small>` : ""}</td>
+                <td>${escapeHtml(entry.summary || "Record updated")}</td>
+              </tr>
+            `).join("")}
+          </tbody>
+        </table>
+      </div>
+      <div class="activity-pagination staff-activity-pagination" data-staff-activity-pagination>
+        <button class="button" type="button" data-staff-activity-page="prev">Previous</button>
+        <span data-staff-activity-page-status>Page 1 of 1</span>
+        <button class="button" type="button" data-staff-activity-page="next">Next</button>
+      </div>
+    ` : '<div class="empty-state">No activity recorded for this staff member yet</div>'}
   `;
 }
 
@@ -389,11 +480,12 @@ export function renderTeam({ state }) {
         ${panelHeader("Staff accounts", "")}
         ${
           accounts.length
-            ? `<div class="team-member-list">${accounts.map(renderAccountListItem).join("")}</div>`
+            ? `<div class="team-member-list">${accounts.map((account) => renderAccountListItem(account, state)).join("")}</div>`
             : '<div class="empty-state">No accounts have been created for this factory yet</div>'
         }
       </section>
       ${renderTeamAccountModal()}
+      ${renderStaffActivityModal()}
     </section>
   `;
 }
@@ -402,6 +494,10 @@ export function bindTeam({ root, store, signal }) {
   const form = qs("#account-form", root);
   const accountModal = qs("#team-account-modal", root);
   const accountModalContent = qs("#team-account-modal-content", root);
+  const staffActivityModal = qs("#staff-activity-modal", root);
+  const staffActivityModalContent = qs("#staff-activity-modal-content", root);
+  const staffActivityModalTitle = qs("#staff-activity-modal-title", root);
+  let staffActivityPage = 1;
 
   function closeAccountModal() {
     if (accountModal) accountModal.hidden = true;
@@ -416,7 +512,57 @@ export function bindTeam({ root, store, signal }) {
     accountModal.focus();
   }
 
+  function closeStaffActivityModal() {
+    if (staffActivityModal) staffActivityModal.hidden = true;
+  }
+
+  function applyStaffActivityPage() {
+    if (!staffActivityModalContent) return;
+    const rows = qsa("[data-staff-activity-row]", staffActivityModalContent);
+    const pageCount = Math.max(1, Math.ceil(rows.length / STAFF_ACTIVITY_PAGE_SIZE));
+    staffActivityPage = Math.min(Math.max(1, staffActivityPage), pageCount);
+    const pageStart = (staffActivityPage - 1) * STAFF_ACTIVITY_PAGE_SIZE;
+
+    rows.forEach((row, index) => {
+      row.hidden = index < pageStart || index >= pageStart + STAFF_ACTIVITY_PAGE_SIZE;
+    });
+
+    const pagination = qs("[data-staff-activity-pagination]", staffActivityModalContent);
+    const status = qs("[data-staff-activity-page-status]", staffActivityModalContent);
+    const previous = qs('[data-staff-activity-page="prev"]', staffActivityModalContent);
+    const next = qs('[data-staff-activity-page="next"]', staffActivityModalContent);
+    if (pagination) pagination.hidden = rows.length <= STAFF_ACTIVITY_PAGE_SIZE;
+    if (status) status.textContent = `Page ${staffActivityPage} of ${pageCount}`;
+    if (previous) previous.disabled = staffActivityPage <= 1;
+    if (next) next.disabled = staffActivityPage >= pageCount;
+  }
+
+  function openStaffActivityModal(accountId) {
+    const state = store.getState();
+    if (!["ceo", "admin"].includes(currentUserRole(state))) return;
+    const account = getScopedAccounts(state).find((item) => item.id === accountId);
+    if (!account || !staffActivityModal || !staffActivityModalContent) return;
+
+    if (staffActivityModalTitle) staffActivityModalTitle.textContent = `${account.name} activity`;
+    staffActivityModalContent.innerHTML = renderStaffActivityContent(account, state);
+    staffActivityPage = 1;
+    applyStaffActivityPage();
+    staffActivityModal.hidden = false;
+    staffActivityModal.focus();
+  }
+
   root.addEventListener("click", async (event) => {
+    const activityButton = event.target.closest?.("[data-team-activity-account-id]");
+    if (activityButton) {
+      openStaffActivityModal(activityButton.dataset.teamActivityAccountId);
+      return;
+    }
+    const activityPageButton = event.target.closest?.("[data-staff-activity-page]");
+    if (activityPageButton) {
+      staffActivityPage += activityPageButton.dataset.staffActivityPage === "next" ? 1 : -1;
+      applyStaffActivityPage();
+      return;
+    }
     const accountRow = event.target.closest?.("[data-team-account-id]");
     if (accountRow) {
       openAccountModal(accountRow.dataset.teamAccountId);
@@ -424,6 +570,10 @@ export function bindTeam({ root, store, signal }) {
     }
     if (event.target === accountModal || event.target.closest?.(".js-close-team-account")) {
       closeAccountModal();
+      return;
+    }
+    if (event.target === staffActivityModal || event.target.closest?.(".js-close-staff-activity")) {
+      closeStaffActivityModal();
       return;
     }
     const deleteButton = event.target.closest?.(".js-delete-team-account");
@@ -516,6 +666,10 @@ export function bindTeam({ root, store, signal }) {
 
   accountModal?.addEventListener("keydown", (event) => {
     if (event.key === "Escape") closeAccountModal();
+  }, { signal });
+
+  staffActivityModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeStaffActivityModal();
   }, { signal });
 
   if (!form) return;
