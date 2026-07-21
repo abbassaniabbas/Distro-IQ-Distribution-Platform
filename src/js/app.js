@@ -1,7 +1,7 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
 import { createStore } from "./state/store.js";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
-import { loadWorkspace, loadWorkspaceFeatureModules, tryLoadPlatformOverview } from "./services/backend.js";
+import { loadWorkspace, loadWorkspaceFeatureModules, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
@@ -699,7 +699,40 @@ async function hydrateWorkspaceProductImages() {
 
   try {
     const images = await restoreProductImages(state.client.id, state.products);
-    if (images.length) store.dispatch({ type: "HYDRATE_PRODUCT_IMAGES", images });
+    if (!images.length) return;
+    store.dispatch({ type: "HYDRATE_PRODUCT_IMAGES", images });
+
+    if (!isBackendConfigured() || !["ceo", "store_keeper"].includes(currentUserRole(store.getState()))) return;
+
+    const currentProducts = new Map((store.getState().products || []).map((product) => [String(product.id || ""), product]));
+    const syncedImages = [];
+    for (const image of images) {
+      const product = currentProducts.get(String(image.productId || ""));
+      if (!product || product.imageRemoteSynced || !String(image.imageUrl || "").startsWith("data:image/")) continue;
+
+      try {
+        const savedImage = await saveSharedProductImage({
+          clientId: state.client.id,
+          sku: product.id,
+          name: product.name,
+          unit: product.unit,
+          status: product.status,
+          imageUrl: image.imageUrl
+        });
+        syncedImages.push({
+          ...savedImage,
+          imageStorageKey: image.imageStorageKey,
+          remoteSynced: true
+        });
+      } catch (error) {
+        // Keep the durable browser copy available and retry on the next sign-in.
+        console.warn(`Stock picture for ${product.id} could not be backed up:`, error.message);
+      }
+    }
+
+    if (syncedImages.length) {
+      store.dispatch({ type: "HYDRATE_PRODUCT_IMAGES", images: syncedImages });
+    }
   } catch (error) {
     console.warn("Stock pictures could not be restored:", error.message);
   }

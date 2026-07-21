@@ -549,43 +549,61 @@ export async function saveSharedProductImage({ clientId, sku, previousSku = "", 
   if (readError) throw sharedImageFailure(readError, "The shared stock picture record could not be checked.");
 
   const existingRow = (existingRows || []).find((row) => row.sku === previousSku) || existingRows?.[0];
+  const expectedImageUrl = String(imageUrl || "");
+  const verifySavedRow = (row) => {
+    if (!row || String(row.sku || "") !== String(sku) || String(row.image_url || "") !== expectedImageUrl) {
+      throw new Error("Database error: The stock picture was not confirmed after saving.");
+    }
+    return mapSharedProductImage(row);
+  };
+
   if (existingRow) {
-    const { error } = await supabase
+    const { data: savedRow, error } = await supabase
       .from("stock_products")
       .update({
         sku: String(sku),
         name: String(name || sku),
         unit: String(unit || "piece"),
         status: String(status || "active"),
-        image_url: String(imageUrl || ""),
+        image_url: expectedImageUrl,
         updated_at: new Date().toISOString()
       })
       .eq("id", existingRow.id)
-      .eq("client_id", clientId);
+      .eq("client_id", clientId)
+      .select("sku, image_url")
+      .single();
     if (error) throw sharedImageFailure(error, "The stock picture could not be shared.");
-    return;
+    return verifySavedRow(savedRow);
   }
 
-  const { error } = await supabase.from("stock_products").insert({
-    client_id: clientId,
-    sku: String(sku),
-    name: String(name || sku),
-    unit: String(unit || "piece"),
-    status: String(status || "active"),
-    image_url: String(imageUrl || "")
-  });
+  const { data: savedRow, error } = await supabase
+    .from("stock_products")
+    .insert({
+      client_id: clientId,
+      sku: String(sku),
+      name: String(name || sku),
+      unit: String(unit || "piece"),
+      status: String(status || "active"),
+      image_url: expectedImageUrl
+    })
+    .select("sku, image_url")
+    .single();
 
   if (error) {
     if (String(error.code || "") === "23505") {
-      const { error: retryError } = await supabase
+      const { data: retryRow, error: retryError } = await supabase
         .from("stock_products")
-        .update({ image_url: String(imageUrl || ""), name: String(name || sku), updated_at: new Date().toISOString() })
+        .update({ image_url: expectedImageUrl, name: String(name || sku), updated_at: new Date().toISOString() })
         .eq("client_id", clientId)
-        .eq("sku", String(sku));
-      if (!retryError) return;
+        .eq("sku", String(sku))
+        .select("sku, image_url")
+        .single();
+      if (!retryError) return verifySavedRow(retryRow);
     }
     throw sharedImageFailure(error, "The stock picture could not be shared.");
   }
+
+  return verifySavedRow(savedRow);
 }
 
 export async function loadWorkspaceFeatureModules(clientId) {

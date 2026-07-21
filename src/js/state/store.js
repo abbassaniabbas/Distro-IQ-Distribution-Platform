@@ -320,7 +320,14 @@ function applySharedProductImages(products, images) {
   const imagesByProductId = new Map(images.map((image) => [String(image.productId || ""), image]));
   return products.map((product) => {
     const image = imagesByProductId.get(String(product.id || ""));
-    if (!image) return product;
+    if (!image) {
+      return {
+        ...product,
+        // A missing remote row is not proof that the browser copy was removed.
+        // Allow IndexedDB restoration and a later backfill instead of deleting it.
+        imageRemoteSynced: false
+      };
+    }
     return {
       ...product,
       imageUrl: String(image.imageUrl || ""),

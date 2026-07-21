@@ -310,6 +310,25 @@ store.dispatch({
 });
 assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, "data:image/png;base64,SHARED_PORTAL_IMAGE", "shared Supabase stock pictures must replace a portal's local image");
 assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageRemoteSynced, true, "shared stock pictures must be marked as backend synchronized");
+const stateBeforeMissingRemoteImage = store.getState();
+store.dispatch({
+  type: "SET_WORKSPACE",
+  client,
+  accounts,
+  invites: stateBeforeMissingRemoteImage.invites,
+  featureModules: stateBeforeMissingRemoteImage.featureModules,
+  messages: stateBeforeMissingRemoteImage.messages,
+  activityLogs: stateBeforeMissingRemoteImage.activityLogs,
+  productImages: []
+});
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, "data:image/png;base64,SHARED_PORTAL_IMAGE", "a missing Supabase image row must not erase the surviving browser image");
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageRemoteSynced, false, "a missing Supabase image row must be eligible for automatic backfill");
+const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "utf8");
+assert.match(appSource, /saveSharedProductImage\([\s\S]*imageUrl: image\.imageUrl/, "surviving browser stock images must be backed up to Supabase after sign-in");
+const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
+assert.match(backendSource, /select\("sku, image_url"\)[\s\S]*single\(\)/, "remote stock picture saves must be read back and confirmed");
+const inventorySource = readFileSync(new URL("../src/js/views/inventory.js", import.meta.url), "utf8");
+assert.match(inventorySource, /!existingProduct\?\.imageRemoteSynced/, "saving a stock item must retry any picture that has not reached Supabase");
 store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-IMAGE-PERSIST"] });
 
 store.dispatch({

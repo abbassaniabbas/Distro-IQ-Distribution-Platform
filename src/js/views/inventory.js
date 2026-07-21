@@ -3510,7 +3510,10 @@ export function bindInventory({ root, store, signal }) {
     }
 
     const sharedImageChanged = shouldStoreImage || stockImageCleared || Boolean(
-      existingProduct && existingProduct.id !== sku && imageUrlForState
+      imageUrlForState && (
+        !existingProduct?.imageRemoteSynced ||
+        (existingProduct && existingProduct.id !== sku)
+      )
     );
     if (sharedImageChanged && isBackendConfigured()) {
       try {
