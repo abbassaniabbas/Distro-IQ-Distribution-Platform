@@ -235,7 +235,7 @@ function renderAccountListItem(account, state) {
     .join(" ")
     .toLowerCase();
 
-  const canViewActivity = ["ceo", "admin"].includes(currentUserRole(state));
+  const canViewActivity = ["ceo", "admin"].includes(currentUserRole(state)) && normalizeRole(account.role) !== "ceo";
 
   return `
     <div class="team-member-row" data-search-index="${escapeHtml(searchIndex)}">
