@@ -2336,10 +2336,11 @@ function reducer(currentState, action) {
 
       const stockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
       const status = ["active", "inactive"].includes(String(action.status || "")) ? action.status : existingProduct?.status || "active";
+      const productFamily = String(action.productFamily ?? existingProduct?.productFamily ?? "").trim();
       const product = {
         id: nextProductId,
-        name: String(action.name || existingProduct?.name || "New product").trim(),
-        productFamily: String(action.productFamily ?? existingProduct?.productFamily ?? "").trim(),
+        name: String(productFamily || action.name || existingProduct?.name || "New product").trim(),
+        productFamily,
         productType: String(action.productType ?? existingProduct?.productType ?? "").trim(),
         size: String(action.size ?? existingProduct?.size ?? "").trim(),
         sizeValue: String(action.sizeValue ?? existingProduct?.sizeValue ?? "").trim(),

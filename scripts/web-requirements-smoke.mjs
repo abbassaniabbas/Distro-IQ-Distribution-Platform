@@ -269,6 +269,7 @@ assert.match(managerTeam, /team-member-list/);
 assert.match(managerTeam, /data-team-account-id="membership-rep"/);
 assert.match(managerTeam, /team-account-modal/);
 assert.match(managerTeam, /data-team-activity-account-id="membership-rep"/, "CEO staff rows must include a compact activity button");
+assert.doesNotMatch(managerTeam, /data-team-activity-account-id="membership-ceo"/, "the CEO staff entry must not show an activity-log button");
 assert.match(managerTeam, /id="staff-activity-modal"/, "CEO must have the staff activity modal");
 const teamViewSource = readFileSync(new URL("../src/js/views/team.js", import.meta.url), "utf8");
 assert.match(teamViewSource, /STAFF_ACTIVITY_PAGE_SIZE = 10/, "staff activity must paginate at ten records per page");
@@ -326,6 +327,31 @@ store.dispatch({
   packagingConversions: { carton: 10, pack: 5 },
   status: "active"
 });
+store.dispatch({
+  type: "UPSERT_PRODUCT",
+  productId: "SKU-NAME-SEPARATION",
+  sku: "SKU-NAME-SEPARATION",
+  name: "Plantain Chips Original 55g",
+  productFamily: "Plantain Chips",
+  productType: "Original",
+  size: "55g",
+  sizeValue: "55",
+  sizeUnit: "g",
+  stockCategory: "finished_products",
+  unit: "g",
+  stock: 20,
+  reorderPoint: 2,
+  unitCost: 100,
+  unitPrice: 150,
+  status: "active"
+});
+const separatedNameProduct = store.getState().products.find((product) => product.id === "SKU-NAME-SEPARATION");
+assert.equal(separatedNameProduct.name, "Plantain Chips", "saving stock must not append its type and size to the product name");
+assert.equal(separatedNameProduct.productType, "Original");
+assert.equal(separatedNameProduct.size, "55g");
+const inventoryViewSource = readFileSync(new URL("../src/js/views/inventory.js", import.meta.url), "utf8");
+assert.match(inventoryViewSource, /productForm\.elements\.name\.value = stockProductBaseName\(product\)/, "editing stock must restore only the base product name");
+store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-NAME-SEPARATION"] });
 store.dispatch({
   type: "UPSERT_PRODUCT",
   productId: "RAW-OIL",

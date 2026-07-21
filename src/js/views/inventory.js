@@ -357,14 +357,21 @@ function normalizedProductName(value) {
   return String(value || "").trim().replace(/\s+/g, " ").toLowerCase();
 }
 
-function duplicateProductName(state, name, productId = "") {
-  const nextName = normalizedProductName(name);
+function productVariantKey(productFamily, productType, size) {
+  return [productFamily, productType, size]
+    .map(normalizedProductName)
+    .join("|");
+}
+
+function duplicateProductVariant(state, { productFamily, productType, size, productId = "" }) {
+  const nextVariant = productVariantKey(productFamily, productType, size);
   const currentProductId = String(productId || "").trim();
 
-  if (!nextName) return false;
+  if (!normalizedProductName(productFamily)) return false;
 
   return (state.products || []).some((product) => (
-    product.id !== currentProductId && normalizedProductName(product.name) === nextName
+    product.id !== currentProductId &&
+    productVariantKey(stockProductBaseName(product), product.productType, product.size) === nextVariant
   ));
 }
 
@@ -799,9 +806,7 @@ function renderProductCard(product, state, permissions) {
 
 function stockProductBaseName(product) {
   const savedFamily = String(product?.productFamily || "").trim();
-  if (savedFamily) return savedFamily;
-
-  let baseName = String(product?.name || "Stock item").trim();
+  let baseName = savedFamily || String(product?.name || "Stock item").trim();
   [product?.size, product?.productType].forEach((suffix) => {
     const normalizedSuffix = String(suffix || "").trim();
     if (!normalizedSuffix) return;
@@ -3335,11 +3340,8 @@ export function bindInventory({ root, store, signal }) {
     const customSizeUnit = normalizeProductSizeUnit(formData.get("sizeUnitOther"));
     const sizeUnit = selectedSizeUnit === "other" ? customSizeUnit : selectedSizeUnit;
     const primarySize = formatProductSize(sizeValue, sizeUnit);
-    const productFamily = existingProductId
-      ? String(store.getState().products.find((product) => product.id === existingProductId)?.productFamily || rawProductName).trim()
-      : activeProductFamily || rawProductName;
-    const variantName = (type, size) => [productFamily, type, size].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
-    const primaryProductName = existingProductId ? rawProductName : variantName(productType, primarySize);
+    const productFamily = String(activeProductFamily || rawProductName).trim();
+    const primaryProductName = productFamily;
     const requiredFields = [
       ["name", "product name"],
       ["productType", "product type"],
@@ -3439,8 +3441,13 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
-    if (duplicateProductName(store.getState(), primaryProductName, existingProductId)) {
-      if (productMessage) productMessage.textContent = "A product with this name already exists. Use a different product name.";
+    if (duplicateProductVariant(store.getState(), {
+      productFamily,
+      productType,
+      size: primarySize,
+      productId: existingProductId
+    })) {
+      if (productMessage) productMessage.textContent = "This product type and size already exists.";
       return;
     }
 
@@ -3616,7 +3623,7 @@ export function bindInventory({ root, store, signal }) {
     if (productMessage) productMessage.textContent = "";
     productForm.elements.productId.value = product.id;
     productForm.elements.sku.value = product.id;
-    productForm.elements.name.value = product.name || "";
+    productForm.elements.name.value = stockProductBaseName(product);
     productForm.elements.name.readOnly = false;
     productForm.elements.productType.value = product.productType || "";
     const parsedSize = splitProductSize(product.size, product.sizeUnit || product.unit);
