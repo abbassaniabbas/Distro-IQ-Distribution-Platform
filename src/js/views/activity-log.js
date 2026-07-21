@@ -3,7 +3,8 @@ import {
   getScopedActivityLogs,
   recordTypeLabel
 } from "../services/activity.js";
-import { formatCurrency, formatDateTime, formatNumber } from "../services/formatters.js";
+import { formatCurrency, formatNumber } from "../services/formatters.js";
+import { dateIsWithinRange } from "../services/filtering.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { accountForUser, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
@@ -72,7 +73,12 @@ function renderActivitySection(state, role, activeTab) {
 
 function entryDate(value) {
   if (!value) return "";
-  return new Date(value).toISOString().slice(0, 10);
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function actorKey(entry) {
@@ -83,10 +89,32 @@ function normalized(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function formatActivityTime(value) {
-  if (!value) return "Just now";
+function renderActivityTimestamp(value) {
+  if (!value) {
+    return `<span class="activity-timestamp"><strong>Today</strong><small>Just now</small></span>`;
+  }
 
-  return formatDateTime(String(value).includes("T") ? value : `${value}T12:00:00`);
+  const date = new Date(String(value).includes("T") ? value : `${value}T12:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return `<span class="activity-timestamp"><strong>${escapeHtml(String(value))}</strong></span>`;
+  }
+
+  const dateLabel = new Intl.DateTimeFormat("en-NG", {
+    day: "numeric",
+    month: "short",
+    year: "numeric"
+  }).format(date);
+  const timeLabel = new Intl.DateTimeFormat("en-NG", {
+    hour: "numeric",
+    minute: "2-digit"
+  }).format(date);
+
+  return `
+    <span class="activity-timestamp">
+      <strong>${escapeHtml(dateLabel)}</strong>
+      <small>${escapeHtml(timeLabel)}</small>
+    </span>
+  `;
 }
 
 function currentRepName(state) {
@@ -190,7 +218,7 @@ function renderRepRecentRows(rows) {
         data-user="all"
         data-date="${escapeHtml(entryDate(row.when))}"
       >
-        <td>${escapeHtml(formatActivityTime(row.when))}</td>
+        <td>${renderActivityTimestamp(row.when)}</td>
         <td><span class="activity-action">${escapeHtml(row.actionLabel)}</span></td>
         <td>
           <strong>${escapeHtml(row.title)}</strong>
@@ -322,7 +350,7 @@ function renderRows(logs) {
         data-user="${escapeHtml(actorKey(entry))}"
         data-date="${escapeHtml(entryDate(entry.createdAt))}"
       >
-        <td>${escapeHtml(formatDateTime(entry.createdAt))}</td>
+        <td>${renderActivityTimestamp(entry.createdAt)}</td>
         <td><span class="activity-action">${escapeHtml(actionLabel)}</span></td>
         <td>
           <strong>${escapeHtml(recordLabel)}</strong>
@@ -484,14 +512,14 @@ export function bindActivityLog({ root, store }) {
 
     const rows = qsa("tbody tr", root);
     const matchedRows = rows.filter((row) => {
-      const matchesDateFrom = !from || row.dataset.date >= from;
-      const matchesDateTo = !to || row.dataset.date <= to;
+      const hasDateRange = Boolean(from || to);
+      const matchesDateRange = !hasDateRange || dateIsWithinRange(row.dataset.date, from, to);
       const matchesUser = user === "all" || row.dataset.user === user;
       const matchesAction = action === "all" || row.dataset.action === action;
       const matchesRecord = record === "all" || row.dataset.record === record;
       const matchesSearch = !query || String(row.dataset.searchIndex || "").includes(query);
 
-      return matchesSearch && matchesDateFrom && matchesDateTo && matchesUser && matchesAction && matchesRecord;
+      return matchesSearch && matchesDateRange && matchesUser && matchesAction && matchesRecord;
     });
 
     const pageCount = Math.max(1, Math.ceil(matchedRows.length / pageSize));

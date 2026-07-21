@@ -8,6 +8,8 @@ import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, sco
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
 import { createOperationalSync } from "./services/operational-sync.js";
+import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "./services/global-search.js";
+import { createInactivitySession } from "./services/inactivity-session.js";
 import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
@@ -180,6 +182,24 @@ async function withBackendRetry(operation) {
 
 const store = createStore();
 const operationalSync = createOperationalSync({ store });
+const inactivitySession = createInactivitySession({
+  getState: () => store.getState(),
+  getRole: currentUserRole,
+  onTimeout: async () => {
+    try {
+      await signOut();
+    } catch {
+      // The local session is still cleared when the network cannot complete sign-out.
+    } finally {
+      clearAllFormDrafts();
+      store.dispatch({
+        type: "CLEAR_AUTH_CONTEXT",
+        message: "Signed out after 30 minutes of inactivity"
+      });
+      window.location.hash = "#/login?reason=inactivity";
+    }
+  }
+});
 const navRoot = qs("#primary-nav");
 const viewRoot = qs("#view-root");
 const viewTitle = qs("#view-title");
@@ -441,65 +461,29 @@ function updateTopbarUtilities(state, view) {
   topbarAvatar.textContent = initialsForProfile(account, state.user).toUpperCase();
 }
 
-function searchSuggestionLabel(item) {
-  const preferred = item.querySelector?.("strong, h2, h3, .metric-value")?.textContent;
-  const text = preferred || item.textContent || item.dataset.searchIndex || "";
-
-  return text.replace(/\s+/g, " ").trim().slice(0, 96);
-}
-
-function explicitSearchSuggestions(item) {
-  const value = item.dataset.searchSuggestions;
-  if (!value) return [];
-
-  try {
-    const suggestions = JSON.parse(value);
-    return Array.isArray(suggestions)
-      ? suggestions.map((item) => String(item || "").trim()).filter(Boolean)
-      : [];
-  } catch {
-    return [];
-  }
-}
-
-function matchingSearchSuggestions(item, query) {
-  const explicit = explicitSearchSuggestions(item)
-    .filter((label) => label.toLowerCase().includes(query))
-    .sort((a, b) => {
-      const aStarts = a.toLowerCase().startsWith(query) ? 0 : 1;
-      const bStarts = b.toLowerCase().startsWith(query) ? 0 : 1;
-      return aStarts - bStarts || a.localeCompare(b);
-    });
-
-  return explicit.length ? explicit : [searchSuggestionLabel(item)].filter(Boolean);
-}
-
 function updateSearchSuggestions() {
-  const query = String(globalSearch.value || "").trim().toLowerCase();
+  const query = String(globalSearch.value || "").trim();
 
   if (
     globalSearch.disabled ||
     query.length < 2 ||
-    (selectedSearchSuggestion && query === selectedSearchSuggestion.toLowerCase())
+    (selectedSearchSuggestion && query.toLowerCase() === selectedSearchSuggestion.toLowerCase())
   ) {
     searchSuggestions.hidden = true;
     searchSuggestions.innerHTML = "";
     return;
   }
 
-  const seen = new Set();
-  const matches = qsa("[data-search-index]", viewRoot)
-    .filter((item) => !item.closest?.(".activity-log-view") || item.closest?.("[data-global-search-enabled]"))
-    .filter((item) => String(item.dataset.searchIndex || "").includes(query))
-    .flatMap((item) => matchingSearchSuggestions(item, query))
-    .filter(Boolean)
-    .filter((label) => {
-      const key = label.toLowerCase();
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 6);
+  const state = store.getState();
+  const permissions = currentUserPermissions(state);
+  const allowedRouteIds = permissions.nav.filter((routeId) => isClientRouteEnabled(state, routeId));
+  const searchState = scopeStateForCurrentRole(scopeStateForEnabledModules(state));
+  const searchIndex = buildGlobalSearchIndex({
+    state: searchState,
+    navigationItems: NAV_ITEMS,
+    allowedRouteIds
+  });
+  const matches = findGlobalSearchSuggestions(searchIndex, query);
 
   if (!matches.length) {
     searchSuggestions.hidden = true;
@@ -507,9 +491,15 @@ function updateSearchSuggestions() {
     return;
   }
 
-  searchSuggestions.innerHTML = matches.map((label) => `
-    <button type="button" data-search-suggestion="${escapeHtml(label)}">
-      ${escapeHtml(label)}
+  searchSuggestions.innerHTML = matches.map((match) => `
+    <button
+      type="button"
+      data-search-suggestion="${escapeHtml(match.label)}"
+      data-search-href="${escapeHtml(match.href)}"
+      data-search-query-on-navigate="${match.queryOnNavigate ? "true" : "false"}"
+    >
+      <span class="search-suggestion-label">${escapeHtml(match.label)}</span>
+      <small>${escapeHtml(match.context)}</small>
     </button>
   `).join("");
   searchSuggestions.hidden = false;
@@ -581,10 +571,16 @@ searchSuggestions.addEventListener("click", (event) => {
   if (!button) return;
 
   selectedSearchSuggestion = button.dataset.searchSuggestion || "";
-  globalSearch.value = selectedSearchSuggestion;
-  applySearchFilter(viewRoot, globalSearch.value);
+  const shouldKeepQuery = button.dataset.searchQueryOnNavigate === "true";
+  globalSearch.value = shouldKeepQuery ? selectedSearchSuggestion : "";
   searchSuggestions.hidden = true;
   searchSuggestions.innerHTML = "";
+  const destination = button.dataset.searchHref || "";
+  if (destination && destination !== window.location.hash) {
+    window.location.hash = destination;
+    return;
+  }
+  applySearchFilter(viewRoot, globalSearch.value);
 });
 
 bindTopbarCommunications({ store, notificationsButton, messagesButton });
@@ -596,6 +592,7 @@ document.addEventListener("click", (event) => {
 });
 
 signOutButton.addEventListener("click", async () => {
+  inactivitySession.clear();
   try {
     await signOut();
   } catch (error) {
@@ -611,6 +608,7 @@ signOutButton.addEventListener("click", async () => {
 });
 
 store.subscribe((state, action) => {
+  inactivitySession.handleStateChange(state);
   render();
   showToast(action?.message);
   operationalSync.handleStateChange(state, action);

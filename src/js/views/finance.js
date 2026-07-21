@@ -14,6 +14,7 @@ import {
 } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { saveRepresentativeCreditLimit } from "../services/backend.js";
+import { dateIsWithinRange, normalizeDateRange } from "../services/filtering.js";
 import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -1024,8 +1025,9 @@ function rowMatchesPeriod(rowDateValue, period, fromValue, toValue) {
   }
 
   if (period === "custom") {
-    const fromDate = parseLocalDate(fromValue);
-    const toDate = parseLocalDate(toValue);
+    const { from, to } = normalizeDateRange(fromValue, toValue);
+    const fromDate = parseLocalDate(from);
+    const toDate = parseLocalDate(to);
     if (fromDate && rowDate < fromDate) return false;
     if (toDate && rowDate > toDate) return false;
   }
@@ -1280,9 +1282,9 @@ function bindCreditHistoryFilters(root) {
     qsa("[data-credit-history-row]", root).forEach((row) => {
       const accountMatches = !account.value || row.dataset.creditHistoryAccount === account.value;
       const date = row.dataset.creditHistoryDate || "";
-      const fromMatches = !from.value || date >= from.value;
-      const toMatches = !to.value || date <= to.value;
-      const isMatch = accountMatches && fromMatches && toMatches;
+      const hasDateRange = Boolean(from.value || to.value);
+      const dateMatches = !hasDateRange || dateIsWithinRange(date, from.value, to.value);
+      const isMatch = accountMatches && dateMatches;
       row.dataset.filterHidden = isMatch ? "false" : "true";
       if (isMatch) matches += 1;
     });
@@ -1290,7 +1292,10 @@ function bindCreditHistoryFilters(root) {
     root.dispatchEvent(new Event("financepaginationchange"));
   }
 
-  [account, from, to].forEach((control) => control.addEventListener("change", applyFilters));
+  [account, from, to].forEach((control) => {
+    control.addEventListener("input", applyFilters);
+    control.addEventListener("change", applyFilters);
+  });
   qs("[data-credit-history-reset]", root)?.addEventListener("click", () => {
     account.value = "";
     from.value = "";

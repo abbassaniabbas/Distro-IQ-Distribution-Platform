@@ -18,6 +18,7 @@ import { loadSharedProductImages, saveSharedProductImage } from "../services/bac
 import { removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { printTabularReport } from "../services/report-export.js";
+import { dateIsWithinRange } from "../services/filtering.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -2675,9 +2676,9 @@ export function bindInventory({ root, store, signal }) {
     allRows.forEach((row) => {
       const assignedDate = String(row.dataset.assignmentDate || "");
       const repMatches = !repName || row.dataset.assignmentRep === repName;
-      const fromMatches = !dateFrom || assignedDate >= dateFrom;
-      const toMatches = !dateTo || assignedDate <= dateTo;
-      row.hidden = !(repMatches && fromMatches && toMatches);
+      const hasDateRange = Boolean(dateFrom || dateTo);
+      const dateMatches = !hasDateRange || dateIsWithinRange(assignedDate, dateFrom, dateTo);
+      row.hidden = !(repMatches && dateMatches);
     });
 
     if (assignmentFilterStatus) {
@@ -2687,6 +2688,7 @@ export function bindInventory({ root, store, signal }) {
   }
 
   [assignmentRepFilter, assignmentDateFrom, assignmentDateTo].filter(Boolean).forEach((control) => {
+    control.addEventListener("input", applyAssignmentFilters);
     control.addEventListener("change", applyAssignmentFilters);
   });
 
@@ -2738,8 +2740,11 @@ export function bindInventory({ root, store, signal }) {
   applyAssignmentFilters();
 
   function applyStockTypeFilter() {
+    const query = String(qs("#global-search", document)?.value || "").trim().toLowerCase();
     qsa("[data-stock-category]", root).forEach((row) => {
-      row.hidden = categoryFilter.value !== "all" && row.dataset.stockCategory !== categoryFilter.value;
+      const categoryMatches = !categoryFilter || categoryFilter.value === "all" || row.dataset.stockCategory === categoryFilter.value;
+      const searchMatches = !query || String(row.dataset.searchIndex || "").includes(query);
+      row.hidden = !(categoryMatches && searchMatches);
     });
     updateStockSelectionControls();
   }
@@ -2866,6 +2871,7 @@ export function bindInventory({ root, store, signal }) {
   });
 
   categoryFilter?.addEventListener("change", applyStockTypeFilter);
+  qs("#global-search", document)?.addEventListener("input", applyStockTypeFilter, { signal });
 
   updateStockSelectionControls();
 

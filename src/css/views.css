@@ -4740,6 +4740,25 @@
   font-weight: 900;
 }
 
+.activity-timestamp {
+  display: inline-grid;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.activity-timestamp strong {
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.25;
+}
+
+.activity-timestamp small {
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 750;
+  line-height: 1.2;
+}
+
 .activity-pagination {
   display: flex;
   align-items: center;

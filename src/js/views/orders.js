@@ -450,19 +450,6 @@ export function bindOrders({ root, store, signal }) {
     window.setTimeout(applyPage, 0);
   }
 
-  function applyFilters() {
-    const status = statusFilter.value;
-    const region = regionFilter.value;
-
-    qsa("tbody tr", root).forEach((row) => {
-      const statusMatches = status === "all" || row.dataset.status === status;
-      const regionMatches = region === "all" || row.dataset.region === region;
-      row.hidden = !statusMatches || !regionMatches;
-    });
-  }
-
-  statusFilter.addEventListener("change", applyFilters);
-  regionFilter.addEventListener("change", applyFilters);
   setupOrderPagination();
 
   qsa(".js-advance-order", root).forEach((button) => {

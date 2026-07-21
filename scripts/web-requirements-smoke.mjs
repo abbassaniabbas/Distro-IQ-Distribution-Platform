@@ -10,6 +10,9 @@ import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } fro
 import { nextFormattedId } from "../src/js/services/tenant.js";
 import { classifyAppFailure } from "../src/js/services/error-classification.js";
 import { OPERATIONAL_COLLECTIONS, operationalChanges, operationalSnapshot } from "../src/js/services/operational-sync.js";
+import { dateIsWithinRange, normalizeDateRange } from "../src/js/services/filtering.js";
+import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "../src/js/services/global-search.js";
+import { INACTIVITY_TIMEOUT_MS, remainingInactivityMs, requiresInactivityLogout } from "../src/js/services/inactivity-session.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { REQUIRED_FORM_ALERT_MESSAGE } from "../src/js/ui/form-validation.js";
@@ -44,6 +47,32 @@ globalThis.localStorage = {
   setItem(key, value) { browserStorage.set(key, String(value)); },
   removeItem(key) { browserStorage.delete(key); }
 };
+
+assert.deepEqual(normalizeDateRange("2026-07-20", "2026-07-10"), { from: "2026-07-10", to: "2026-07-20" });
+assert.equal(dateIsWithinRange("2026-07-10", "2026-07-10", "2026-07-20"), true, "date filters must include the first day");
+assert.equal(dateIsWithinRange("2026-07-20", "2026-07-10", "2026-07-20"), true, "date filters must include the last day");
+assert.equal(requiresInactivityLogout("ceo"), true);
+assert.equal(requiresInactivityLogout("admin"), true);
+assert.equal(requiresInactivityLogout("store_keeper"), true);
+assert.equal(requiresInactivityLogout("sales_rep"), false, "sales representatives must keep their offline field sessions");
+assert.equal(remainingInactivityMs(1_000, 1_000), INACTIVITY_TIMEOUT_MS);
+
+const globalSearchFixture = buildGlobalSearchIndex({
+  state: {
+    products: [{ id: "SKU-0044", name: "Plantain Chips", productType: "Original" }],
+    retailers: [{ id: "CUS-1", name: "Abbas Stores", address: "Kaduna" }],
+    accounts: [{ id: "STAFF-1", name: "Steph Musa", role: "admin" }]
+  },
+  navigationItems: [
+    { id: "inventory", label: "Stock" },
+    { id: "retailers", label: "Customers" },
+    { id: "team", label: "Staff" }
+  ],
+  allowedRouteIds: ["inventory", "retailers", "team"]
+});
+assert.equal(findGlobalSearchSuggestions(globalSearchFixture, "Plantain")[0]?.context, "Stock");
+assert.equal(findGlobalSearchSuggestions(globalSearchFixture, "Abbas")[0]?.href, "#/retailers");
+assert.equal(findGlobalSearchSuggestions(globalSearchFixture, "Steph")[0]?.context, "Staff");
 
 const client = { id: "client-test", companyName: "Test Factory", currencySymbol: "₦", packagingTypes: ["piece", "carton", "pack"], packagingDefaults: { piece: 1, carton: 10, pack: 5 } };
 const accounts = [

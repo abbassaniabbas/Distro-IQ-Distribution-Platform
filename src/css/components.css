@@ -131,6 +131,10 @@
 }
 
 .search-suggestions button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
   width: 100%;
   min-height: 38px;
   padding: 8px 10px;
@@ -138,9 +142,25 @@
   border-radius: var(--radius-sm);
   background: transparent;
   color: var(--ink);
-  font-size: 0.84rem;
-  font-weight: 800;
   text-align: left;
+}
+
+.search-suggestion-label {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.search-suggestions small {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 750;
+  white-space: nowrap;
 }
 
 .search-suggestions button:hover,

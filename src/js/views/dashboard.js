@@ -3333,7 +3333,7 @@ export function bindDashboard({ root, store, signal }) {
 
   if (root.querySelector(".ceo-dashboard")) {
     bindInventory({ root, store, signal });
-    bindCeoDashboard({ root, store });
+    bindCeoDashboard({ root, store, signal });
     return;
   }
 
@@ -3449,7 +3449,7 @@ function bindSubmittedReportDetails({ root, store }) {
   });
 }
 
-function bindCeoDashboard({ root, store }) {
+function bindCeoDashboard({ root, store, signal }) {
   const filterControls = qsa("[data-ceo-filter]", root);
   const resetButton = qs("[data-ceo-filter-reset]", root);
   const detailModal = qs("#leadership-detail-modal", root);
@@ -3566,6 +3566,7 @@ function bindCeoDashboard({ root, store }) {
     const rep = selectedFilter("rep");
     const product = selectedFilter("product");
     const supermarket = selectedFilter("supermarket");
+    const query = String(qs("#global-search", document)?.value || "").trim().toLowerCase();
 
     qsa("[data-ceo-row]", root).forEach((row) => {
       const kind = row.dataset.ceoKind || "";
@@ -3575,14 +3576,16 @@ function bindCeoDashboard({ root, store }) {
       const matchesRep = !rep || kind !== "rep" || row.dataset.ceoRep === rep;
       const matchesProduct = !product || !hasProductDimension || productSet.includes(`|${product}|`);
       const matchesSupermarket = !supermarket || kind !== "supermarket" || row.dataset.ceoSupermarket === supermarket;
+      const matchesSearch = !query || String(row.dataset.searchIndex || "").includes(query);
 
-      row.hidden = !(matchesPeriod && matchesRep && matchesProduct && matchesSupermarket);
+      row.hidden = !(matchesPeriod && matchesRep && matchesProduct && matchesSupermarket && matchesSearch);
     });
   }
 
   filterControls.forEach((control) => {
     control.addEventListener("change", applyCeoFilters);
   });
+  qs("#global-search", document)?.addEventListener("input", applyCeoFilters, { signal });
 
   resetButton?.addEventListener("click", () => {
     filterControls.forEach((control) => {

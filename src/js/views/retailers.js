@@ -412,7 +412,7 @@ export function renderRetailers({ state }) {
   `;
 }
 
-export function bindRetailers({ root, store }) {
+export function bindRetailers({ root, store, signal }) {
   const ratingFilter = qs("#retailer-rating-filter", root);
   const retailerForm = qs("#retailer-form", root);
   const stateSelect = retailerForm?.elements.stateName;
@@ -433,11 +433,17 @@ export function bindRetailers({ root, store }) {
 
   stateSelect?.addEventListener("change", () => updateLgaOptions());
 
-  ratingFilter?.addEventListener("change", () => {
+  function applyRetailerFilters() {
+    const query = String(qs("#global-search", document)?.value || "").trim().toLowerCase();
     qsa(".retailer-list-item", root).forEach((card) => {
-      card.hidden = ratingFilter.value !== "all" && card.dataset.rating !== ratingFilter.value;
+      const ratingMatches = !ratingFilter || ratingFilter.value === "all" || card.dataset.rating === ratingFilter.value;
+      const searchMatches = !query || String(card.dataset.searchIndex || "").includes(query);
+      card.hidden = !(ratingMatches && searchMatches);
     });
-  });
+  }
+
+  ratingFilter?.addEventListener("change", applyRetailerFilters);
+  qs("#global-search", document)?.addEventListener("input", applyRetailerFilters, { signal });
 
   function closeCustomerModal() {
     if (customerModal) customerModal.hidden = true;
