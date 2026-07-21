@@ -33,6 +33,7 @@ The server prints the local URL. By default it starts at `http://127.0.0.1:8080`
    - `url`
    - `anonKey`
 3. Run `supabase/schema.sql` in the Supabase SQL Editor.
+   For an existing project, also run `supabase/operational-persistence-migration.sql` once. This enables shared Supabase persistence and the append-only operation ledger for stock, dispatches, sales, invoices, production, returns, corrections, customers, reports, and related movements.
 4. Deploy the invite Edge Function. This is required for team member creation and temporary password generation:
 
 ```bash
@@ -126,7 +127,8 @@ The Edge Function uses Supabase environment variables already available in deplo
 - `src/js/ui/` contains shared rendering helpers, brand preview controls, and icons.
 - `src/js/services/tenant.js` owns client IDs, account invitations, temporary passwords, and tenant-scoped filtering.
 - `src/js/services/auth.js` owns Supabase signup, login, logout, and password updates.
-- `src/js/services/backend.js` owns Supabase workspace loading, company creation, account invites, membership activation, and saved activity logs.
+- `src/js/services/backend.js` owns Supabase workspace loading, company creation, account invites, membership activation, saved activity logs, and operational record transport.
+- `src/js/services/operational-sync.js` owns the durable offline queue, one-time local-data migration, record-level Supabase synchronization, and cross-user refresh.
 - `supabase/schema.sql` owns the database tables, helper functions, and RLS policies.
 - `src/js/views/settings.js` owns company-wide tenant settings, personal profile settings, and password changes.
 - `src/js/views/activity-log.js` owns the read-only activity history and its filters.

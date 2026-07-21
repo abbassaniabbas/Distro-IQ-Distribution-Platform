@@ -536,6 +536,58 @@ export async function loadSharedProductImages(clientId) {
   return (data || []).map(mapSharedProductImage);
 }
 
+export async function loadOperationalWorkspace(clientId) {
+  throwIfBackendMissing();
+  const supabase = await getSupabaseClient();
+  const [recordsResult, collectionsResult] = await Promise.all([
+    supabase
+      .from("workspace_operational_records")
+      .select("collection_name, record_id, record_data, updated_at")
+      .eq("client_id", clientId),
+    supabase
+      .from("workspace_operational_collections")
+      .select("collection_name, updated_at")
+      .eq("client_id", clientId)
+  ]);
+
+  if (recordsResult.error) {
+    throw new Error(`${classifyAppFailure({ error: recordsResult.error, configured: true }).label}: Operational records could not be loaded. ${recordsResult.error.message}`);
+  }
+  if (collectionsResult.error) {
+    throw new Error(`${classifyAppFailure({ error: collectionsResult.error, configured: true }).label}: Operational collection status could not be loaded. ${collectionsResult.error.message}`);
+  }
+
+  return {
+    records: (recordsResult.data || []).map((row) => ({
+      collection: String(row.collection_name || ""),
+      id: String(row.record_id || ""),
+      data: row.record_data && typeof row.record_data === "object" ? row.record_data : {},
+      updatedAt: row.updated_at || ""
+    })),
+    initializedCollections: (collectionsResult.data || []).map((row) => String(row.collection_name || "")).filter(Boolean)
+  };
+}
+
+export async function syncOperationalWorkspace({ clientId, operationId, actionType, records = [], deleted = [], touchedCollections = [] }) {
+  throwIfBackendMissing();
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("sync_workspace_operational_records", {
+    p_client_id: clientId,
+    p_operation_id: operationId,
+    p_action_type: actionType,
+    p_records: records,
+    p_deleted: deleted,
+    p_touched_collections: touchedCollections
+  });
+
+  if (error) {
+    const failure = classifyAppFailure({ error, configured: true });
+    throw new Error(`${failure.label}: Operational changes could not be saved. ${error.message}`);
+  }
+
+  return data || {};
+}
+
 export async function saveSharedProductImage({ clientId, sku, previousSku = "", name, unit = "piece", status = "active", imageUrl = "" }) {
   throwIfBackendMissing();
   const supabase = await getSupabaseClient();

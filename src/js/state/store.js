@@ -937,6 +937,38 @@ function reducer(currentState, action) {
       return nextState;
     }
 
+    case "SET_OPERATIONAL_RECORDS": {
+      if (!state.client?.id || !action.collections || typeof action.collections !== "object") return state;
+      const supportedCollections = new Set([
+        "products", "stockCategories", "stockAssignments", "stockTransactions",
+        "productionBatches", "retailers", "orders", "invoices", "salesReports",
+        "correctionRequests", "stockRequests", "purchaseOrders", "procurementOrders",
+        "routes", "creditLimits", "creditLimitHistory", "activityLogs"
+      ]);
+      const nextState = { ...state };
+
+      Object.entries(action.collections).forEach(([collection, records]) => {
+        if (!supportedCollections.has(collection) || !Array.isArray(records)) return;
+        if (collection === "products") {
+          const localProducts = new Map((state.products || []).map((product) => [String(product.id || ""), product]));
+          nextState.products = clone(records).map((product) => {
+            const localProduct = localProducts.get(String(product.id || ""));
+            return {
+              ...product,
+              imageUrl: localProduct?.imageUrl || product.imageUrl || "",
+              imageStorageKey: localProduct?.imageStorageKey || product.imageStorageKey || "",
+              imageRemoteSynced: Boolean(localProduct?.imageRemoteSynced || product.imageRemoteSynced)
+            };
+          });
+          return;
+        }
+        nextState[collection] = clone(records);
+      });
+
+      automaticallyDelayOrders(nextState, false);
+      return ensureQuickSaleOrders(nextState);
+    }
+
     case "SET_PLATFORM_CONTEXT": {
       return {
         ...ensureStateShape(seedData),

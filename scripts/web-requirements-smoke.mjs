@@ -9,6 +9,7 @@ import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { nextFormattedId } from "../src/js/services/tenant.js";
 import { classifyAppFailure } from "../src/js/services/error-classification.js";
+import { OPERATIONAL_COLLECTIONS, operationalChanges, operationalSnapshot } from "../src/js/services/operational-sync.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { REQUIRED_FORM_ALERT_MESSAGE } from "../src/js/ui/form-validation.js";
@@ -91,6 +92,35 @@ assert.equal(classifyAppFailure({ configured: true, error: "Invalid API key", on
 assert.equal(classifyAppFailure({ configured: true, error: "Failed to send a request to the Edge Function", online: true }).category, "backend");
 assert.equal(classifyAppFailure({ configured: true, error: "Auth session expired", online: true }).category, "authentication");
 assert.equal(classifyAppFailure({ configured: true, error: "Failed to fetch", online: false }).category, "network");
+assert.deepEqual(
+  OPERATIONAL_COLLECTIONS,
+  [
+    "products", "stockCategories", "stockAssignments", "stockTransactions",
+    "productionBatches", "retailers", "orders", "invoices", "salesReports",
+    "correctionRequests", "stockRequests", "purchaseOrders", "procurementOrders",
+    "routes", "creditLimits", "creditLimitHistory", "activityLogs"
+  ],
+  "every operational collection must be included in Supabase synchronization"
+);
+const previousOperationalSnapshot = operationalSnapshot({
+  products: [{ id: "SYNC-PRODUCT", stock: 10, imageUrl: "data:image/png;base64,LOCAL" }],
+  stockTransactions: [{ id: "SYNC-TX-1", type: "restock", quantity: 10 }]
+}, ["products", "stockTransactions"]);
+const nextOperationalSnapshot = operationalSnapshot({
+  products: [{ id: "SYNC-PRODUCT", stock: 7, imageUrl: "data:image/png;base64,LOCAL" }],
+  stockTransactions: [
+    { id: "SYNC-TX-1", type: "restock", quantity: 10 },
+    { id: "SYNC-TX-2", type: "supply", quantity: 3 }
+  ]
+}, ["products", "stockTransactions"]);
+const synchronizedChanges = operationalChanges(previousOperationalSnapshot, nextOperationalSnapshot);
+assert.deepEqual(synchronizedChanges.touchedCollections, ["products", "stockTransactions"]);
+assert.equal(synchronizedChanges.records.length, 2, "a stock change and its movement must both be synchronized");
+assert.equal(synchronizedChanges.records.find((record) => record.collection === "products").data.imageUrl, "", "large stock image data must remain in the dedicated shared-image path");
+const operationalMigrationSql = readFileSync(new URL("../supabase/operational-persistence-migration.sql", import.meta.url), "utf8");
+assert.match(operationalMigrationSql, /unique \(client_id, operation_id\)/, "operation retries must be idempotent");
+assert.match(operationalMigrationSql, /workspace_operation_events/, "every synchronized action must have an append-only event record");
+assert.match(operationalMigrationSql, /public\.is_client_member\(client_id\)/, "operational records must remain tenant isolated");
 const passwordSetupHtml = renderPasswordReset({ state: { session: { user: { id: "password-user" } }, user: { email: "password@example.com" }, client: { companyName: "Test Factory" } } });
 assert.match(passwordSetupHtml, /minlength="8"/);
 assert.match(passwordSetupHtml, /Use 8\+ characters/);
@@ -323,6 +353,15 @@ store.dispatch({
 });
 assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, "data:image/png;base64,SHARED_PORTAL_IMAGE", "a missing Supabase image row must not erase the surviving browser image");
 assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageRemoteSynced, false, "a missing Supabase image row must be eligible for automatic backfill");
+const synchronizedProductRecords = store.getState().products.map((product) => (
+  product.id === "SKU-IMAGE-PERSIST" ? { ...product, stock: 25, imageUrl: "" } : product
+));
+store.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: { products: synchronizedProductRecords }
+});
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").stock, 25, "Supabase operational refresh must apply the shared stock quantity");
+assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, "data:image/png;base64,SHARED_PORTAL_IMAGE", "operational refresh must preserve the dedicated stock picture");
 const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "utf8");
 assert.match(appSource, /saveSharedProductImage\([\s\S]*imageUrl: image\.imageUrl/, "surviving browser stock images must be backed up to Supabase after sign-in");
 const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");

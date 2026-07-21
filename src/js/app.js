@@ -7,6 +7,7 @@ import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
+import { createOperationalSync } from "./services/operational-sync.js";
 import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
@@ -178,6 +179,7 @@ async function withBackendRetry(operation) {
 }
 
 const store = createStore();
+const operationalSync = createOperationalSync({ store });
 const navRoot = qs("#primary-nav");
 const viewRoot = qs("#view-root");
 const viewTitle = qs("#view-title");
@@ -611,6 +613,7 @@ signOutButton.addEventListener("click", async () => {
 store.subscribe((state, action) => {
   render();
   showToast(action?.message);
+  operationalSync.handleStateChange(state, action);
 });
 
 window.addEventListener("hashchange", () => {
