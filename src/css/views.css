@@ -809,6 +809,12 @@
   gap: 12px;
 }
 
+#ceo-product-size-modal .ceo-size-picture-grid {
+  grid-template-columns: repeat(auto-fill, minmax(230px, 280px));
+  justify-content: start;
+  align-items: start;
+}
+
 .ceo-size-picture-card {
   display: grid;
   gap: 10px;
@@ -856,6 +862,10 @@
 }
 
 @media (max-width: 640px) {
+  #ceo-product-size-modal .ceo-size-picture-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .selected-size-stock-card {
     align-items: flex-start;
     flex-direction: column;

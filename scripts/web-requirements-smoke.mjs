@@ -43,6 +43,7 @@ assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-b
 assert.match(responsiveComponentCss, /\.table-wrap[\s\S]*-webkit-overflow-scrolling: touch/, "wide tables must scroll safely on touch devices");
 assert.match(responsiveViewCss, /@media \(max-width: 640px\)[\s\S]*max-height: calc\(100dvh - 20px\)/, "mobile modals must remain inside the visible viewport");
 assert.match(responsiveViewCss, /\.stock-health-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "Stock Health grid cards must keep a normal width and fill from the left");
+assert.match(responsiveViewCss, /#ceo-product-size-modal \.ceo-size-picture-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "CEO product pictures must retain the normal Stock Health grid-card width instead of expanding across the modal");
 assert.match(responsiveViewCss, /\.rep-request-quantity-fields:focus-within[\s\S]*box-shadow:[^;]+;/, "representative stock-request quantity controls must have a clear polished focus state");
 const currentTestDate = new Date().toISOString().slice(0, 10);
 const browserStorage = new Map();
