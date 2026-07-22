@@ -867,8 +867,8 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
           currentUserRole(state) === "ceo"
             ? textButton({
                 iconName: "trash",
-                label: "Delete before today",
-                className: "warning js-delete-old-product-revenue"
+                label: "Delete",
+                className: "warning js-delete-product-revenue"
               })
             : ""
         )}
@@ -1391,25 +1391,23 @@ export function bindFinance({ root, store, signal }) {
 
   bindAccountantFinance({ root });
 
-  const deleteOldProductRevenueButton = qs(".js-delete-old-product-revenue", root);
-  deleteOldProductRevenueButton?.addEventListener("click", async () => {
+  const deleteProductRevenueButton = qs(".js-delete-product-revenue", root);
+  deleteProductRevenueButton?.addEventListener("click", async () => {
     const state = store.getState();
     if (currentUserRole(state) !== "ceo") return;
 
-    const cutoffDate = new Date().toISOString().slice(0, 10);
     const confirmed = await confirmActionDialog({
-      title: "Delete product revenue before today?",
-      message: `This permanently removes product-revenue sales, returns, linked orders, and linked invoices dated before ${formatDate(cutoffDate)}. Today's records will remain.`,
-      confirmLabel: "Delete before today",
+      title: "Delete all product revenue?",
+      message: "This permanently removes every Product Revenue sale, return, financial order, and linked invoice from the interface and Supabase. Representative sell-through records and stock balances will remain.",
+      confirmLabel: "Delete",
       tone: "danger"
     });
     if (!confirmed) return;
 
-    deleteOldProductRevenueButton.disabled = true;
+    deleteProductRevenueButton.disabled = true;
     store.dispatch({
-      type: "DELETE_PRODUCT_REVENUE_BEFORE_DATE",
-      cutoffDate,
-      message: "Product revenue records before today deleted"
+      type: "DELETE_ALL_PRODUCT_REVENUE_DATA",
+      message: "All product revenue data deleted"
     });
   }, { signal });
 

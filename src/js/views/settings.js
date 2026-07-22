@@ -16,7 +16,7 @@ import {
   readLogoFile,
   validateLogoFile
 } from "../services/branding.js";
-import { formatDate, setCurrencySettings } from "../services/formatters.js";
+import { setCurrencySettings } from "../services/formatters.js";
 import {
   CURRENCY_OPTIONS,
   getScopedAccounts,
@@ -222,20 +222,12 @@ function renderFactoryDataReset(state) {
   return `
     <section class="panel factory-data-reset-panel">
       ${panelHeader("Factory data reset", "")}
-      <div class="manager-form-actions">
-        ${textButton({
-          iconName: "trash",
-          label: "Delete records before today",
-          className: "warning",
-          data: { "delete-history-before-today": "true" }
-        })}
-        ${textButton({
-          iconName: "trash",
-          label: "Reset factory data",
-          className: "warning",
-          data: { "reset-workspace-scope": "factory" }
-        })}
-      </div>
+      ${textButton({
+        iconName: "trash",
+        label: "Reset factory data",
+        className: "warning",
+        data: { "reset-workspace-scope": "factory" }
+      })}
     </section>
   `;
 }
@@ -538,29 +530,7 @@ export function bindSettings({ root, store, signal }) {
   const profileImageInput = qs("#profile-staff-image", profileForm || root);
   const profileImagePreview = qs(".staff-image-preview", profileForm || root);
   const removeProfileImageButton = qs(".js-remove-profile-image", profileForm || root);
-  const deleteHistoryBeforeTodayButton = qs("[data-delete-history-before-today]", root);
   let profileStaffImageUrl = String(currentAccount?.staffImageUrl || "");
-
-  deleteHistoryBeforeTodayButton?.addEventListener("click", async () => {
-    const currentState = store.getState();
-    if (currentUserRole(currentState) !== "ceo") return;
-
-    const cutoffDate = new Date().toISOString().slice(0, 10);
-    const confirmed = await confirmActionDialog({
-      title: "Delete all records before today?",
-      message: `This permanently removes operational history dated before ${formatDate(cutoffDate)} from every portal, including movements, orders, invoices, stock requests, reports, corrections, production history, routes, credit-change history, and activity logs. Products, customers, staff, settings, current credit limits, representative balances, and today's records will remain.`,
-      confirmLabel: "Delete records before today",
-      tone: "danger"
-    });
-    if (!confirmed) return;
-
-    deleteHistoryBeforeTodayButton.disabled = true;
-    store.dispatch({
-      type: "DELETE_HISTORICAL_RECORDS_BEFORE_DATE",
-      cutoffDate,
-      message: "Records before today deleted across all portals"
-    });
-  }, { signal });
 
   function updateProfileImagePreview() {
     if (!profileImagePreview) return;

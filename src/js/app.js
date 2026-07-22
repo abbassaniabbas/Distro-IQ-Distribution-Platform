@@ -1,5 +1,5 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
-import { createStore } from "./state/store.js?v=20260722e";
+import { createStore } from "./state/store.js?v=20260722f";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace, loadWorkspaceFeatureModules, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260722c";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
@@ -26,7 +26,7 @@ import { renderAdminOperations, bindAdminOperations } from "./views/admin-operat
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
 import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722d";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260722e";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260722f";
 import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722d";
 import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722d";
 import { renderLoading, bindLoading } from "./views/loading.js";
@@ -37,12 +37,12 @@ import {
   renderOnboardingConfirmation,
   bindOnboardingConfirmation
 } from "./views/onboarding.js";
-import { renderOrders, bindOrders } from "./views/orders.js?v=20260722e";
+import { renderOrders, bindOrders } from "./views/orders.js?v=20260722f";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
 import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260722d";
 import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260722";
-import { renderSettings, bindSettings } from "./views/settings.js?v=20260722e";
+import { renderSettings, bindSettings } from "./views/settings.js?v=20260722f";
 import { renderTeam, bindTeam } from "./views/team.js?v=20260722";
 
 const routes = {

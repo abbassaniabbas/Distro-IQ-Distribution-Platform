@@ -322,8 +322,8 @@ export function renderOrders({ state }) {
             </label>
             ${currentUserRole(state) === "ceo" ? textButton({
               iconName: "trash",
-              label: "Delete before today",
-              className: "warning js-delete-old-sales-orders"
+              label: "Delete",
+              className: "warning js-delete-sales-orders"
             }) : ""}
             ${renderDelayAttentionIcon(orders)}
           </div>
@@ -351,26 +351,24 @@ export function bindOrders({ root, store, signal }) {
   const globalSearch = qs("#global-search", document);
   const delayModal = qs("#order-delay-modal", root);
   const delayContent = qs("#order-delay-content", root);
-  const deleteOldSalesOrdersButton = qs(".js-delete-old-sales-orders", root);
+  const deleteSalesOrdersButton = qs(".js-delete-sales-orders", root);
 
-  deleteOldSalesOrdersButton?.addEventListener("click", async () => {
+  deleteSalesOrdersButton?.addEventListener("click", async () => {
     const state = store.getState();
     if (currentUserRole(state) !== "ceo") return;
 
-    const cutoffDate = new Date().toISOString().slice(0, 10);
     const confirmed = await confirmActionDialog({
-      title: "Delete sales orders before today?",
-      message: `This permanently removes every sales order and linked invoice dated before ${formatDate(cutoffDate)}. Today's orders and stock movement history will remain.`,
-      confirmLabel: "Delete before today",
+      title: "Delete all sales orders?",
+      message: "This permanently removes every sales order, its linked invoice, and sale record from the interface and Supabase. Current product stock and representative balances will remain.",
+      confirmLabel: "Delete",
       tone: "danger"
     });
     if (!confirmed) return;
 
-    deleteOldSalesOrdersButton.disabled = true;
+    deleteSalesOrdersButton.disabled = true;
     store.dispatch({
-      type: "DELETE_SALES_ORDERS_BEFORE_DATE",
-      cutoffDate,
-      message: "Sales orders before today deleted"
+      type: "DELETE_ALL_SALES_ORDERS_DATA",
+      message: "All sales orders deleted"
     });
   }, { signal });
 
