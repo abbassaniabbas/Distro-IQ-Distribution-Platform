@@ -2,6 +2,7 @@ import {
   getCreditLimitForParty,
   getProductMap,
   getStockHealth,
+  isRepresentativeSellThroughOrder,
   stockCategoryIdForProduct
 } from "../services/calculations.js";
 import {
@@ -164,7 +165,7 @@ function renderStockSubtabs(activeTabId, permissions, state) {
 
 function stockJourneyPayment(state, productIds) {
   return (state.orders || []).reduce((summary, order) => {
-    if (order.source === "factory_dispatch") return summary;
+    if (isRepresentativeSellThroughOrder(order, state)) return summary;
 
     const value = (order.items || []).reduce((total, item) => (
       productIds.has(item.productId)

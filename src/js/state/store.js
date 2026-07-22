@@ -3,6 +3,9 @@ import { createActivityLog, getCurrentActor } from "../services/activity.js";
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
+  isRepresentativeSellThroughInvoice,
+  isRepresentativeSellThroughOrder,
+  isRepresentativeSellThroughTransaction,
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
 } from "../services/calculations.js";
@@ -174,11 +177,15 @@ function orderFromSaleTransaction(transaction, state) {
   const quantity = Number(transaction.quantity || 0);
   const unitPrice = Number(transaction.unitPrice ?? transaction.unitPriceAtSale ?? (quantity ? Number(transaction.amount || 0) / quantity : product?.unitPrice ?? 0));
   const unitCost = Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? 0);
+  const representativeSellThrough = isRepresentativeSellThroughTransaction(transaction);
 
   return {
     id: quickSaleOrderId(transaction),
     clientId: state.client?.id || transaction.clientId || "",
     source: "quick_sale",
+    financialImpact: !representativeSellThrough,
+    accountingTreatment: representativeSellThrough ? "sell_through_only" : "factory_revenue",
+    documentType: representativeSellThrough ? "sales_receipt" : "invoice",
     transactionId: transaction.id,
     retailerId: customer?.id || transaction.customerId || "",
     customerName: customer?.name || transaction.partyName || "Walk-in customer",
@@ -638,6 +645,7 @@ function createQuickSaleOrder(state, {
   repName,
   saleDate = todayISO(),
   unitPrice = Number(product?.unitPrice || 0),
+  financialImpact = true,
   items = [],
   transactionIds = []
 }) {
@@ -681,6 +689,9 @@ function createQuickSaleOrder(state, {
       id: orderId,
       clientId: state.client?.id || "",
       source: "quick_sale",
+      financialImpact,
+      accountingTreatment: financialImpact ? "factory_revenue" : "sell_through_only",
+      documentType: financialImpact ? "invoice" : "sales_receipt",
       transactionId,
       transactionIds: resolvedTransactionIds,
       invoiceId,
@@ -718,6 +729,9 @@ function createQuickSaleOrder(state, {
       amount,
       status: isCreditSale ? "open" : "paid",
       paymentType,
+      financialImpact,
+      accountingTreatment: financialImpact ? "factory_revenue" : "sell_through_only",
+      documentType: financialImpact ? "invoice" : "sales_receipt",
       repName,
       repUserId: state.user?.id || "",
       items: invoiceItems
@@ -1228,14 +1242,18 @@ function reducer(currentState, action) {
         return state;
       }
       if (scope === "finance") {
-        state.invoices = [];
+        state.invoices = (state.invoices || []).filter((invoice) => isRepresentativeSellThroughInvoice(invoice, state));
         state.salesReports = [];
         state.creditLimits = [];
         state.creditLimitHistory = [];
         state.stockTransactions = (state.stockTransactions || []).filter((transaction) => (
+          isRepresentativeSellThroughTransaction(transaction) ||
           !["sale", "return", "write off", "write_off"].includes(String(transaction.type || "").trim().toLowerCase())
         ));
-        state.orders = (state.orders || []).filter((order) => String(order.source || "").trim().toLowerCase() !== "quick_sale");
+        state.orders = (state.orders || []).filter((order) => (
+          String(order.source || "").trim().toLowerCase() !== "quick_sale" ||
+          isRepresentativeSellThroughOrder(order, state)
+        ));
         return state;
       }
       if (scope === "activity") {
@@ -2019,7 +2037,9 @@ function reducer(currentState, action) {
           date: todayISO(),
           createdAt: new Date().toISOString(),
           recordedBy: repName,
-          creditImpact: paymentType === "credit" ? item.amount : 0,
+          creditImpact: 0,
+          financialImpact: false,
+          accountingTreatment: "sell_through_only",
           repUserId: state.user?.id || "",
           assignmentId: assignmentAllocations[0]?.assignmentId || "",
           assignmentIds: assignmentAllocations.map((allocation) => allocation.assignmentId),
@@ -2038,11 +2058,11 @@ function reducer(currentState, action) {
         quantity: saleItems[0].quantity,
         paymentType,
         repName,
-        items: saleItems
+        items: saleItems,
+        financialImpact: false
       });
       transactions.forEach((transaction) => { transaction.orderId = orderId; });
       state.stockTransactions = [...transactions, ...(state.stockTransactions || [])];
-      if (paymentType === "credit") updateCreditBalance(state, customerName, totalAmount);
 
       if (action.offline) {
         state.offlineSalesQueue = [
@@ -2060,18 +2080,18 @@ function reducer(currentState, action) {
 
       appendActivityLog(state, {
         clientId: state.client?.id,
-        actionType: "sold",
-        recordType: "sale",
+        actionType: "updated",
+        recordType: "customer_supply",
         recordLabel: orderId,
-        summary: `${repName} sold ${transactions.reduce((total, transaction) => total + transaction.quantity, 0)} pieces across ${transactions.length} line${transactions.length === 1 ? "" : "s"} to ${customerName} for ${totalAmount} (${paymentType})`
+        summary: `${repName} recorded sell-through of ${transactions.reduce((total, transaction) => total + transaction.quantity, 0)} pieces across ${transactions.length} line${transactions.length === 1 ? "" : "s"} to ${customerName}; factory revenue unchanged`
       });
       const invoice = state.invoices.find((item) => item.orderId === orderId);
       if (invoice) appendActivityLog(state, {
         clientId: state.client?.id,
         actionType: "created",
-        recordType: "invoice",
+        recordType: "customer_supply",
         recordLabel: invoice.id,
-        summary: `${invoice.id} created for ${customerName} by ${repName}`
+        summary: `${invoice.id} customer receipt created for ${customerName} by ${repName}`
       });
       return state;
     }
@@ -2116,8 +2136,6 @@ function reducer(currentState, action) {
       const amount = transactionPackagingType === "piece"
         ? quantity * transactionUnitPrice
         : transactionPackagingQuantity * transactionPackagingUnitPrice;
-      const isCreditImpact = String(paymentType).toLowerCase().includes("credit");
-      const creditImpact = isCreditImpact ? amount * (transactionType === "return" ? -1 : 1) : 0;
       const customerName = customer?.name || action.customerName || "Walk-in customer";
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
       const isWalkInSale = transactionType === "sale" && !customer && normalized(customerName) === "walk-in customer";
@@ -2185,7 +2203,8 @@ function reducer(currentState, action) {
             packagingQuantity: transactionPackagingQuantity,
             paymentType,
             repName,
-            unitPrice: transactionUnitPrice
+            unitPrice: transactionUnitPrice,
+            financialImpact: false
           })
         : "";
 
@@ -2209,7 +2228,9 @@ function reducer(currentState, action) {
           date: todayISO(),
           createdAt: new Date().toISOString(),
           recordedBy: repName,
-          creditImpact,
+          creditImpact: 0,
+          financialImpact: false,
+          accountingTreatment: "sell_through_only",
           repUserId: state.user?.id || "",
           returnDisposition: transactionType === "return" ? returnDisposition : "",
           returnDestination: transactionType === "return"
@@ -2240,16 +2261,13 @@ function reducer(currentState, action) {
         ];
       }
 
-      // Representative credit is recalculated daily from today's transactions.
-      updateCreditBalance(state, customerName, creditImpact);
-
       appendActivityLog(state, {
         clientId: state.client?.id,
-        actionType: transactionType === "sale" ? "sold" : "returned",
-        recordType: "sale",
+        actionType: transactionType === "sale" ? "updated" : "returned",
+        recordType: "customer_supply",
         recordLabel: product.name,
         summary: transactionType === "sale"
-          ? `${repName} sold ${quantity} ${product.name} to ${customerName} for ${amount} (${paymentType})`
+          ? `${repName} recorded sell-through of ${quantity} ${product.name} to ${customerName}; factory revenue unchanged`
           : `${repName} recorded ${quantity} ${product.name} returned by ${customerName} - ${returnDisposition === "to_store" ? "to store stock" : "held for resale"}`
       });
 
@@ -2259,9 +2277,9 @@ function reducer(currentState, action) {
           appendActivityLog(state, {
             clientId: state.client?.id,
             actionType: "created",
-            recordType: "invoice",
+            recordType: "customer_supply",
             recordLabel: invoice.id,
-            summary: `${invoice.id} created for ${customerName} by ${repName}`
+            summary: `${invoice.id} customer receipt created for ${customerName} by ${repName}`
           });
         }
       }
@@ -2270,9 +2288,9 @@ function reducer(currentState, action) {
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "created",
-          recordType: "order",
+          recordType: "customer_supply",
           recordLabel: orderId,
-          summary: `${orderId} created from ${repName}'s sale to ${customerName}`
+          summary: `${orderId} saved as ${repName}'s customer sell-through record`
         });
       }
 
@@ -3162,7 +3180,10 @@ function reducer(currentState, action) {
           if (invoice) invoice.amount = invoice.items.reduce((total, item) => (
             total + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0)))
           ), 0);
-          if (String(transaction.paymentType || "").toLowerCase().includes("credit")) {
+          if (
+            String(transaction.paymentType || "").toLowerCase().includes("credit") &&
+            !isRepresentativeSellThroughTransaction(transaction)
+          ) {
             updateCreditBalance(state, transaction.partyName, transaction.amount - previousAmount);
           }
           applied = true;
@@ -3206,7 +3227,10 @@ function reducer(currentState, action) {
           if (invoice) invoice.amount = invoice.items.reduce((total, item) => (
             total + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0)))
           ), 0);
-          if (String(transaction.paymentType || "").toLowerCase().includes("credit")) {
+          if (
+            String(transaction.paymentType || "").toLowerCase().includes("credit") &&
+            !isRepresentativeSellThroughTransaction(transaction)
+          ) {
             updateCreditBalance(state, transaction.partyName, transaction.amount - previousAmount);
           }
           applied = true;

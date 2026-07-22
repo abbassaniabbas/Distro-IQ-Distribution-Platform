@@ -1,6 +1,7 @@
 import { createId } from "./tenant.js";
 import { currentUserRole } from "./rbac.js";
 import { formatCurrency, formatNumber } from "./formatters.js";
+import { isRepresentativeSellThroughTransaction } from "./calculations.js";
 
 export const ACTION_LABELS = {
   created: "Created",
@@ -99,6 +100,7 @@ function transactionActionType(transaction) {
   const type = String(transaction.type || "").toLowerCase();
   const direction = String(transaction.movementDirection || "").toLowerCase();
 
+  if (isRepresentativeSellThroughTransaction(transaction)) return "updated";
   if (type === "write off") return "reduced";
   if (type === "sale") return "sold";
   if (type === "return") return "returned";
@@ -110,6 +112,10 @@ function transactionActionType(transaction) {
 function transactionSummary(transaction, productName) {
   const quantity = Number(transaction.quantity || 0);
   const actionType = transactionActionType(transaction);
+
+  if (isRepresentativeSellThroughTransaction(transaction)) {
+    return `${transaction.recordedBy || "Sales Representative"} recorded ${quantity} ${productName} supplied to ${transaction.partyName || "customer"}; factory revenue unchanged`;
+  }
 
   if (actionType === "reduced") {
     const reason = [transaction.reason, transaction.reasonDetails].filter(Boolean).join(" - ");
@@ -184,7 +190,10 @@ function financialTransactionActivityLogs(state) {
   return (state.stockTransactions || [])
     .filter((transaction) => {
       const type = String(transaction.type || "").toLowerCase();
-      return type === "sale" || type === "return" || type === "write off";
+      return (
+        !isRepresentativeSellThroughTransaction(transaction) &&
+        (type === "sale" || type === "return" || type === "write off")
+      );
     })
     .map((transaction) => {
       const product = productMap.get(transaction.productId);

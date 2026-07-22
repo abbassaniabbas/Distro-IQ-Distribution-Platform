@@ -34,10 +34,11 @@ The server prints the local URL. By default it starts at `http://127.0.0.1:8080`
    - `anonKey`
 3. Run `supabase/schema.sql` in the Supabase SQL Editor.
    For an existing project, also run `supabase/operational-persistence-migration.sql` once. This enables shared Supabase persistence and the append-only operation ledger for stock, dispatches, sales, invoices, production, returns, corrections, customers, reports, and related movements.
-4. Deploy the invite Edge Function. This is required for team member creation and temporary password generation:
+4. Deploy the staff-account Edge Functions. These are required for team member creation, temporary password generation, and permanent staff deletion:
 
 ```bash
 supabase functions deploy invite-user
+supabase functions deploy delete-user
 ```
 
 5. Configure and deploy the credit-limit notification function. Replace the sender with a verified address from your Resend account:
@@ -65,7 +66,9 @@ The Edge Function uses Supabase environment variables already available in deplo
 |-- supabase/
 |   |-- schema.sql
 |   `-- functions/
-|       `-- invite-user/
+|       |-- invite-user/
+|       |   `-- index.ts
+|       `-- delete-user/
 |           `-- index.ts
 |-- src/
 |   |-- assets/

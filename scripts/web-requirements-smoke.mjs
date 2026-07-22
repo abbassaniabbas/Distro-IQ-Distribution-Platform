@@ -1,14 +1,15 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { effectiveOrderStatus, getCustomerOrderCompletion, getFinancialSalesLines, getReturnableCustomerChoices, hasOrdersRequiringAutomaticDelay } from "../src/js/services/calculations.js";
+import { calculateMetrics, effectiveOrderStatus, getCustomerOrderCompletion, getFinancialSalesLines, getOrdersWithTotals, getReturnableCustomerChoices, hasOrdersRequiringAutomaticDelay } from "../src/js/services/calculations.js";
 import { getNigeriaLgas, NIGERIA_STATES_AND_LGAS, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../src/js/data/nigeria-locations.js";
-import { buildInvoiceDocument, buildInvoicePreviewContent, buildInvoiceQuickViewMarkup, getInvoiceRecords } from "../src/js/services/invoices.js";
+import { buildInvoiceDocument, buildInvoicePreviewContent, buildInvoiceQuickViewMarkup, getFinancialInvoiceRecords, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../src/js/services/packaging.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { nextFormattedId } from "../src/js/services/tenant.js";
 import { classifyAppFailure } from "../src/js/services/error-classification.js";
+import { friendlyEdgeFunctionMessage } from "../src/js/services/backend.js";
 import { getScopedActivityLogs } from "../src/js/services/activity.js";
 import { OPERATIONAL_COLLECTIONS, operationalChanges, operationalSnapshot } from "../src/js/services/operational-sync.js";
 import { dateIsWithinRange, normalizeDateRange } from "../src/js/services/filtering.js";
@@ -121,6 +122,18 @@ assert.match(databaseErrorHtml, /Database update required/);
 assert.match(databaseErrorHtml, /staff_image_url/);
 assert.equal(classifyAppFailure({ configured: true, error: "Invalid API key", online: true }).category, "configuration");
 assert.equal(classifyAppFailure({ configured: true, error: "Failed to send a request to the Edge Function", online: true }).category, "backend");
+assert.equal(
+  friendlyEdgeFunctionMessage("Failed to send a request to the Edge Function", "", { serviceLabel: "staff account deletion service", online: true }),
+  "Backend error: The staff account deletion service could not be reached. Check its Supabase deployment and try again."
+);
+assert.equal(
+  friendlyEdgeFunctionMessage("Failed to fetch", "", { serviceLabel: "staff account deletion service", online: false }),
+  "Network error: Check your internet connection and try again."
+);
+assert.equal(
+  friendlyEdgeFunctionMessage('{"code":"NOT_FOUND","message":"Requested function was not found"}', "", { serviceLabel: "staff account deletion service", online: true }),
+  "Backend deployment error: The staff account deletion service is not deployed in Supabase."
+);
 assert.equal(classifyAppFailure({ configured: true, error: "Auth session expired", online: true }).category, "authentication");
 assert.equal(classifyAppFailure({ configured: true, error: "Failed to fetch", online: false }).category, "network");
 assert.deepEqual(
@@ -536,6 +549,10 @@ const assignment = state.stockAssignments[0];
 assert.equal(state.products.find((item) => item.id === "SKU-CHIPS").stock, 90, "dispatch must immediately reduce factory stock");
 assert.equal(assignment.assigned, 20);
 assert.equal(assignment.repUserId, "user-rep", "assignment must be scoped to the selected representative account");
+const financialRevenueBeforeRepSale = getFinancialSalesLines(state).reduce((total, line) => total + Number(line.revenue || 0), 0);
+const financialInvoicesBeforeRepSale = getFinancialInvoiceRecords(state).length;
+const financialOrdersBeforeRepSale = getOrdersWithTotals(state).length;
+const receivablesBeforeRepSale = calculateMetrics(state).receivables;
 
 authenticate("user-rep");
 const salesBeforeRejectedWalkInCredit = store.getState().stockTransactions.filter((item) => item.type === "sale").length;
@@ -582,21 +599,43 @@ assert.ok(sale, "cash walk-in sale must be saved");
 assert.equal(sale.partyName, "Walk-in customer");
 assert.equal(state.stockAssignments[0].sold, 2);
 const cashInvoice = getInvoiceRecords(state).find((invoice) => invoice.transactionId === sale.id);
-assert.ok(cashInvoice, "every cash sale must create an invoice");
+assert.ok(cashInvoice, "every representative customer sale must create a receipt");
 assert.equal(cashInvoice.status, "paid");
 assert.equal(cashInvoice.paymentType, "cash");
 assert.equal(cashInvoice.repName, "Amina Rep");
 assert.equal(cashInvoice.items[0].productName, "Plantain Chips");
+assert.equal(cashInvoice.financialImpact, false, "representative sell-through receipts must not affect factory finances");
+assert.equal(cashInvoice.documentType, "sales_receipt");
+assert.equal(getFinancialSalesLines(state).reduce((total, line) => total + Number(line.revenue || 0), 0), financialRevenueBeforeRepSale, "representative sell-through must not add factory revenue");
+assert.equal(getFinancialInvoiceRecords(state).length, financialInvoicesBeforeRepSale, "representative receipts must not enter the factory invoice ledger");
+assert.equal(getOrdersWithTotals(state).length, financialOrdersBeforeRepSale, "representative sell-through must not create another factory sales order");
+assert.equal(calculateMetrics(state).receivables, receivablesBeforeRepSale, "representative sell-through must not change factory receivables");
+const legacySellThroughState = structuredClone(state);
+const legacyTransaction = legacySellThroughState.stockTransactions.find((item) => item.id === sale.id);
+const legacyOrder = legacySellThroughState.orders.find((item) => item.id === cashInvoice.orderId);
+const legacyInvoice = legacySellThroughState.invoices.find((item) => item.id === cashInvoice.id);
+[legacyTransaction, legacyOrder, legacyInvoice].forEach((record) => {
+  delete record.financialImpact;
+  delete record.accountingTreatment;
+  delete record.documentType;
+});
+assert.equal(getFinancialInvoiceRecords(legacySellThroughState).some((invoice) => invoice.id === cashInvoice.id), false, "historical assignment-linked representative receipts must remain outside factory finance");
+assert.equal(getOrdersWithTotals(legacySellThroughState).some((order) => order.id === cashInvoice.orderId), false, "historical representative sell-through orders must remain outside factory order totals");
+assert.equal(getFinancialSalesLines(legacySellThroughState).some((line) => line.recordId === cashInvoice.orderId || line.id === sale.id), false, "historical representative sell-through must not be counted as factory revenue");
 const invoiceDocument = buildInvoiceDocument(cashInvoice, state);
 assert.match(invoiceDocument, /DistroIQ Sales, Stock &amp; Distribution/);
 assert.match(invoiceDocument, /Test Factory/);
 assert.match(invoiceDocument, /Walk-in customer/);
 assert.match(invoiceDocument, /Plantain Chips/);
 assert.match(invoiceDocument, /Sold by Amina Rep/);
+assert.match(invoiceDocument, /SALES RECEIPT/);
+assert.match(invoiceDocument, /Factory revenue was already recognised/);
 const invoicePreview = buildInvoicePreviewContent(cashInvoice, state);
 assert.match(invoicePreview, /invoice-modal-document/);
 assert.match(invoicePreview, /Bill to/);
 assert.match(invoicePreview, /Plantain Chips/);
+assert.match(invoicePreview, /Sales receipt/);
+assert.match(invoicePreview, /factory revenue was already recognised/i);
 assert.doesNotMatch(invoicePreview, /iframe/);
 const packagedInvoicePreview = buildInvoicePreviewContent({
   ...cashInvoice,
@@ -1041,6 +1080,25 @@ assert.doesNotMatch(ceoDashboard, /Customer ratings/);
 assert.doesNotMatch(ceoDashboard, /Leadership drilldown/);
 assert.doesNotMatch(ceoDashboard, /data-ceo-drilldown/);
 assert.match(ceoDashboard, /dashboard-stock-quantity/, "CEO factory stock figures must include piece and package quantities");
+const separatedStockSplit = renderDashboard({
+  state: {
+    ...store.getState(),
+    products: [{ id: "SKU-SPLIT", name: "Split Test Chips", stockCategory: "finished_products", category: "Finished Products", stock: 80, reorderPoint: 10, unitPrice: 100, unitCost: 50, status: "active" }],
+    stockAssignments: [{ id: "ASN-SPLIT", dispatchId: "DSP-REP-SPLIT", transactionId: "TXN-REP-SPLIT", productId: "SKU-SPLIT", repName: "Amina Rep", assigned: 20, sold: 0, returned: 0, status: "open" }],
+    stockTransactions: [],
+    orders: [
+      { id: "ORD-REP-SPLIT", source: "factory_dispatch", dispatchId: "DSP-REP-SPLIT", transactionId: "TXN-REP-SPLIT", transactionIds: ["TXN-REP-SPLIT"], customerName: "Amina Rep", customerType: "Sales Representative", repName: "Amina Rep", status: "delivered", createdAt: currentTestDate, items: [{ productId: "SKU-SPLIT", quantity: 20, unitPrice: 100 }] },
+      { id: "ORD-SUPERMARKET-SPLIT", source: "factory_dispatch", dispatchId: "DSP-MARKET-SPLIT", customerName: "Central Supermarket", customerType: "Supermarket", status: "delivered", createdAt: currentTestDate, items: [{ productId: "SKU-SPLIT", quantity: 7, unitPrice: 100 }] }
+    ],
+    invoices: [],
+    retailers: [{ id: "RTL-SPLIT", name: "Central Supermarket", channel: "Supermarket" }],
+    routes: [],
+    salesReports: [],
+    creditLimits: []
+  }
+});
+assert.match(separatedStockSplit, /data-stock-split="representatives"[\s\S]*?<span class="strong">20<\/span>/, "representative-held stock must remain in the representative stock split");
+assert.match(separatedStockSplit, /data-stock-split="supermarkets"[\s\S]*?<span class="strong">7<\/span>/, "representative dispatches must not be added to supermarket stock");
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
@@ -1245,6 +1303,7 @@ authenticate("user-rep");
 assert.equal(scopeStateForCurrentRole(store.getState()).stockAssignments.length, 1, "reactivated products must return to representative stock flows");
 
 store.getState().retailers = [{ id: "RTL-CREDIT", name: "Credit Corner", channel: "Retailer" }];
+const financialInvoiceCountBeforeCreditSellThrough = getFinancialInvoiceRecords(store.getState()).length;
 store.dispatch({
   type: "LOG_REP_TRANSACTION",
   assignmentIds: [assignment.id],
@@ -1258,9 +1317,12 @@ store.dispatch({
   repName: "Amina Rep"
 });
 const creditSaleInvoice = getInvoiceRecords(store.getState()).find((invoice) => invoice.customerName === "Credit Corner");
-assert.ok(creditSaleInvoice, "every credit sale must create an invoice");
+assert.ok(creditSaleInvoice, "every representative credit sale must create a receipt");
 assert.equal(creditSaleInvoice.status, "open");
 assert.equal(creditSaleInvoice.paymentType, "credit");
+assert.equal(creditSaleInvoice.financialImpact, false);
+assert.equal(getFinancialInvoiceRecords(store.getState()).length, financialInvoiceCountBeforeCreditSellThrough, "customer credit recorded by a representative must not add a factory receivable");
+assert.equal(store.getState().creditLimits.some((limit) => limit.partyName === "Credit Corner"), false, "representative customer credit must not create or change a factory credit balance");
 
 const stockBeforeFactoryReturn = store.getState().products.find((product) => product.id === "SKU-CHIPS").stock;
 const outstandingBeforeFactoryReturn = store.getState().stockAssignments.find((item) => item.id === assignment.id).assigned
@@ -1680,6 +1742,8 @@ assert.equal(pricedState.invoices[0].items.find((item) => item.packagingType ===
 assert.equal(pricedState.stockAssignments.reduce((total, assignment) => total + assignment.assigned, 0), 12);
 assert.equal(pricedState.creditLimits.find((limit) => limit.partyName === "Pricing Rep").balance, 2200, "credit must use the package-specific mixed dispatch total");
 assert.match(buildInvoicePreviewContent(pricedState.invoices[0], pricedState), /₦1,800/);
+const pricedFactoryRevenueBeforeSellThrough = getFinancialSalesLines(pricedState).reduce((total, line) => total + Number(line.revenue || 0), 0);
+const pricedFactoryInvoiceCountBeforeSellThrough = getFinancialInvoiceRecords(pricedState).length;
 
 authenticatePricedPackaging("priced-rep-user");
 pricedPackagingStore.dispatch({
@@ -1696,11 +1760,13 @@ pricedPackagingStore.dispatch({
 pricedState = pricedPackagingStore.getState();
 assert.equal(pricedState.invoices[0].amount, 2200, "mixed quick-sale invoice must use package-specific prices");
 assert.equal(pricedState.invoices[0].items.length, 2);
+assert.equal(pricedState.invoices[0].documentType, "sales_receipt");
 assert.equal(pricedState.stockAssignments.reduce((total, assignment) => total + assignment.sold, 0), 12, "mixed sale must consume exactly twelve assigned pieces");
 const pricedSaleLines = getFinancialSalesLines(pricedState).filter((line) => line.source === "Rep quick sale" && line.customerName === "Walk-in customer");
-assert.equal(pricedSaleLines.reduce((total, line) => total + line.revenue, 0), 2200);
-assert.equal(pricedSaleLines.reduce((total, line) => total + line.cost, 0), 1440);
-assert.equal(pricedSaleLines.reduce((total, line) => total + line.profit, 0), 760, "profit must use discounted package revenue and base-piece cost");
+assert.equal(pricedSaleLines.length, 0, "representative sell-through lines must be absent from factory finance reports");
+assert.equal(getFinancialSalesLines(pricedState).reduce((total, line) => total + Number(line.revenue || 0), 0), pricedFactoryRevenueBeforeSellThrough, "selling dispatched stock onward must not double factory revenue");
+assert.equal(getFinancialInvoiceRecords(pricedState).length, pricedFactoryInvoiceCountBeforeSellThrough, "selling dispatched stock onward must not add a second financial invoice");
+assert.equal(pricedState.creditLimits.find((limit) => limit.partyName === "Pricing Rep").balance, 2200, "representative sell-through must not change the factory dispatch credit balance");
 
 authenticatePricedPackaging("priced-ceo-user");
 pricedPackagingStore.dispatch({

@@ -31,6 +31,52 @@ function normalizedValue(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+export function isRepresentativeSellThroughTransaction(transaction) {
+  if (!transaction) return false;
+  if (transaction.financialImpact === false || transaction.accountingTreatment === "sell_through_only") return true;
+  if (!["sale", "return"].includes(normalizedValue(transaction.type))) return false;
+
+  return Boolean(
+    transaction.assignmentId ||
+    (transaction.assignmentIds || []).length ||
+    (transaction.assignmentAllocations || []).length
+  );
+}
+
+function linkedTransactionIdsForRecord(record) {
+  return [
+    record?.transactionId,
+    ...(record?.transactionIds || [])
+  ].map((id) => String(id || "")).filter(Boolean);
+}
+
+export function isRepresentativeSellThroughOrder(order, state = {}) {
+  if (!order) return false;
+  if (order.financialImpact === false || order.accountingTreatment === "sell_through_only") return true;
+  const transactionIds = new Set(linkedTransactionIdsForRecord(order));
+
+  return transactionIds.size > 0 && (state.stockTransactions || []).some((transaction) => (
+    transactionIds.has(String(transaction.id || "")) && isRepresentativeSellThroughTransaction(transaction)
+  ));
+}
+
+export function isRepresentativeSellThroughInvoice(invoice, state = {}) {
+  if (!invoice) return false;
+  if (
+    invoice.financialImpact === false ||
+    invoice.accountingTreatment === "sell_through_only" ||
+    invoice.documentType === "sales_receipt"
+  ) return true;
+
+  const order = (state.orders || []).find((item) => item.id === invoice.orderId);
+  if (isRepresentativeSellThroughOrder(order, state)) return true;
+  const transactionIds = new Set(linkedTransactionIdsForRecord(invoice));
+
+  return transactionIds.size > 0 && (state.stockTransactions || []).some((transaction) => (
+    transactionIds.has(String(transaction.id || "")) && isRepresentativeSellThroughTransaction(transaction)
+  ));
+}
+
 function linkedAssignmentIds(transaction) {
   return [
     transaction.assignmentId,
@@ -129,6 +175,7 @@ export function getFinancialSalesLines(state) {
   const routeMap = getOrderRouteMap(state.routes || []);
   const orderLines = (state.orders || [])
     .filter((order) => order.source !== "quick_sale")
+    .filter((order) => !isRepresentativeSellThroughOrder(order, state))
     .flatMap((order) => {
       const route = routeMap.get(order.id);
       const retailer = retailerMap.get(order.retailerId);
@@ -165,7 +212,7 @@ export function getFinancialSalesLines(state) {
   const transactionLines = (state.stockTransactions || [])
     .filter((transaction) => {
       const type = String(transaction.type || "").toLowerCase();
-      return type === "sale" || type === "return";
+      return (type === "sale" || type === "return") && !isRepresentativeSellThroughTransaction(transaction);
     })
     .map((transaction) => {
       const product = productMap.get(transaction.productId);
@@ -216,12 +263,14 @@ export function getFinancialSalesLines(state) {
 
 export function calculateMetrics(state) {
   const productMap = getProductMap(state.products);
-  const orderRevenue = state.orders.reduce((total, order) => total + getOrderTotal(order, productMap), 0);
-  const deliveredOrders = state.orders.filter((order) => order.status === "delivered").length;
-  const openOrders = state.orders.filter((order) => order.status !== "delivered").length;
+  const financialOrders = state.orders.filter((order) => !isRepresentativeSellThroughOrder(order, state));
+  const orderRevenue = financialOrders.reduce((total, order) => total + getOrderTotal(order, productMap), 0);
+  const deliveredOrders = financialOrders.filter((order) => order.status === "delivered").length;
+  const openOrders = financialOrders.filter((order) => order.status !== "delivered").length;
   const lowStockCount = state.products.filter((product) => getStockHealth(product).status === "low").length;
   const activeRoutes = state.routes.filter((route) => ["scheduled", "in_transit"].includes(route.status)).length;
   const receivables = state.invoices
+    .filter((invoice) => !isRepresentativeSellThroughInvoice(invoice, state))
     .filter((invoice) => invoice.status !== "paid")
     .reduce((total, invoice) => total + invoice.amount, 0);
 
@@ -231,7 +280,7 @@ export function calculateMetrics(state) {
     activeRoutes,
     lowStockCount,
     receivables,
-    fillRate: state.orders.length ? (deliveredOrders / state.orders.length) * 100 : 0
+    fillRate: financialOrders.length ? (deliveredOrders / financialOrders.length) * 100 : 0
   };
 }
 
@@ -254,6 +303,8 @@ export function getRepresentativeDailyCreditUsed(state = {}, repName = "", date 
     const paymentType = String(transaction.paymentType || "").toLowerCase();
     const transactionDate = dateOnly(transaction.date || transaction.createdAt);
     const recordedBy = String(transaction.recordedBy || "").trim().toLowerCase();
+
+    if (isRepresentativeSellThroughTransaction(transaction)) return sum;
 
     if (recordedBy !== normalizedRepName || transactionDate !== targetDate || (type !== "sale" && type !== "return")) {
       return sum;
@@ -300,7 +351,9 @@ export function getCustomerOrderCompletion(retailer, state = {}, today = new Dat
 
 export function getCustomerRating(retailer, state = {}) {
   const orderCompletion = getCustomerOrderCompletion(retailer, state);
-  const invoices = (state.invoices || []).filter((invoice) => invoice.retailerId === retailer?.id);
+  const invoices = (state.invoices || []).filter((invoice) => (
+    invoice.retailerId === retailer?.id && !isRepresentativeSellThroughInvoice(invoice, state)
+  ));
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], retailer?.name);
   const balance = Number(creditLimit?.balance ?? retailer?.outstanding ?? 0);
   const limit = Number(creditLimit?.limit || 0);
@@ -448,6 +501,8 @@ export function calculateVisionMetrics(state) {
   const transactions = state.stockTransactions || [];
   const orders = state.orders || [];
   const invoices = state.invoices || [];
+  const financialOrders = orders.filter((order) => !isRepresentativeSellThroughOrder(order, state));
+  const financialInvoices = invoices.filter((invoice) => !isRepresentativeSellThroughInvoice(invoice, state));
   const creditLimits = state.creditLimits || [];
   const productMap = getProductMap(products);
   const retailerMap = getRetailerMap(state.retailers || []);
@@ -484,12 +539,12 @@ export function calculateVisionMetrics(state) {
     const percent = limit.limit ? (Number(limit.balance || 0) / Number(limit.limit || 0)) * 100 : 100;
     return percent >= 85 && percent < 100;
   }).length;
-  const creditHoldOrders = orders.filter((order) => getCreditGuardForOrder(order, state).status === "credit_hold").length;
-  const paidTotal = invoices
+  const creditHoldOrders = financialOrders.filter((order) => getCreditGuardForOrder(order, state).status === "credit_hold").length;
+  const paidTotal = financialInvoices
     .filter((invoice) => invoice.status === "paid")
     .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
-  const invoiceTotal = invoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
-  const receivables = invoices
+  const invoiceTotal = financialInvoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const receivables = financialInvoices
     .filter((invoice) => invoice.status !== "paid")
     .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
   const paymentCoveragePercent = invoiceTotal ? (paidTotal / invoiceTotal) * 100 : 0;
@@ -668,14 +723,16 @@ export function getOrdersWithTotals(state) {
   const productMap = getProductMap(state.products);
   const retailerMap = getRetailerMap(state.retailers);
 
-  return state.orders.map((order) => ({
+  return state.orders
+    .filter((order) => !isRepresentativeSellThroughOrder(order, state))
+    .map((order) => ({
     ...order,
     status: effectiveOrderStatus(order),
     retailer: retailerMap.get(order.retailerId) || {
       name: order.customerName || "Walk-in customer"
     },
     total: getOrderTotal(order, productMap)
-  }));
+    }));
 }
 
 export function getInvoiceAging(invoices, today = new Date()) {

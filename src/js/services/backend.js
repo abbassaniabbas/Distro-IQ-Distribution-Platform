@@ -255,16 +255,29 @@ async function readEdgeFunctionError(error) {
   return "";
 }
 
-function friendlyEdgeFunctionMessage(message, fallback = "The request could not be completed.") {
+export function friendlyEdgeFunctionMessage(
+  message,
+  fallback = "The request could not be completed.",
+  { serviceLabel = "backend service", online } = {}
+) {
   const raw = String(message || "").trim();
   const lower = raw.toLowerCase();
+  const isOnline = typeof online === "boolean"
+    ? online
+    : (typeof navigator === "undefined" || navigator.onLine !== false);
 
   if (!raw) {
     return fallback;
   }
 
+  if (lower.includes("requested function was not found") || lower.includes("function not found") || lower.includes("not_found")) {
+    return `Backend deployment error: The ${serviceLabel} is not deployed in Supabase.`;
+  }
+
   if (lower.includes("failed to send a request") || lower.includes("failed to fetch")) {
-    return "We could not reach the staff account service. Check your connection and try again.";
+    return isOnline
+      ? `Backend error: The ${serviceLabel} could not be reached. Check its Supabase deployment and try again.`
+      : "Network error: Check your internet connection and try again.";
   }
 
   if (lower === "missing invite fields" || lower.includes("redirectto")) {
@@ -276,7 +289,7 @@ function friendlyEdgeFunctionMessage(message, fallback = "The request could not 
   }
 
   if (lower.includes("supabase function environment")) {
-    return "The invite service is missing its Supabase environment settings.";
+    return `Backend configuration error: The ${serviceLabel} is missing its Supabase environment settings.`;
   }
 
   if (lower.includes("password_reset_required")) {
@@ -298,9 +311,9 @@ function friendlyEdgeFunctionMessage(message, fallback = "The request could not 
   return raw;
 }
 
-async function edgeFunctionErrorMessage(error, fallback) {
+async function edgeFunctionErrorMessage(error, fallback, options) {
   const functionMessage = await readEdgeFunctionError(error);
-  return friendlyEdgeFunctionMessage(functionMessage || error?.message, fallback);
+  return friendlyEdgeFunctionMessage(functionMessage || error?.message, fallback, options);
 }
 
 function isSchemaCacheError(error, fieldName) {
@@ -742,11 +755,11 @@ async function invokePlatformAdmin(action, payload = {}) {
   });
 
   if (error) {
-    throw new Error(await edgeFunctionErrorMessage(error, "The platform admin request could not be completed."));
+    throw new Error(await edgeFunctionErrorMessage(error, "The platform admin request could not be completed.", { serviceLabel: "platform administration service" }));
   }
 
   if (data?.error) {
-    throw new Error(friendlyEdgeFunctionMessage(data.error));
+    throw new Error(friendlyEdgeFunctionMessage(data.error, undefined, { serviceLabel: "platform administration service" }));
   }
 
   return data;
@@ -1018,11 +1031,11 @@ export async function inviteAccount({ client, name, email, phoneNumber, role, st
   const { data, error } = result;
 
   if (error) {
-    throw new Error(await edgeFunctionErrorMessage(error, "The team member could not be created."));
+    throw new Error(await edgeFunctionErrorMessage(error, "The team member could not be created.", { serviceLabel: "staff invitation service" }));
   }
 
   if (data?.error) {
-    throw new Error(friendlyEdgeFunctionMessage(data.error));
+    throw new Error(friendlyEdgeFunctionMessage(data.error, undefined, { serviceLabel: "staff invitation service" }));
   }
 
   await recordWorkspaceActivity({
@@ -1130,10 +1143,10 @@ export async function deleteMembershipAccount({ clientId, membershipId }) {
   });
 
   if (error) {
-    throw new Error(await edgeFunctionErrorMessage(error, "The staff account could not be deleted."));
+    throw new Error(await edgeFunctionErrorMessage(error, "The staff account could not be deleted.", { serviceLabel: "staff account deletion service" }));
   }
   if (data?.error) {
-    throw new Error(friendlyEdgeFunctionMessage(data.error, "The staff account could not be deleted."));
+    throw new Error(friendlyEdgeFunctionMessage(data.error, "The staff account could not be deleted.", { serviceLabel: "staff account deletion service" }));
   }
 
   return loadWorkspace();
@@ -1148,11 +1161,11 @@ export async function saveRepresentativeCreditLimit(payload) {
   });
 
   if (error) {
-    throw new Error(await edgeFunctionErrorMessage(error, "The credit-limit email could not be sent."));
+    throw new Error(await edgeFunctionErrorMessage(error, "The credit-limit email could not be sent.", { serviceLabel: "credit-limit notification service" }));
   }
 
   if (data?.error) {
-    throw new Error(friendlyEdgeFunctionMessage(data.error, "The credit-limit email could not be sent."));
+    throw new Error(friendlyEdgeFunctionMessage(data.error, "The credit-limit email could not be sent.", { serviceLabel: "credit-limit notification service" }));
   }
 
   return data;

@@ -1,4 +1,4 @@
-import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
+import { downloadInvoice, getFinancialInvoiceRecords, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
 import { printTabularReport } from "../services/report-export.js";
 import { currentUserRole } from "../services/rbac.js";
@@ -6,6 +6,12 @@ import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table } from "../ui/components.js";
 
 const INVOICE_PAGE_SIZE = 10;
+
+function visibleInvoiceRecords(state) {
+  return currentUserRole(state) === "sales_rep"
+    ? getInvoiceRecords(state)
+    : getFinancialInvoiceRecords(state);
+}
 
 function invoiceProductSummary(invoice) {
   const items = invoice.items || [];
@@ -40,7 +46,7 @@ function renderInvoiceRows(invoices) {
 }
 
 export function renderInvoices({ state }) {
-  const invoices = getInvoiceRecords(state);
+  const invoices = visibleInvoiceRecords(state);
   const isRepresentative = currentUserRole(state) === "sales_rep";
   const heading = isRepresentative ? "My invoices" : "Invoices";
   const today = new Date().toISOString().slice(0, 10);
@@ -98,7 +104,7 @@ export function bindInvoices({ root, store, signal }) {
   qsa(".js-view-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = visibleInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) openInvoiceQuickView(invoice, state);
     });
   });
@@ -106,7 +112,7 @@ export function bindInvoices({ root, store, signal }) {
   qsa(".js-download-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = visibleInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) downloadInvoice(invoice, state);
     });
   });
@@ -114,7 +120,7 @@ export function bindInvoices({ root, store, signal }) {
   qsa(".js-print-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = visibleInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) printInvoice(invoice, state);
     });
   });
@@ -135,7 +141,7 @@ export function bindInvoices({ root, store, signal }) {
     const localQuery = String(localSearch?.value || "").trim().toLowerCase();
     const selectedStatus = String(statusFilter?.value || "all");
 
-    return getInvoiceRecords(store.getState()).filter((invoice) => {
+    return visibleInvoiceRecords(store.getState()).filter((invoice) => {
       const searchIndex = invoiceSearchIndex(invoice);
       return (
         (!globalQuery || searchIndex.includes(globalQuery)) &&
