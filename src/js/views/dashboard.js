@@ -314,6 +314,21 @@ function productLatestActivity(productId, state) {
   ]);
 }
 
+function orderIsForSalesRepresentative(order, state) {
+  const recipientType = normalized(order?.customerType).replaceAll("_", " ");
+  if (recipientType.includes("sales rep") || recipientType.includes("sales representative")) return true;
+
+  const transactionIds = new Set([
+    order?.transactionId,
+    ...(order?.transactionIds || [])
+  ].map((id) => String(id || "")).filter(Boolean));
+
+  return (state.stockAssignments || []).some((assignment) => (
+    (order?.dispatchId && assignment.dispatchId === order.dispatchId) ||
+    transactionIds.has(String(assignment.transactionId || ""))
+  ));
+}
+
 function buildCeoProductPerformance(state) {
   const productMap = getProductMap(state.products || []);
   const rows = (state.products || []).map((product) => ({
@@ -330,6 +345,8 @@ function buildCeoProductPerformance(state) {
   const rowMap = new Map(rows.map((row) => [row.id, row]));
 
   (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
+    const representativeOrder = orderIsForSalesRepresentative(order, state);
+
     (order.items || []).forEach((item) => {
       const row = rowMap.get(item.productId);
       const product = productMap.get(item.productId);
@@ -338,7 +355,7 @@ function buildCeoProductPerformance(state) {
       const quantity = Number(item.quantity || 0);
       const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product.unitPrice ?? 0);
       row.orderedUnits += quantity;
-      row.supermarketUnits += quantity;
+      if (!representativeOrder) row.supermarketUnits += quantity;
       row.salesValue += Number(item.lineAmount ?? (quantity * unitPrice));
       row.latestActivity = latestDate([row.latestActivity, order.createdAt || order.dueAt]);
     });
@@ -889,7 +906,9 @@ function renderCeoPulseRows({ topProduct, lowStockProduct, riskyAccount, latestR
 }
 
 function renderCeoStockSplit(vision, productRows) {
-  const supermarketUnits = productRows.reduce((total, row) => total + Number(row.supermarketUnits || 0), 0);
+  const supermarketUnits = productRows
+    .filter((row) => stockCategoryIdForProduct(row.product) === "finished_products")
+    .reduce((total, row) => total + Number(row.supermarketUnits || 0), 0);
   const maxValue = Math.max(vision.finishedStockUnits, vision.repOutstandingUnits, supermarketUnits, 1);
   const rows = [
     {
@@ -912,7 +931,7 @@ function renderCeoStockSplit(vision, productRows) {
   return `
     <div class="bar-list">
       ${rows.map((row) => `
-        <div class="bar-row ceo-stock-row" data-search-index="${escapeHtml(row.label.toLowerCase())}">
+        <div class="bar-row ceo-stock-row" data-stock-split="${escapeHtml(row.label.toLowerCase())}" data-search-index="${escapeHtml(row.label.toLowerCase())}">
           <strong>${escapeHtml(row.label)}</strong>
           ${progressBar((row.value / maxValue) * 100, row.tone)}
           <span class="strong">${formatNumber(row.value)}</span>

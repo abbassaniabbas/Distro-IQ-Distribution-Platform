@@ -1080,6 +1080,25 @@ assert.doesNotMatch(ceoDashboard, /Customer ratings/);
 assert.doesNotMatch(ceoDashboard, /Leadership drilldown/);
 assert.doesNotMatch(ceoDashboard, /data-ceo-drilldown/);
 assert.match(ceoDashboard, /dashboard-stock-quantity/, "CEO factory stock figures must include piece and package quantities");
+const separatedStockSplit = renderDashboard({
+  state: {
+    ...store.getState(),
+    products: [{ id: "SKU-SPLIT", name: "Split Test Chips", stockCategory: "finished_products", category: "Finished Products", stock: 80, reorderPoint: 10, unitPrice: 100, unitCost: 50, status: "active" }],
+    stockAssignments: [{ id: "ASN-SPLIT", dispatchId: "DSP-REP-SPLIT", transactionId: "TXN-REP-SPLIT", productId: "SKU-SPLIT", repName: "Amina Rep", assigned: 20, sold: 0, returned: 0, status: "open" }],
+    stockTransactions: [],
+    orders: [
+      { id: "ORD-REP-SPLIT", source: "factory_dispatch", dispatchId: "DSP-REP-SPLIT", transactionId: "TXN-REP-SPLIT", transactionIds: ["TXN-REP-SPLIT"], customerName: "Amina Rep", customerType: "Sales Representative", repName: "Amina Rep", status: "delivered", createdAt: currentTestDate, items: [{ productId: "SKU-SPLIT", quantity: 20, unitPrice: 100 }] },
+      { id: "ORD-SUPERMARKET-SPLIT", source: "factory_dispatch", dispatchId: "DSP-MARKET-SPLIT", customerName: "Central Supermarket", customerType: "Supermarket", status: "delivered", createdAt: currentTestDate, items: [{ productId: "SKU-SPLIT", quantity: 7, unitPrice: 100 }] }
+    ],
+    invoices: [],
+    retailers: [{ id: "RTL-SPLIT", name: "Central Supermarket", channel: "Supermarket" }],
+    routes: [],
+    salesReports: [],
+    creditLimits: []
+  }
+});
+assert.match(separatedStockSplit, /data-stock-split="representatives"[\s\S]*?<span class="strong">20<\/span>/, "representative-held stock must remain in the representative stock split");
+assert.match(separatedStockSplit, /data-stock-split="supermarkets"[\s\S]*?<span class="strong">7<\/span>/, "representative dispatches must not be added to supermarket stock");
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
