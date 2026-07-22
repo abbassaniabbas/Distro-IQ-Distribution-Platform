@@ -41,6 +41,7 @@ assert.match(responsiveLayoutCss, /@media \(max-width: 640px\)[\s\S]*\.view-root
 assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-button[\s\S]*width: 44px;[\s\S]*height: 44px/, "phone and tablet controls must retain touch-friendly targets");
 assert.match(responsiveComponentCss, /\.table-wrap[\s\S]*-webkit-overflow-scrolling: touch/, "wide tables must scroll safely on touch devices");
 assert.match(responsiveViewCss, /@media \(max-width: 640px\)[\s\S]*max-height: calc\(100dvh - 20px\)/, "mobile modals must remain inside the visible viewport");
+assert.match(responsiveViewCss, /\.stock-health-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "Stock Health grid cards must keep a normal width and fill from the left");
 const currentTestDate = new Date().toISOString().slice(0, 10);
 const browserStorage = new Map();
 globalThis.localStorage = {
