@@ -5,7 +5,7 @@ import {
   getFinancialSalesLines,
   getInvoiceAging,
   getRetailerMap
-} from "../services/calculations.js";
+} from "../services/calculations.js?v=20260722";
 import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import {
   currentUserPermissions,
@@ -16,7 +16,7 @@ import {
 import { isModuleEnabled } from "../services/features.js";
 import { saveRepresentativeCreditLimit } from "../services/backend.js";
 import { dateIsWithinRange, normalizeDateRange } from "../services/filtering.js";
-import { downloadInvoice, getFinancialInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
+import { downloadInvoice, getFinancialInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -462,7 +462,11 @@ function getAccountantSummary(state) {
   const revenue = salesLines.reduce((total, line) => total + line.revenue, 0);
   const cost = salesLines.reduce((total, line) => total + line.cost, 0);
   const profit = salesLines.reduce((total, line) => total + line.profit, 0);
-  const cashIn = salesLines.reduce((total, line) => total + Number(line.cashAmount || 0), 0);
+  const cashSalesReceived = salesLines.reduce((total, line) => total + Number(line.cashAmount || 0), 0);
+  const collectedCredit = getFinancialInvoiceRecords(state)
+    .filter((invoice) => invoice.status === "paid" && String(invoice.paymentType || "").toLowerCase().includes("credit") && invoice.paidAt)
+    .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const cashIn = cashSalesReceived + collectedCredit;
   const creditOwed = (state.creditLimits || []).reduce((total, limit) => total + Number(limit.balance || 0), 0);
   const returns = salesLines.reduce((total, line) => total + Number(line.returnAmount || 0), 0);
   const productMap = new Map((state.products || []).map((product) => [product.id, product]));
@@ -646,8 +650,6 @@ function renderAccountantSalesReportRows(state) {
           <td>${escapeHtml(report.repName || "Unassigned")}</td>
           <td>${formatDate(report.reportDate)}</td>
           <td>${formatCurrency(report.salesAmount)}</td>
-          <td>${formatCurrency(report.cashAmount)}</td>
-          <td>${formatCurrency(report.creditAmount)}</td>
           <td>${formatCurrency(report.returnAmount)}</td>
           <td>${statusPill(report.status)}</td>
         </tr>
@@ -846,7 +848,7 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
       <section class="panel" data-export-table="true" data-export-title="Sales reports">
         ${panelHeader("Sales reports", "Read-only submitted sales activity")}
         ${table(
-          ["Report", "Sales representative", "Date", "Sales", "Cash", "Credit", "Returns", "Status"],
+          ["Report", "Sales representative", "Date", "Sales", "Returns", "Status"],
           renderAccountantSalesReportRows(state),
           "No sales reports available"
         )}

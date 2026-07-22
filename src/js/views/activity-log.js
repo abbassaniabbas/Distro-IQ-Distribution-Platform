@@ -2,7 +2,7 @@ import {
   actionTypeLabel,
   getScopedActivityLogs,
   recordTypeLabel
-} from "../services/activity.js";
+} from "../services/activity.js?v=20260722";
 import { formatCurrency, formatNumber } from "../services/formatters.js";
 import { dateIsWithinRange } from "../services/filtering.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
@@ -15,7 +15,7 @@ import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
   renderManagerReportReview
-} from "./dashboard.js";
+} from "./dashboard.js?v=20260722";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
 
@@ -153,7 +153,6 @@ function repRecentActivityRows(state) {
       const returnDisposition = isReturn ? returnDispositionLabel(transaction.returnDisposition) : "";
       const details = [
         `${formatNumber(transaction.quantity)} units`,
-        transaction.paymentType || "cash",
         returnDisposition
       ].filter(Boolean).join(" - ");
 
@@ -170,7 +169,6 @@ function repRecentActivityRows(state) {
           isReturn ? "customer return" : "sale",
           productName,
           transaction.partyName,
-          transaction.paymentType,
           returnDisposition
         ].join(" ")
       };

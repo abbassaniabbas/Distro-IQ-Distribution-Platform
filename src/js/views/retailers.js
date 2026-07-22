@@ -3,7 +3,7 @@ import {
   getCreditLimitForParty,
   getCustomerOrderCompletion,
   getCustomerRating
-} from "../services/calculations.js";
+} from "../services/calculations.js?v=20260722";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";

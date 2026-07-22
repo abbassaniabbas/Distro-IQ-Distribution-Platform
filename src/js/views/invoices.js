@@ -1,4 +1,4 @@
-import { downloadInvoice, getFinancialInvoiceRecords, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
+import { downloadInvoice, getFinancialInvoiceRecords, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
 import { printTabularReport } from "../services/report-export.js";
 import { currentUserRole } from "../services/rbac.js";
@@ -25,13 +25,19 @@ function invoiceSearchIndex(invoice) {
   return `${invoice.id} ${invoice.customerName} ${invoice.repName} ${invoice.paymentType} ${invoice.status} ${invoiceProductSummary(invoice)}`.toLowerCase();
 }
 
+function invoicePaymentLabel(invoice) {
+  return invoice.documentType === "sales_receipt" || invoice.financialImpact === false
+    ? "Sales activity"
+    : statusText(invoice.paymentType || "cash");
+}
+
 function renderInvoiceRows(invoices) {
   return invoices.map((invoice, index) => `
     <tr ${index >= INVOICE_PAGE_SIZE ? "hidden " : ""}data-rep-invoice-row data-invoice-status="${escapeHtml(invoice.status || "open")}" data-search-index="${escapeHtml(invoiceSearchIndex(invoice))}">
       <td><strong>${escapeHtml(invoice.id)}</strong><div class="muted">${formatDate(invoice.issuedAt)}</div></td>
       <td>${escapeHtml(invoice.customerName || "Customer")}</td>
       <td>${escapeHtml(invoiceProductSummary(invoice))}</td>
-      <td>${escapeHtml(statusText(invoice.paymentType || "cash"))}</td>
+      <td>${escapeHtml(invoicePaymentLabel(invoice))}</td>
       <td>${formatCurrency(invoice.amount)}</td>
       <td>${statusPill(invoice.status)}</td>
       <td>
@@ -52,12 +58,12 @@ export function renderInvoices({ state }) {
   const today = new Date().toISOString().slice(0, 10);
   const todayInvoices = invoices.filter((invoice) => invoice.issuedAt === today);
   const totalValue = invoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
-  const openValue = invoices.filter((invoice) => invoice.status !== "paid").reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const openValue = invoices.filter((invoice) => ["open", "overdue"].includes(invoice.status)).reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
 
   return `
     <section class="view invoices-view">
       <div class="metric-grid invoice-metrics">
-        ${metricCard({ label: heading, value: formatNumber(invoices.length), meta: "Cash and credit sales", iconName: "orders" })}
+        ${metricCard({ label: heading, value: formatNumber(invoices.length), meta: isRepresentative ? "Customer sales information" : "Factory cash and credit sales", iconName: "orders" })}
         ${metricCard({ label: "Today", value: formatNumber(todayInvoices.length), meta: "Invoices created today", iconName: "clock" })}
         ${metricCard({ label: "Total sales", value: formatCurrency(totalValue), meta: "Value on all my invoices", iconName: "finance" })}
         ${metricCard({ label: "Still unpaid", value: formatCurrency(openValue), meta: "Credit invoices awaiting payment", iconName: "wallet" })}
@@ -80,13 +86,14 @@ export function renderInvoices({ state }) {
             <select data-invoice-status-filter>
               <option value="all">All statuses</option>
               <option value="paid">Paid</option>
+              <option value="recorded">Recorded</option>
               <option value="open">Open</option>
               <option value="overdue">Overdue</option>
             </select>
           </label>
         </div>
         ${table(
-          ["Invoice", "Customer", "Products", "Payment", "Total", "Status", "Actions"],
+          ["Invoice", "Customer", "Products", "Type", "Total", "Status", "Actions"],
           renderInvoiceRows(invoices),
           "No invoices yet. An invoice will appear after you record a sale."
         )}
@@ -155,14 +162,14 @@ export function bindInvoices({ root, store, signal }) {
     const invoices = filteredInvoices();
     const section = {
       title: "Invoices",
-      headers: ["Invoice", "Issued", "Customer", "Products", "Payment", "Total", "Status"],
+      headers: ["Invoice", "Issued", "Customer", "Products", "Type", "Total", "Status"],
       rows: invoices.map((invoice) => ({
         cells: [
           invoice.id,
           formatDate(invoice.issuedAt),
           invoice.customerName || "Customer",
           invoiceProductSummary(invoice),
-          statusText(invoice.paymentType || "cash"),
+          invoicePaymentLabel(invoice),
           formatCurrency(invoice.amount),
           statusText(invoice.status || "open")
         ]

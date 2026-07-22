@@ -24,6 +24,7 @@ const paths = {
   x: '<path d="M18 6 6 18"/><path d="m6 6 12 12"/>',
   refresh: '<path d="M20 6v5h-5"/><path d="M4 18v-5h5"/><path d="M18 9a6.5 6.5 0 0 0-11-2.5L4 9"/><path d="M6 15a6.5 6.5 0 0 0 11 2.5L20 15"/>',
   arrowRight: '<path d="M5 12h14"/><path d="m13 5 7 7-7 7"/>',
+  arrowLeft: '<path d="M19 12H5"/><path d="m11 19-7-7 7-7"/>',
   alert: '<path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 2.5 18a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z"/>',
   check: '<path d="m20 6-11 11-5-5"/>',
   package: '<path d="m3 7 9-4 9 4-9 4-9-4Z"/><path d="M12 11v10"/><path d="M3 7v10l9 4 9-4V7"/>',

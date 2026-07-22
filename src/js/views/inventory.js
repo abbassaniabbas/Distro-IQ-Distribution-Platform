@@ -4,7 +4,7 @@ import {
   getStockHealth,
   isRepresentativeSellThroughOrder,
   stockCategoryIdForProduct
-} from "../services/calculations.js";
+} from "../services/calculations.js?v=20260722";
 import {
   formatCurrency,
   currencySymbolFor,
@@ -14,7 +14,7 @@ import {
   statusText
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
-import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
+import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722";
 import { loadSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
@@ -23,7 +23,7 @@ import { dateIsWithinRange } from "../services/filtering.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
-import { icon } from "../ui/icons.js";
+import { icon } from "../ui/icons.js?v=20260722";
 import { bindAdjustments, renderAdjustmentContent } from "./adjustments.js";
 import {
   enabledPackagingTypes,
@@ -1092,6 +1092,13 @@ function dispatchRecipientOptions(state, recipientType) {
       : [{ value: "", label: "No saved sales representatives", disabled: true }];
   }
 
+  if (normalizedType.includes("walk-in") || normalizedType.includes("walk in")) {
+    return [
+      { value: "Walk-in customer", label: "Walk-in customer" },
+      { value: "__other__", label: "Add customer name" }
+    ];
+  }
+
   if (normalizedType.includes("supermarket")) {
     return [
       ...(state.retailers || [])
@@ -1130,7 +1137,7 @@ function renderDispatchRecipientOptions(state, recipientType) {
 
 function dispatchableProducts(state, recipientType) {
   const normalizedType = String(recipientType || "").toLowerCase();
-  const requiresFinishedGoods = normalizedType.includes("representative") || normalizedType.includes("supermarket");
+  const requiresFinishedGoods = normalizedType.includes("representative") || normalizedType.includes("supermarket") || normalizedType.includes("walk-in") || normalizedType.includes("walk in");
 
   return (state.products || []).filter((product) => (
     product.status !== "inactive" &&
@@ -1189,6 +1196,7 @@ function otherRecipientPlaceholder(recipientType) {
   const normalizedType = String(recipientType || "").toLowerCase();
 
   if (normalizedType.includes("supermarket")) return "Type customer or supermarket name";
+  if (normalizedType.includes("walk-in") || normalizedType.includes("walk in")) return "Type customer name (optional)";
   if (normalizedType.includes("internal")) return "Type internal location";
   return "Type recipient name";
 }
@@ -1198,6 +1206,7 @@ function destinationPlaceholder(recipientType) {
 
   if (normalizedType.includes("representative")) return "Van number or delivery area";
   if (normalizedType.includes("supermarket")) return "Outlet branch, city, or delivery address";
+  if (normalizedType.includes("walk-in") || normalizedType.includes("walk in")) return "Factory collection";
   if (normalizedType.includes("internal")) return "Store room, production line, or equipment bay";
   return "Where the stock is going";
 }
@@ -1207,13 +1216,14 @@ function renderDispatchForm(state, permissions) {
 
   return `
     <section class="panel manager-tool-panel">
-      ${panelHeader("Record factory dispatch", "Log stock leaving the factory for a representative, supermarket, or internal destination")}
+      ${panelHeader("Record factory dispatch", "Log stock leaving the factory for a representative, supermarket, walk-in customer, or internal destination")}
       <form id="stock-dispatch-form" class="manager-form-grid" novalidate>
         <label class="field">
           <span>Recipient type</span>
           <select name="recipientType" required>
             <option value="Sales Representative">Sales Representative</option>
             <option value="Supermarket">Supermarket</option>
+            <option value="Walk-in Customer">Walk-in Customer</option>
             <option value="Internal Location">Internal Location</option>
           </select>
         </label>
@@ -3816,7 +3826,13 @@ export function bindInventory({ root, store, signal }) {
 
     const recipientType = dispatchRecipientType.value;
     dispatchRecipientSelect.innerHTML = renderDispatchRecipientOptions(store.getState(), recipientType);
-    if (dispatchDestinationInput) dispatchDestinationInput.placeholder = destinationPlaceholder(recipientType);
+    const isWalkIn = recipientType.toLowerCase().includes("walk-in") || recipientType.toLowerCase().includes("walk in");
+    if (isWalkIn) dispatchRecipientSelect.value = "Walk-in customer";
+    if (dispatchDestinationInput) {
+      dispatchDestinationInput.placeholder = destinationPlaceholder(recipientType);
+      if (isWalkIn) dispatchDestinationInput.value = "Factory collection";
+      else if (dispatchDestinationInput.value === "Factory collection") dispatchDestinationInput.value = "";
+    }
     updateOtherRecipientField();
   }
 
@@ -3861,10 +3877,11 @@ export function bindInventory({ root, store, signal }) {
   function syncDispatchPaymentField() {
     if (!dispatchRecipientType || !dispatchPaymentField || !dispatchPaymentSelect) return;
     const isInternal = dispatchRecipientType.value.toLowerCase().includes("internal");
-    dispatchPaymentField.hidden = isInternal;
-    dispatchPaymentSelect.disabled = isInternal;
-    dispatchPaymentSelect.required = !isInternal;
-    if (isInternal) dispatchPaymentSelect.value = "cash";
+    const isWalkIn = dispatchRecipientType.value.toLowerCase().includes("walk-in") || dispatchRecipientType.value.toLowerCase().includes("walk in");
+    dispatchPaymentField.hidden = isInternal || isWalkIn;
+    dispatchPaymentSelect.disabled = isInternal || isWalkIn;
+    dispatchPaymentSelect.required = !isInternal && !isWalkIn;
+    if (isInternal || isWalkIn) dispatchPaymentSelect.value = "cash";
   }
 
   updateDispatchRecipientOptions();
@@ -3930,7 +3947,8 @@ export function bindInventory({ root, store, signal }) {
     });
     const recipientType = String(formData.get("recipientType") || "");
     const isInternalDispatch = recipientType.toLowerCase().includes("internal");
-    const paymentType = isInternalDispatch ? "none" : String(formData.get("paymentType") || "");
+    const isWalkInDispatch = recipientType.toLowerCase().includes("walk-in") || recipientType.toLowerCase().includes("walk in");
+    const paymentType = isInternalDispatch ? "none" : isWalkInDispatch ? "cash" : String(formData.get("paymentType") || "");
     const recipientChoice = String(formData.get("recipientNameChoice") || "").trim();
     const otherRecipient = String(formData.get("recipientNameOther") || "").trim();
     const recipientName = recipientChoice === "__other__" ? otherRecipient : recipientChoice;

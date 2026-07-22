@@ -2,7 +2,7 @@ import {
   buildOrderStatusSummary,
   getCreditGuardForOrder,
   getOrdersWithTotals
-} from "../services/calculations.js";
+} from "../services/calculations.js?v=20260722";
 import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";

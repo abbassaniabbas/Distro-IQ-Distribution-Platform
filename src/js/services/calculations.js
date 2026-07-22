@@ -77,6 +77,22 @@ export function isRepresentativeSellThroughInvoice(invoice, state = {}) {
   ));
 }
 
+export function isFactoryDispatchToRepresentative(order, state = {}) {
+  if (!order || normalizedValue(order.source) !== "factory_dispatch") return false;
+  const recipientType = normalizedValue(order.customerType).replaceAll("_", " ");
+  if (recipientType.includes("sales rep") || recipientType.includes("sales representative")) return true;
+
+  const transactionIds = new Set([
+    order.transactionId,
+    ...(order.transactionIds || [])
+  ].map((id) => String(id || "")).filter(Boolean));
+
+  return (state.stockAssignments || []).some((assignment) => (
+    (order.dispatchId && assignment.dispatchId === order.dispatchId) ||
+    transactionIds.has(String(assignment.transactionId || ""))
+  ));
+}
+
 function linkedAssignmentIds(transaction) {
   return [
     transaction.assignmentId,

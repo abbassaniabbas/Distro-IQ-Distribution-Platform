@@ -555,25 +555,6 @@ const financialOrdersBeforeRepSale = getOrdersWithTotals(state).length;
 const receivablesBeforeRepSale = calculateMetrics(state).receivables;
 
 authenticate("user-rep");
-const salesBeforeRejectedWalkInCredit = store.getState().stockTransactions.filter((item) => item.type === "sale").length;
-store.dispatch({
-  type: "LOG_REP_TRANSACTION",
-  assignmentIds: [assignment.id],
-  productId: "SKU-CHIPS",
-  customerId: "",
-  customerName: "Walk-in customer",
-  customerType: "Walk-in",
-  quantity: 2,
-  transactionType: "sale",
-  paymentType: "credit",
-  repName: "Amina Rep"
-});
-assert.equal(
-  store.getState().stockTransactions.filter((item) => item.type === "sale").length,
-  salesBeforeRejectedWalkInCredit,
-  "walk-in credit must be rejected"
-);
-
 store.dispatch({
   type: "LOG_REP_TRANSACTION",
   assignmentIds: [assignment.id],
@@ -595,13 +576,14 @@ assert.equal(state.offlineSalesQueue.length, 1, "offline sale must enter the syn
 store.dispatch({ type: "SYNC_OFFLINE_SALES" });
 assert.equal(store.getState().offlineSalesQueue.length, 0, "online sync must clear the offline queue");
 assert.equal(store.getState().stockTransactions.find((item) => item.id === sale.id).syncStatus, "synced");
-assert.ok(sale, "cash walk-in sale must be saved");
+assert.ok(sale, "walk-in sell-through must be saved");
 assert.equal(sale.partyName, "Walk-in customer");
+assert.equal(sale.paymentType, "not_tracked", "representative customer payment sources must not be recorded");
 assert.equal(state.stockAssignments[0].sold, 2);
 const cashInvoice = getInvoiceRecords(state).find((invoice) => invoice.transactionId === sale.id);
 assert.ok(cashInvoice, "every representative customer sale must create a receipt");
-assert.equal(cashInvoice.status, "paid");
-assert.equal(cashInvoice.paymentType, "cash");
+assert.equal(cashInvoice.status, "recorded");
+assert.equal(cashInvoice.paymentType, "not_tracked");
 assert.equal(cashInvoice.repName, "Amina Rep");
 assert.equal(cashInvoice.items[0].productName, "Plantain Chips");
 assert.equal(cashInvoice.financialImpact, false, "representative sell-through receipts must not affect factory finances");
@@ -630,6 +612,7 @@ assert.match(invoiceDocument, /Plantain Chips/);
 assert.match(invoiceDocument, /Sold by Amina Rep/);
 assert.match(invoiceDocument, /SALES RECEIPT/);
 assert.match(invoiceDocument, /Factory revenue was already recognised/);
+assert.doesNotMatch(invoiceDocument, /Payment:/, "representative sales receipts must not expose a customer payment source");
 const invoicePreview = buildInvoicePreviewContent(cashInvoice, state);
 assert.match(invoicePreview, /invoice-modal-document/);
 assert.match(invoicePreview, /Bill to/);
@@ -732,6 +715,7 @@ assert.match(repDashboard, /rep-sale-item-quantity/);
 assert.match(repDashboard, /rep-sale-item-packaging/);
 assert.match(repDashboard, /rep-sale-item-price/);
 assert.match(repDashboard, /rep-sale-item-remove[\s\S]*js-remove-rep-sale-item/, "Quick Sale fields and remove control must use the contained item-row layout");
+assert.doesNotMatch(repDashboard, /name="salePaymentType"|name="returnPaymentType"/, "representative sales and returns must not ask where customer money came from");
 
 store.dispatch({
   type: "SUBMIT_REP_REPORT",
@@ -1099,6 +1083,9 @@ const separatedStockSplit = renderDashboard({
 });
 assert.match(separatedStockSplit, /data-stock-split="representatives"[\s\S]*?<span class="strong">20<\/span>/, "representative-held stock must remain in the representative stock split");
 assert.match(separatedStockSplit, /data-stock-split="supermarkets"[\s\S]*?<span class="strong">7<\/span>/, "representative dispatches must not be added to supermarket stock");
+assert.match(separatedStockSplit, /Total stock produced[\s\S]*107 pieces/, "stock split must begin with the combined produced-stock total");
+assert.match(separatedStockSplit, /id="ceo-stock-split-modal"[\s\S]*data-stock-split-family="Split Test Chips"/, "the stock split modal must list product-level splits");
+assert.match(separatedStockSplit, /data-stock-split-size-view="Split Test Chips"[\s\S]*Split Test Chips[\s\S]*Standard/, "each product must drill down to size-level stock splits");
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);
@@ -1124,6 +1111,7 @@ assert.equal((storeKeeperDashboard.match(/id="stock-dispatch-form"/g) || []).len
 assert.match(storeKeeperDashboard, /name="paymentType"/);
 assert.match(storeKeeperDashboard, /value="cash">Cash paid on dispatch/);
 assert.match(storeKeeperDashboard, /value="credit">Credit/);
+assert.match(storeKeeperDashboard, /option value="Walk-in Customer">Walk-in Customer/, "factory dispatch must support walk-in customers");
 assert.match(storeKeeperDashboard, /name="dispatchProductId"/);
 assert.match(storeKeeperDashboard, /name="dispatchQuantity"/);
 assert.match(storeKeeperDashboard, /data-dispatch-item-template/);
@@ -1317,9 +1305,9 @@ store.dispatch({
   repName: "Amina Rep"
 });
 const creditSaleInvoice = getInvoiceRecords(store.getState()).find((invoice) => invoice.customerName === "Credit Corner");
-assert.ok(creditSaleInvoice, "every representative credit sale must create a receipt");
-assert.equal(creditSaleInvoice.status, "open");
-assert.equal(creditSaleInvoice.paymentType, "credit");
+assert.ok(creditSaleInvoice, "every representative customer sale must create a receipt");
+assert.equal(creditSaleInvoice.status, "recorded");
+assert.equal(creditSaleInvoice.paymentType, "not_tracked");
 assert.equal(creditSaleInvoice.financialImpact, false);
 assert.equal(getFinancialInvoiceRecords(store.getState()).length, financialInvoiceCountBeforeCreditSellThrough, "customer credit recorded by a representative must not add a factory receivable");
 assert.equal(store.getState().creditLimits.some((limit) => limit.partyName === "Credit Corner"), false, "representative customer credit must not create or change a factory credit balance");
@@ -1677,6 +1665,28 @@ assert.equal(multiDispatchStore.getState().invoices[0].paymentType, "cash");
 assert.equal(multiDispatchStore.getState().invoices[0].status, "paid");
 assert.equal(multiDispatchStore.getState().invoices[0].amount, 1300);
 assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0, "cash dispatch must not increase representative credit");
+const assignmentsBeforeWalkInDispatch = multiDispatchStore.getState().stockAssignments.length;
+const revenueBeforeWalkInDispatch = getFinancialSalesLines(multiDispatchStore.getState()).reduce((total, line) => total + Number(line.revenue || 0), 0);
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  items: [{ productId: "MULTI-A", quantity: 2 }],
+  recipientType: "Walk-in Customer",
+  recipientName: "Walk-in customer",
+  destination: "Factory collection",
+  paymentType: "credit",
+  dispatchDate: "2026-07-15",
+  expectedDeliveryAt: "2026-07-15",
+  staffName: "Multi CEO"
+});
+const walkInDispatchState = multiDispatchStore.getState();
+assert.equal(walkInDispatchState.stockAssignments.length, assignmentsBeforeWalkInDispatch, "walk-in factory sales must not create representative assignments");
+assert.equal(walkInDispatchState.products.find((product) => product.id === "MULTI-A").stock, 14, "walk-in collection must reduce factory stock immediately");
+assert.equal(walkInDispatchState.invoices[0].customerName, "Walk-in customer");
+assert.equal(walkInDispatchState.invoices[0].paymentType, "cash", "walk-in factory collections must be recorded as factory cash inflow");
+assert.equal(getFinancialSalesLines(walkInDispatchState).reduce((total, line) => total + Number(line.revenue || 0), 0), revenueBeforeWalkInDispatch + 1000, "walk-in factory dispatch must add one factory sale");
+globalThis.window.location.hash = "#/finance";
+const inflowFinanceOverview = renderFinance({ state: walkInDispatchState });
+assert.match(inflowFinanceOverview, /Cash in[\s\S]*₦5,400/, "cash inflow must include paid representative dispatches and factory walk-in sales");
 
 const pricedPackagingStore = createStore();
 const pricedPackagingClient = {

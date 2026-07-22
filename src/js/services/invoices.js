@@ -1,6 +1,6 @@
 import { currencySymbolFor, formatDate, statusText } from "./formatters.js";
 import { packagingQuantityLabel } from "./packaging.js";
-import { isRepresentativeSellThroughInvoice } from "./calculations.js";
+import { isRepresentativeSellThroughInvoice } from "./calculations.js?v=20260722";
 import { escapeHtml } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 
@@ -22,6 +22,7 @@ function orderTotal(order) {
 }
 
 function invoiceStatus(invoice) {
+  if (invoice.status === "recorded") return "recorded";
   if (invoice.status === "paid") return "paid";
   return invoice.dueAt && invoice.dueAt < new Date().toISOString().slice(0, 10) ? "overdue" : "open";
 }
@@ -32,13 +33,14 @@ export function getInvoiceRecords(state) {
   const explicitInvoices = (state.invoices || []).map((invoice) => {
     const order = ordersById.get(invoice.orderId);
     const retailer = retailersById.get(invoice.retailerId || order?.retailerId);
+    const representativeSellThrough = isRepresentativeSellThroughInvoice(invoice, state);
 
     return {
       ...invoice,
       customerName: invoice.customerName || retailer?.name || order?.customerName || "Customer",
       customerAddress: invoice.customerAddress || retailer?.address || "",
       customerPhone: invoice.customerPhone || retailer?.contactPhone || "",
-      paymentType: invoice.paymentType || order?.paymentType || "cash",
+      paymentType: representativeSellThrough ? "not_tracked" : invoice.paymentType || order?.paymentType || "cash",
       repName: invoice.repName || order?.repName || "Sales Representative",
       repUserId: invoice.repUserId || order?.repUserId || "",
       items: invoice.items?.length ? invoice.items : (order?.items || []),
@@ -46,7 +48,7 @@ export function getInvoiceRecords(state) {
       financialImpact: invoice.financialImpact ?? order?.financialImpact ?? true,
       accountingTreatment: invoice.accountingTreatment || order?.accountingTreatment || "factory_revenue",
       documentType: invoice.documentType || order?.documentType || "invoice",
-      status: invoiceStatus(invoice)
+      status: representativeSellThrough ? "recorded" : invoiceStatus(invoice)
     };
   });
   const linkedOrderIds = new Set(explicitInvoices.map((invoice) => invoice.orderId).filter(Boolean));
@@ -58,6 +60,7 @@ export function getInvoiceRecords(state) {
       const retailer = retailersById.get(order.retailerId);
       const issuedAt = dateOnly(order.createdAt || order.updatedAt);
       const isCredit = String(order.paymentType || "").toLowerCase().includes("credit");
+      const representativeSellThrough = isRepresentativeSellThroughInvoice({ orderId: order.id }, state);
       const limit = limitsByName.get(String(order.customerName || "").trim().toLowerCase());
       const dueAt = isCredit ? (dateOnly(order.dueAt) || addDays(issuedAt, limit?.paymentPeriodDays ?? 14)) : issuedAt;
 
@@ -76,8 +79,8 @@ export function getInvoiceRecords(state) {
         financialImpact: order.financialImpact ?? true,
         accountingTreatment: order.accountingTreatment || "factory_revenue",
         documentType: order.documentType || "invoice",
-        status: invoiceStatus({ status: order.paymentStatus === "paid" ? "paid" : "open", dueAt }),
-        paymentType: order.paymentType || "cash",
+        status: representativeSellThrough ? "recorded" : invoiceStatus({ status: order.paymentStatus === "recorded" ? "recorded" : order.paymentStatus === "paid" ? "paid" : "open", dueAt }),
+        paymentType: representativeSellThrough ? "not_tracked" : order.paymentType || "cash",
         repName: order.repName || "Sales Representative",
         repUserId: order.repUserId || "",
         items: order.items || [],
@@ -163,8 +166,8 @@ export function buildInvoicePreviewContent(invoice, state) {
           <span>${documentLabel} details</span>
           <dl>
             <div><dt>Issued</dt><dd>${escapeHtml(formatDate(invoice.issuedAt))}</dd></div>
-            <div><dt>Due</dt><dd>${escapeHtml(formatDate(invoice.dueAt))}</dd></div>
-            <div><dt>Payment</dt><dd>${escapeHtml(statusText(invoice.paymentType))}</dd></div>
+            ${isSalesReceipt ? "" : `<div><dt>Due</dt><dd>${escapeHtml(formatDate(invoice.dueAt))}</dd></div>`}
+            ${isSalesReceipt ? "" : `<div><dt>Payment</dt><dd>${escapeHtml(statusText(invoice.paymentType))}</dd></div>`}
             <div><dt>Sold by</dt><dd>${escapeHtml(invoice.repName || "Sales Representative")}</dd></div>
           </dl>
         </section>
@@ -264,7 +267,7 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
           </header>
           <div class="details">
             <section><h2>Customer</h2><strong>${escapeHtml(invoice.customerName || "Customer")}</strong>${invoice.customerAddress ? `<p class="muted">${escapeHtml(invoice.customerAddress)}</p>` : ""}${invoice.customerPhone ? `<p class="muted">${escapeHtml(invoice.customerPhone)}</p>` : ""}</section>
-            <section><h2>Sale details</h2><strong>Sold by ${escapeHtml(invoice.repName || "Sales Representative")}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p><p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p></section>
+            <section><h2>Sale details</h2><strong>Sold by ${escapeHtml(invoice.repName || "Sales Representative")}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p>${isSalesReceipt ? "" : `<p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p>`}</section>
           </div>
           <table><thead><tr><th>Product</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map((item) => {
             const lineTotal = Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)));

@@ -1,8 +1,8 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
-import { createStore } from "./state/store.js";
+import { createStore } from "./state/store.js?v=20260722";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace, loadWorkspaceFeatureModules, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js";
-import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js";
+import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
 import { isBackendConfigured } from "./services/supabase-client.js";
@@ -10,7 +10,7 @@ import { restoreProductImages } from "./services/product-images.js";
 import { createOperationalSync } from "./services/operational-sync.js";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "./services/global-search.js";
 import { createInactivitySession } from "./services/inactivity-session.js";
-import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js";
+import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=20260722";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
@@ -19,16 +19,16 @@ import {
   getTopbarNotificationItems,
   getUnreadNotificationCount,
   getUnreadMessageCount
-} from "./ui/topbar-communications.js";
+} from "./ui/topbar-communications.js?v=20260722";
 import { showToast } from "./ui/toast.js";
-import { renderActivityLog, bindActivityLog } from "./views/activity-log.js";
-import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js";
+import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260722";
+import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260722";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js";
-import { renderFinance, bindFinance } from "./views/finance.js";
-import { renderInventory, bindInventory } from "./views/inventory.js";
-import { renderInvoices, bindInvoices } from "./views/invoices.js";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260722";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722";
+import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js";
 import {
@@ -37,13 +37,13 @@ import {
   renderOnboardingConfirmation,
   bindOnboardingConfirmation
 } from "./views/onboarding.js";
-import { renderOrders, bindOrders } from "./views/orders.js";
+import { renderOrders, bindOrders } from "./views/orders.js?v=20260722";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
 import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js";
-import { renderRetailers, bindRetailers } from "./views/retailers.js";
+import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260722";
 import { renderSettings, bindSettings } from "./views/settings.js";
-import { renderTeam, bindTeam } from "./views/team.js";
+import { renderTeam, bindTeam } from "./views/team.js?v=20260722";
 
 const routes = {
   loading: {

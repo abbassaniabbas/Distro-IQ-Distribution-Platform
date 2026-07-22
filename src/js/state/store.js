@@ -1,5 +1,5 @@
 import seedData from "../data/seed-data.js";
-import { createActivityLog, getCurrentActor } from "../services/activity.js";
+import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260722";
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
@@ -8,7 +8,7 @@ import {
   isRepresentativeSellThroughTransaction,
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
-} from "../services/calculations.js";
+} from "../services/calculations.js?v=20260722";
 import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js";
@@ -171,13 +171,13 @@ function quickSaleOrderId(transaction) {
 function orderFromSaleTransaction(transaction, state) {
   const customer = (state.retailers || []).find((item) => item.id === transaction.customerId);
   const product = (state.products || []).find((item) => item.id === transaction.productId);
-  const paymentType = transaction.paymentType || "cash";
+  const representativeSellThrough = isRepresentativeSellThroughTransaction(transaction);
+  const paymentType = representativeSellThrough ? "not_tracked" : transaction.paymentType || "cash";
   const paymentLabel = String(paymentType).toLowerCase();
   const date = String(transaction.date || transaction.createdAt || todayISO()).slice(0, 10);
   const quantity = Number(transaction.quantity || 0);
   const unitPrice = Number(transaction.unitPrice ?? transaction.unitPriceAtSale ?? (quantity ? Number(transaction.amount || 0) / quantity : product?.unitPrice ?? 0));
   const unitCost = Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? 0);
-  const representativeSellThrough = isRepresentativeSellThroughTransaction(transaction);
 
   return {
     id: quickSaleOrderId(transaction),
@@ -194,7 +194,7 @@ function orderFromSaleTransaction(transaction, state) {
     priority: "Normal",
     status: "delivered",
     paymentType,
-    paymentStatus: paymentLabel.includes("credit") ? "open" : "paid",
+    paymentStatus: representativeSellThrough ? "recorded" : paymentLabel.includes("credit") ? "open" : "paid",
     dueAt: date,
     createdAt: date,
     updatedAt: date,
@@ -649,7 +649,8 @@ function createQuickSaleOrder(state, {
   items = [],
   transactionIds = []
 }) {
-  const paymentLabel = String(paymentType || "cash").toLowerCase();
+  const recordedPaymentType = financialImpact ? String(paymentType || "cash") : "not_tracked";
+  const paymentLabel = recordedPaymentType.toLowerCase();
   const today = dateOnly(saleDate) || todayISO();
   const orderId = createId("ORD");
   const invoiceId = nextInvoiceId(state);
@@ -701,8 +702,8 @@ function createQuickSaleOrder(state, {
       region: customer?.stateName || customer?.region || "Direct sales",
       priority: "Normal",
       status: "delivered",
-      paymentType,
-      paymentStatus: isCreditSale ? "open" : "paid",
+      paymentType: recordedPaymentType,
+      paymentStatus: financialImpact ? (isCreditSale ? "open" : "paid") : "recorded",
       dueAt: isCreditSale ? dueAt : today,
       createdAt: today,
       updatedAt: today,
@@ -727,8 +728,8 @@ function createQuickSaleOrder(state, {
       issuedAt: today,
       dueAt: isCreditSale ? dueAt : today,
       amount,
-      status: isCreditSale ? "open" : "paid",
-      paymentType,
+      status: financialImpact ? (isCreditSale ? "open" : "paid") : "recorded",
+      paymentType: recordedPaymentType,
       financialImpact,
       accountingTreatment: financialImpact ? "factory_revenue" : "sell_through_only",
       documentType: financialImpact ? "invoice" : "sales_receipt",
@@ -1967,8 +1968,7 @@ function reducer(currentState, action) {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const customerName = customer?.name || action.customerName || "Walk-in customer";
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
-      const paymentType = normalized(action.paymentType || "cash");
-      const isWalkInSale = !customer && normalized(customerName) === "walk-in customer";
+      const paymentType = "not_tracked";
       const requestedItems = Array.isArray(action.items) ? action.items : [];
       const saleItems = requestedItems.map((item) => {
         const product = state.products.find((candidate) => candidate.id === item.productId);
@@ -2000,9 +2000,7 @@ function reducer(currentState, action) {
         new Set(lineKeys).size !== lineKeys.length ||
         saleItems.some((item) => !item.product || item.product.status === "inactive" || !Number.isFinite(item.packagingQuantity) || item.packagingQuantity <= 0 || !Number.isFinite(item.quantity) || item.quantity <= 0 || item.unitPrice < 0) ||
         [...requestedByProduct].some(([productId, quantity]) => quantity > eligibleAssignmentsForProduct(productId).reduce((total, assignment) => total + assignmentOutstanding(assignment), 0)) ||
-        !customerName ||
-        !["cash", "credit"].includes(paymentType) ||
-        (isWalkInSale && paymentType !== "cash")
+        !customerName
       );
       if (invalid) return state;
 
@@ -2100,7 +2098,7 @@ function reducer(currentState, action) {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const quantity = Math.max(0, Number(action.quantity || 0));
       const transactionType = action.transactionType === "return" ? "return" : "sale";
-      const paymentType = action.paymentType || (transactionType === "return" ? "credit adjustment" : "cash");
+      const paymentType = "not_tracked";
       const returnDisposition = transactionType === "return"
         ? (action.returnDisposition === "to_store" ? "to_store" : "held_by_rep")
         : "";
@@ -2138,7 +2136,6 @@ function reducer(currentState, action) {
         : transactionPackagingQuantity * transactionPackagingUnitPrice;
       const customerName = customer?.name || action.customerName || "Walk-in customer";
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
-      const isWalkInSale = transactionType === "sale" && !customer && normalized(customerName) === "walk-in customer";
       const returnableCustomer = transactionType === "return"
         ? getReturnableCustomerChoices(state, {
             productId,
@@ -2152,7 +2149,6 @@ function reducer(currentState, action) {
         : null;
 
       if (!product || !quantity || calculatedPackagingQuantity !== quantity || !eligibleAssignments.length || quantity > availableQuantity) return state;
-      if (isWalkInSale && normalized(paymentType) !== "cash") return state;
       if (transactionType === "return" && (!returnableCustomer || quantity > returnableCustomer.quantity)) return state;
 
       let remainingQuantity = quantity;
@@ -2362,8 +2358,8 @@ function reducer(currentState, action) {
         reportDate: action.reportDate || todayISO(),
         tripLabel: action.tripLabel || "Today",
         salesAmount: Number(action.salesAmount || 0),
-        cashAmount: Number(action.cashAmount || 0),
-        creditAmount: Number(action.creditAmount || 0),
+        cashAmount: 0,
+        creditAmount: 0,
         returnAmount: Number(action.returnAmount || 0),
         unitsSold: Number(action.unitsSold || 0),
         unitsReturned: Number(action.unitsReturned || 0),
@@ -2377,7 +2373,7 @@ function reducer(currentState, action) {
           customerName: String(line.customerName || "Customer"),
           quantity: Number(line.quantity || 0),
           amount: Number(line.amount || 0),
-          paymentType: String(line.paymentType || "cash"),
+          paymentType: "not_tracked",
           returnDisposition: String(line.returnDisposition || "")
         })) : [],
         status: "submitted",
@@ -2820,8 +2816,9 @@ function reducer(currentState, action) {
       const recipientName = String(action.recipientName || "Recipient").trim();
       const normalizedRecipientType = recipientType.toLowerCase();
       const isInternalDispatch = normalizedRecipientType.includes("internal");
+      const isWalkInDispatch = normalizedRecipientType.includes("walk-in") || normalizedRecipientType.includes("walk in");
       const isRepresentativeDispatch = normalizedRecipientType.includes("representative");
-      const paymentType = isInternalDispatch ? "none" : normalized(action.paymentType || "cash");
+      const paymentType = isInternalDispatch ? "none" : isWalkInDispatch ? "cash" : normalized(action.paymentType || "cash");
       const destination = String(action.destination || recipientType).trim();
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
@@ -2871,7 +2868,7 @@ function reducer(currentState, action) {
           quantity <= 0 ||
           !Number.isFinite(Number(product.stock)) ||
           Number(product.stock || 0) < Number(requestedByProduct.get(product.id) || 0) ||
-          (isRepresentativeDispatch && stockCategoryIdForProduct(product) !== "finished_products")
+          ((isRepresentativeDispatch || isWalkInDispatch) && stockCategoryIdForProduct(product) !== "finished_products")
         )) ||
         !isValidISODate(dispatchDate) ||
         (!isInternalDispatch && !isValidISODate(expectedDeliveryAt)) ||

@@ -14,22 +14,23 @@ import {
   getProductMap,
   getRetailerMap,
   isRepresentativeReturnEligible,
+  isFactoryDispatchToRepresentative,
   isRepresentativeSellThroughOrder,
   isRepresentativeSellThroughTransaction,
   getStockHealth,
   stockCategoryIdForProduct
-} from "../services/calculations.js";
+} from "../services/calculations.js?v=20260722";
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
-import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
+import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
-import { icon } from "../ui/icons.js";
+import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog } from "../ui/action-dialog.js";
 import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -137,16 +138,9 @@ function repDaySummary(transactions) {
     const amount = Number(transaction.amount || 0);
     const quantity = Number(transaction.quantity || 0);
     const type = normalized(transaction.type);
-    const paymentType = normalized(transaction.paymentType);
-
     if (type === "sale") {
       summary.salesAmount += amount;
       summary.unitsSold += quantity;
-      if (paymentType.includes("credit")) {
-        summary.creditAmount += amount;
-      } else {
-        summary.cashAmount += amount;
-      }
     }
 
     if (type === "return") {
@@ -194,7 +188,6 @@ function repTransactionLine(transaction, state) {
     customerName: type === "Returned to factory" ? (transaction.returnDestination || "Factory") : transaction.partyName || "Customer",
     quantity: Number(transaction.quantity || 0),
     amount: Number(transaction.amount || 0),
-    paymentType: transaction.paymentType || "cash",
     returnDisposition: type === "Returned to factory" ? (transaction.reason || "Unsold stock") : returnDisposition,
     createdAt: transaction.createdAt || transaction.date
   };
@@ -314,21 +307,6 @@ function productLatestActivity(productId, state) {
   ]);
 }
 
-function orderIsForSalesRepresentative(order, state) {
-  const recipientType = normalized(order?.customerType).replaceAll("_", " ");
-  if (recipientType.includes("sales rep") || recipientType.includes("sales representative")) return true;
-
-  const transactionIds = new Set([
-    order?.transactionId,
-    ...(order?.transactionIds || [])
-  ].map((id) => String(id || "")).filter(Boolean));
-
-  return (state.stockAssignments || []).some((assignment) => (
-    (order?.dispatchId && assignment.dispatchId === order.dispatchId) ||
-    transactionIds.has(String(assignment.transactionId || ""))
-  ));
-}
-
 function buildCeoProductPerformance(state) {
   const productMap = getProductMap(state.products || []);
   const rows = (state.products || []).map((product) => ({
@@ -345,7 +323,12 @@ function buildCeoProductPerformance(state) {
   const rowMap = new Map(rows.map((row) => [row.id, row]));
 
   (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
-    const representativeOrder = orderIsForSalesRepresentative(order, state);
+    const representativeOrder = isFactoryDispatchToRepresentative(order, state);
+    const recipientType = normalized(order.customerType);
+    const supermarketOrder = !representativeOrder && (
+      recipientType.includes("supermarket") ||
+      Boolean(order.retailerId && (state.retailers || []).some((retailer) => retailer.id === order.retailerId))
+    );
 
     (order.items || []).forEach((item) => {
       const row = rowMap.get(item.productId);
@@ -355,7 +338,7 @@ function buildCeoProductPerformance(state) {
       const quantity = Number(item.quantity || 0);
       const unitPrice = Number(item.unitPrice ?? item.unitPriceAtSale ?? product.unitPrice ?? 0);
       row.orderedUnits += quantity;
-      if (!representativeOrder) row.supermarketUnits += quantity;
+      if (supermarketOrder) row.supermarketUnits += quantity;
       row.salesValue += Number(item.lineAmount ?? (quantity * unitPrice));
       row.latestActivity = latestDate([row.latestActivity, order.createdAt || order.dueAt]);
     });
@@ -905,38 +888,104 @@ function renderCeoPulseRows({ topProduct, lowStockProduct, riskyAccount, latestR
   `;
 }
 
-function renderCeoStockSplit(vision, productRows) {
-  const supermarketUnits = productRows
-    .filter((row) => stockCategoryIdForProduct(row.product) === "finished_products")
-    .reduce((total, row) => total + Number(row.supermarketUnits || 0), 0);
-  const maxValue = Math.max(vision.finishedStockUnits, vision.repOutstandingUnits, supermarketUnits, 1);
+function stockSplitMetrics(productRows) {
+  const factory = productRows.reduce((total, row) => total + Number(row.product?.stock || 0), 0);
+  const representatives = productRows.reduce((total, row) => total + Number(row.repUnits || 0), 0);
+  const supermarkets = productRows.reduce((total, row) => total + Number(row.supermarketUnits || 0), 0);
+
+  return {
+    total: factory + representatives + supermarkets,
+    factory,
+    representatives,
+    supermarkets
+  };
+}
+
+function renderStockSplitBars(metrics, { includeTotal = true, compact = false } = {}) {
   const rows = [
-    {
-      label: "Factory",
-      value: vision.finishedStockUnits,
-      tone: "good"
-    },
-    {
-      label: "Representatives",
-      value: vision.repOutstandingUnits,
-      tone: vision.repOutstandingUnits > vision.finishedStockUnits ? "warning" : "good"
-    },
-    {
-      label: "Supermarkets",
-      value: supermarketUnits,
-      tone: "good"
-    }
+    ...(includeTotal ? [{ key: "total", label: "Total stock produced", value: metrics.total, tone: "good" }] : []),
+    { key: "factory", label: "Factory", value: metrics.factory, tone: "good" },
+    { key: "representatives", label: "Sales representatives", value: metrics.representatives, tone: metrics.representatives > metrics.factory ? "warning" : "good" },
+    { key: "supermarkets", label: "Supermarkets", value: metrics.supermarkets, tone: "good" }
   ];
+  const maxValue = Math.max(metrics.total, 1);
 
   return `
-    <div class="bar-list">
+    <div class="bar-list stock-split-bars${compact ? " is-compact" : ""}">
       ${rows.map((row) => `
-        <div class="bar-row ceo-stock-row" data-stock-split="${escapeHtml(row.label.toLowerCase())}" data-search-index="${escapeHtml(row.label.toLowerCase())}">
+        <div class="bar-row ceo-stock-row" data-stock-split="${escapeHtml(row.key)}" data-search-index="${escapeHtml(row.label.toLowerCase())}">
           <strong>${escapeHtml(row.label)}</strong>
           ${progressBar((row.value / maxValue) * 100, row.tone)}
           <span class="strong">${formatNumber(row.value)}</span>
         </div>
       `).join("")}
+    </div>
+  `;
+}
+
+function renderCeoStockSplit(productRows) {
+  const finishedRows = productRows.filter((row) => stockCategoryIdForProduct(row.product) === "finished_products");
+  const overall = stockSplitMetrics(finishedRows);
+  const families = new Map();
+
+  finishedRows.forEach((row) => {
+    const family = productFamilyLabel(row.product);
+    const familyRows = families.get(family) || [];
+    familyRows.push(row);
+    families.set(family, familyRows);
+  });
+
+  return `
+    <div class="ceo-stock-split-summary">
+      <button class="ceo-stock-split-total js-open-stock-split-modal" type="button" aria-haspopup="dialog">
+        <span><small>Total stock produced</small><strong>${formatNumber(overall.total)} pieces</strong></span>
+        <span>View products ${icon("arrowRight")}</span>
+      </button>
+      ${renderStockSplitBars(overall, { includeTotal: false })}
+    </div>
+
+    <div id="ceo-stock-split-modal" class="stock-modal-backdrop" hidden>
+      <section class="stock-modal ceo-stock-split-modal" role="dialog" aria-modal="true" aria-labelledby="ceo-stock-split-title">
+        <header class="stock-modal-header">
+          <div>
+            <span class="eyebrow">Stock split</span>
+            <h2 id="ceo-stock-split-title">Products</h2>
+          </div>
+          ${iconButton({ iconName: "x", label: "Close stock split", className: "js-close-stock-split-modal" })}
+        </header>
+
+        <div class="stock-split-product-list" data-stock-split-product-list>
+          ${families.size ? [...families.entries()].map(([family, familyRows]) => {
+            const metrics = stockSplitMetrics(familyRows);
+            return `
+              <button class="stock-split-product-card js-open-stock-split-product" type="button" data-stock-split-family="${escapeHtml(family)}">
+                <span class="stock-split-product-heading"><span><small>Product</small><strong>${escapeHtml(family)}</strong></span><span>${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"} ${icon("arrowRight")}</span></span>
+                ${renderStockSplitBars(metrics, { compact: true })}
+              </button>
+            `;
+          }).join("") : '<div class="empty-state">No finished products available</div>'}
+        </div>
+
+        ${[...families.entries()].map(([family, familyRows]) => `
+          <section class="stock-split-size-view" data-stock-split-size-view="${escapeHtml(family)}" hidden>
+            <button class="button subtle js-back-stock-split-products" type="button">${icon("arrowLeft")}<span>Products</span></button>
+            <div class="stock-split-size-heading"><span class="eyebrow">Product sizes</span><h3>${escapeHtml(family)}</h3></div>
+            <div class="stock-split-size-grid">
+              ${familyRows
+                .sort((a, b) => productTypeLabel(a.product).localeCompare(productTypeLabel(b.product)) || productSizeLabel(a.product).localeCompare(productSizeLabel(b.product)))
+                .map((row) => `
+                  <article class="stock-split-size-card">
+                    <header>
+                      <span class="ceo-size-picture">${renderCeoSizePicture(row.product)}</span>
+                      <span><small>${escapeHtml(productTypeLabel(row.product))}</small><strong>${escapeHtml(productSizeLabel(row.product))}</strong><small>${escapeHtml(row.product.id)}</small></span>
+                    </header>
+                    ${renderStockSplitBars(stockSplitMetrics([row]), { compact: true })}
+                  </article>
+                `).join("")}
+            </div>
+          </section>
+        `).join("")}
+      </section>
     </div>
   `;
 }
@@ -1027,8 +1076,8 @@ function renderRepresentativeHistory(state, repName) {
       <div><span>Credit balance</span><strong>${formatCurrency(creditLimit?.balance || 0)} / ${formatCurrency(creditLimit?.limit || 0)}</strong></div>
     </div>
     <section class="leadership-history-section"><h4>Sales history</h4>${table(
-      ["Date", "Customer", "Product", "Quantity", "Payment", "Amount"],
-      sales.map((sale) => `<tr><td>${formatDate(sale.date)}</td><td>${escapeHtml(sale.partyName || sale.customerName || "Customer")}</td><td>${escapeHtml(sale.productName || sale.productId)}</td><td>${formatNumber(sale.quantity)}</td><td>${escapeHtml(statusText(sale.paymentType || "cash"))}</td><td>${formatCurrency(sale.amount)}</td></tr>`),
+      ["Date", "Customer", "Product", "Quantity", "Sales value"],
+      sales.map((sale) => `<tr><td>${formatDate(sale.date)}</td><td>${escapeHtml(sale.partyName || sale.customerName || "Customer")}</td><td>${escapeHtml(sale.productName || sale.productId)}</td><td>${formatNumber(sale.quantity)}</td><td>${formatCurrency(sale.amount)}</td></tr>`),
       "No sales recorded for this representative"
     )}</section>
     <section class="leadership-history-section"><h4>Stock history</h4>${table(
@@ -1455,7 +1504,7 @@ function renderCeoDashboard(state) {
 
       <section class="panel">
         ${panelHeader("Stock split", "Where finished stock currently sits")}
-        ${renderCeoStockSplit(vision, productRows)}
+        ${renderCeoStockSplit(productRows)}
       </section>
     </section>
   `;
@@ -1974,10 +2023,6 @@ function renderManagerReportRows(state, { readOnly = false } = {}) {
           <div class="muted">${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned</div>
         </td>
         <td>
-          ${formatCurrency(report.cashAmount)} cash
-          <div class="muted">${formatCurrency(report.creditAmount)} credit</div>
-        </td>
-        <td>
           ${escapeHtml(report.reviewNote || "No query")}
           <div class="muted">${linePreview ? escapeHtml(linePreview) : `${formatNumber((report.transactionIds || []).length)} linked record${(report.transactionIds || []).length === 1 ? "" : "s"}`}</div>
         </td>
@@ -2022,8 +2067,6 @@ function renderManagerSalesOperationsRows(state) {
       repName: key,
       reports: 0,
       salesAmount: 0,
-      cashAmount: 0,
-      creditAmount: 0,
       returnAmount: 0,
       unitsSold: 0,
       unitsReturned: 0,
@@ -2032,8 +2075,6 @@ function renderManagerSalesOperationsRows(state) {
 
     row.reports += 1;
     row.salesAmount += Number(report.salesAmount || 0);
-    row.cashAmount += Number(report.cashAmount || 0);
-    row.creditAmount += Number(report.creditAmount || 0);
     row.returnAmount += Number(report.returnAmount || 0);
     row.unitsSold += Number(report.unitsSold || 0);
     row.unitsReturned += Number(report.unitsReturned || 0);
@@ -2051,8 +2092,6 @@ function renderManagerSalesOperationsRows(state) {
         repName: key,
         reports: 0,
         salesAmount: 0,
-        cashAmount: 0,
-        creditAmount: 0,
         returnAmount: 0,
         unitsSold: 0,
         unitsReturned: 0,
@@ -2064,8 +2103,6 @@ function renderManagerSalesOperationsRows(state) {
       if (normalized(transaction.type) === "sale") {
         row.salesAmount += amount;
         row.unitsSold += quantity;
-        if (normalized(transaction.paymentType).includes("credit")) row.creditAmount += amount;
-        else row.cashAmount += amount;
       } else {
         row.returnAmount += amount;
         row.unitsReturned += quantity;
@@ -2077,8 +2114,6 @@ function renderManagerSalesOperationsRows(state) {
   return [...rows.values()]
     .sort((a, b) => b.salesAmount - a.salesAmount)
     .map((row) => {
-      const creditShare = row.salesAmount ? (row.creditAmount / row.salesAmount) * 100 : 0;
-
       return `
         <tr data-search-index="${escapeHtml(`${row.repName} ${row.latestDate}`.toLowerCase())}">
           <td>
@@ -2090,11 +2125,6 @@ function renderManagerSalesOperationsRows(state) {
           <td>
             <strong>${formatCurrency(row.salesAmount)}</strong>
             <div class="muted">${formatNumber(row.unitsSold)} units sold</div>
-          </td>
-          <td>${formatCurrency(row.cashAmount)}</td>
-          <td>
-            ${formatCurrency(row.creditAmount)}
-            <div class="muted">${formatPercent(creditShare)} of sales</div>
           </td>
           <td>
             ${formatCurrency(row.returnAmount)}
@@ -2108,9 +2138,9 @@ function renderManagerSalesOperationsRows(state) {
 export function renderManagerSalesOperations(state) {
   return `
     <section class="panel" id="manager-sales-operations">
-      ${panelHeader("Consolidated sales activity", "Sales, cash, credit, and returns across all sales representatives")}
+      ${panelHeader("Consolidated sales activity", "Sales values and returns across all sales representatives")}
       ${table(
-        ["Representative", "Sales", "Cash", "Credit", "Returns"],
+        ["Representative", "Sales", "Returns"],
         renderManagerSalesOperationsRows(state),
         "No representative sales activity has been submitted yet"
       )}
@@ -2128,8 +2158,6 @@ function renderReportDetails(report, state) {
       <div><span>Total sales</span><strong>${formatCurrency(report.salesAmount)}</strong></div>
       <div><span>Units</span><strong>${formatNumber(report.unitsSold)} sold / ${formatNumber(report.unitsReturned)} customer returned</strong></div>
       <div><span>Back to factory</span><strong>${formatNumber(report.unitsReturnedToFactory || 0)} units</strong></div>
-      <div><span>Cash</span><strong>${formatCurrency(report.cashAmount)}</strong></div>
-      <div><span>Credit</span><strong>${formatCurrency(report.creditAmount)}</strong></div>
     </div>
     <div class="table-wrap">
       <table class="data-table">
@@ -2139,7 +2167,6 @@ function renderReportDetails(report, state) {
             <th>Customer</th>
             <th>Product</th>
             <th>Quantity</th>
-            <th>Payment</th>
             <th>Amount</th>
           </tr>
         </thead>
@@ -2153,10 +2180,9 @@ function renderReportDetails(report, state) {
               <td>${escapeHtml(line.customerName || "Customer")}</td>
               <td>${escapeHtml(line.productName || "Product")}</td>
               <td>${formatNumber(line.quantity)}</td>
-              <td>${escapeHtml(statusText(line.paymentType || "cash"))}</td>
               <td>${formatCurrency(line.amount)}</td>
             </tr>
-          `).join("") : '<tr><td colspan="6">No linked sale or return records</td></tr>'}
+          `).join("") : '<tr><td colspan="5">No linked sale or return records</td></tr>'}
         </tbody>
       </table>
     </div>
@@ -2193,7 +2219,7 @@ export function renderManagerReportReview(state, { readOnly = false } = {}) {
     <section class="panel" id="manager-report-review">
       ${panelHeader(
         "Submitted sales reports",
-        readOnly ? "Open any report to see its customers, products, quantities, and payment details" : "Open a report for full details, then review it or flag it for correction",
+        readOnly ? "Open any report to see its customers, products, quantities, and sales values" : "Open a report for full details, then review it or flag it for correction",
         `<div class="table-document-actions" aria-label="Submitted sales report table actions">
           ${iconButton({ iconName: "download", label: "Download submitted sales reports table", className: "js-download-submitted-reports" })}
           ${iconButton({ iconName: "print", label: "Print submitted sales reports table", className: "js-print-submitted-reports" })}
@@ -2206,12 +2232,11 @@ export function renderManagerReportReview(state, { readOnly = false } = {}) {
               <th>Report</th>
               <th>Status</th>
               <th>Sales</th>
-              <th>Payment mix</th>
               <th>Query</th>
               <th data-export-ignore></th>
             </tr>
           </thead>
-          <tbody>${renderManagerReportRows(state, { readOnly }) || '<tr><td colspan="6">No submitted reports yet</td></tr>'}</tbody>
+          <tbody>${renderManagerReportRows(state, { readOnly }) || '<tr><td colspan="5">No submitted reports yet</td></tr>'}</tbody>
         </table>
       </div>
     </section>
@@ -2523,15 +2548,6 @@ function renderRepQuickLog(state, assignments) {
 
           ${renderRepCustomerField(customers, "sale", true)}
 
-          <label class="field">
-            <span>Payment</span>
-            <select name="salePaymentType" data-rep-sale-payment>
-              <option value="cash">Cash</option>
-              <option value="credit">Credit</option>
-            </select>
-            <small class="muted" data-walk-in-payment-note hidden>Walk-in sales are cash only.</small>
-          </label>
-
           <span id="rep-sale-message" class="rep-form-message" role="status" aria-live="polite"></span>
           <button class="button primary rep-save-button" type="submit">
             <span>Save sale</span>
@@ -2568,14 +2584,6 @@ function renderRepQuickLog(state, assignments) {
               <small class="muted" data-rep-return-package-summary>Enter the quantity to see the exact pieces.</small>
             </label>
           </div>
-
-          <label class="field">
-            <span>Adjustment</span>
-            <select name="returnPaymentType">
-              <option value="credit adjustment">Reduce customer credit</option>
-              <option value="cash refund">Cash refund</option>
-            </select>
-          </label>
 
           <label class="field">
             <span>Returned stock</span>
@@ -2695,14 +2703,6 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
         <div>
           <span class="eyebrow">Sales</span>
           <strong>${formatCurrency(summary.salesAmount)}</strong>
-        </div>
-        <div>
-          <span class="eyebrow">Cash</span>
-          <strong>${formatCurrency(summary.cashAmount)}</strong>
-        </div>
-        <div>
-          <span class="eyebrow">Credit</span>
-          <strong>${formatCurrency(summary.creditAmount)}</strong>
         </div>
         <div>
           <span class="eyebrow">Returns</span>
@@ -2949,7 +2949,7 @@ function renderAdminDashboard(state) {
 
       <section class="panel">
         ${panelHeader("Stock split", "Where finished stock currently sits")}
-        ${renderCeoStockSplit(vision, productRows)}
+        ${renderCeoStockSplit(productRows)}
       </section>
     </section>
   `;
@@ -3055,7 +3055,6 @@ function renderAccountantReportRows(state) {
         <td>${escapeHtml(report.repName || "Unassigned")}</td>
         <td>${formatDate(report.reportDate)}</td>
         <td>${formatCurrency(report.salesAmount)}</td>
-        <td>${formatCurrency(report.creditAmount)}</td>
         <td>${statusPill(report.status)}</td>
       </tr>
     `);
@@ -3153,7 +3152,7 @@ function renderAccountantDashboard(state) {
       <section class="panel">
         ${panelHeader("Recent sales reports", "Submitted reports visible to finance")}
         ${table(
-          ["Report", "Sales representative", "Date", "Sales", "Credit", "Status"],
+          ["Report", "Sales representative", "Date", "Sales", "Status"],
           renderAccountantReportRows(state),
           "No submitted sales reports available"
         )}
@@ -3478,6 +3477,47 @@ function bindCeoDashboard({ root, store, signal }) {
   const productSizeModal = qs("#ceo-product-size-modal", root);
   const productSizeTitle = qs("#ceo-product-size-title", root);
   const selectedSizeDetail = qs("[data-selected-size-detail]", root);
+  const stockSplitModal = qs("#ceo-stock-split-modal", root);
+  const stockSplitTitle = qs("#ceo-stock-split-title", root);
+  const stockSplitProductList = qs("[data-stock-split-product-list]", root);
+
+  function showStockSplitProducts() {
+    if (stockSplitProductList) stockSplitProductList.hidden = false;
+    qsa("[data-stock-split-size-view]", stockSplitModal || root).forEach((view) => { view.hidden = true; });
+    if (stockSplitTitle) stockSplitTitle.textContent = "Products";
+  }
+
+  function closeStockSplitModal() {
+    if (!stockSplitModal) return;
+    stockSplitModal.hidden = true;
+    showStockSplitProducts();
+  }
+
+  qs(".js-open-stock-split-modal", root)?.addEventListener("click", () => {
+    if (!stockSplitModal) return;
+    showStockSplitProducts();
+    stockSplitModal.hidden = false;
+  });
+
+  qsa(".js-open-stock-split-product", stockSplitModal || root).forEach((button) => {
+    button.addEventListener("click", () => {
+      const family = button.dataset.stockSplitFamily || "Product";
+      if (stockSplitProductList) stockSplitProductList.hidden = true;
+      qsa("[data-stock-split-size-view]", stockSplitModal || root).forEach((view) => {
+        view.hidden = view.dataset.stockSplitSizeView !== family;
+      });
+      if (stockSplitTitle) stockSplitTitle.textContent = family;
+    });
+  });
+
+  qsa(".js-back-stock-split-products", stockSplitModal || root).forEach((button) => button.addEventListener("click", showStockSplitProducts));
+  qsa(".js-close-stock-split-modal", stockSplitModal || root).forEach((button) => button.addEventListener("click", closeStockSplitModal));
+  stockSplitModal?.addEventListener("click", (event) => {
+    if (event.target === stockSplitModal) closeStockSplitModal();
+  });
+  stockSplitModal?.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeStockSplitModal();
+  });
 
   function closeProductSizeModal() {
     if (productSizeModal) productSizeModal.hidden = true;
@@ -3633,8 +3673,6 @@ function bindSalesRepDashboard({ root, store }) {
   const saleItemList = qs("[data-rep-sale-item-list]", root);
   const saleItemTemplate = qs("[data-rep-sale-item-template]", root);
   const saleCustomerSelect = qs("[data-rep-sale-customer]", root);
-  const salePaymentSelect = qs("[data-rep-sale-payment]", root);
-  const walkInPaymentNote = qs("[data-walk-in-payment-note]", root);
   const returnProductSelect = qs('select[name="returnAssignmentId"]', root);
   const returnCustomerSelect = qs("[data-rep-return-customer]", root);
   const returnPackagingSelect = qs("[data-rep-return-packaging]", root);
@@ -3886,19 +3924,6 @@ function bindSalesRepDashboard({ root, store }) {
     updateCorrectionPackageSummary();
   });
 
-  function applyWalkInPaymentRule() {
-    if (!saleCustomerSelect || !salePaymentSelect) return;
-
-    const isWalkIn = saleCustomerSelect.value === WALK_IN_CUSTOMER_ID;
-    const creditOption = [...salePaymentSelect.options].find((option) => option.value === "credit");
-    if (creditOption) creditOption.disabled = isWalkIn;
-    if (isWalkIn) salePaymentSelect.value = "cash";
-    if (walkInPaymentNote) walkInPaymentNote.hidden = !isWalkIn;
-  }
-
-  saleCustomerSelect?.addEventListener("change", applyWalkInPaymentRule);
-  applyWalkInPaymentRule();
-
   function updateSaleItem(row) {
     if (!row) return;
     const productId = String(qs("[data-rep-sale-product]", row)?.value || "");
@@ -4071,7 +4096,7 @@ function bindSalesRepDashboard({ root, store }) {
     const customerId = isWalkInSale ? "" : selectedCustomerId;
     const customer = (state.retailers || []).find((item) => item.id === customerId);
     const customerName = isWalkInSale ? "Walk-in customer" : customer?.name || "";
-    const paymentType = String(formData.get("salePaymentType") || "cash");
+    const paymentType = "not_tracked";
     const repName = currentRepName(state);
     const items = qsa("[data-rep-sale-item-row]", form).map((row) => {
       const productId = String(qs("[data-rep-sale-product]", row)?.value || "");
@@ -4097,8 +4122,6 @@ function bindSalesRepDashboard({ root, store }) {
         .filter((assignment) => assignment.productId === productId && assignment.outstanding > 0)
         .reduce((total, assignment) => total + assignment.outstanding, 0)
     ]));
-    const isCreditSale = normalized(paymentType).includes("credit");
-
     setRepMessage(message, "");
     if (!items.length || items.some((item) => !item.product || item.packagingQuantity <= 0 || item.quantity <= 0)) {
       setRepMessage(message, "Choose every product, packaging type, and quantity.", "error");
@@ -4116,14 +4139,6 @@ function bindSalesRepDashboard({ root, store }) {
     }
     if (!customerName) {
       setRepMessage(message, "Choose a customer.", "error");
-      return;
-    }
-    if (isWalkInSale && normalized(paymentType) !== "cash") {
-      setRepMessage(message, "Walk-in customers can only pay with cash.", "error");
-      return;
-    }
-    if (isCreditSale && !customer) {
-      setRepMessage(message, "Credit sales need a saved customer.", "error");
       return;
     }
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
@@ -4168,7 +4183,7 @@ function bindSalesRepDashboard({ root, store }) {
     const customerId = transactionType === "return" ? returnCustomerId : isWalkInSale ? "" : selectedCustomerId;
     const typedCustomerName = String(formData.get(`${prefix}CustomerName`) || "").trim();
     const enteredQuantity = Number(formData.get(`${prefix}Quantity`) || 0);
-    const paymentType = String(formData.get(`${prefix}PaymentType`) || "cash");
+    const paymentType = "not_tracked";
     const returnDisposition = String(formData.get("returnDisposition") || "held_by_rep");
     const repName = currentRepName(state);
     const selectedAssignments = buildRepAssignments(state, repName)
@@ -4190,7 +4205,6 @@ function bindSalesRepDashboard({ root, store }) {
     const customerName = transactionType === "return"
       ? returnCustomerName
       : isWalkInSale ? "Walk-in customer" : customer?.name || typedCustomerName;
-    const isCreditSale = transactionType === "sale" && normalized(paymentType).includes("credit");
     const availableQuantity = selectedAssignments.reduce((total, assignment) => (
       total + (transactionType === "return" ? Number(assignment.sold || 0) : assignment.outstanding)
     ), 0);
@@ -4220,11 +4234,6 @@ function bindSalesRepDashboard({ root, store }) {
       return;
     }
 
-    if (isWalkInSale && normalized(paymentType) !== "cash") {
-      setRepMessage(message, "Walk-in customers can only pay with cash.", "error");
-      return;
-    }
-
     if (quantity > availableQuantity) {
       const detail = transactionType === "return" ? "sold units can be returned within 7 days" : "left";
       setRepMessage(message, `Only ${formatNumber(availableQuantity)} ${detail} for this product.`, "error");
@@ -4233,11 +4242,6 @@ function bindSalesRepDashboard({ root, store }) {
 
     if (transactionType === "return" && quantity > returnableCustomerQuantity) {
       setRepMessage(message, `Only ${formatNumber(returnableCustomerQuantity)} pieces sold to this customer can be returned.`, "error");
-      return;
-    }
-
-    if (isCreditSale && !customer) {
-      setRepMessage(message, "Credit sales need a saved customer.", "error");
       return;
     }
 

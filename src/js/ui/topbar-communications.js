@@ -1,4 +1,4 @@
-import { actionTypeLabel, getScopedActivityLogs } from "../services/activity.js";
+import { actionTypeLabel, getScopedActivityLogs } from "../services/activity.js?v=20260722";
 import {
   accountForCurrentUser,
   initials,
