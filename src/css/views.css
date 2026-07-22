@@ -3625,6 +3625,16 @@
   font-size: 1.05rem;
 }
 
+.invoice-modal-accounting-note {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--mint-soft);
+  color: var(--mint-dark);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
 .invoice-modal-footer {
   display: flex;
   justify-content: space-between;

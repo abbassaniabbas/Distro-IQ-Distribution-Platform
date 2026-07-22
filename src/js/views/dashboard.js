@@ -9,19 +9,20 @@ import {
   getReturnableCustomerChoices,
   getCreditLimitForParty,
   getCustomerRating,
-  getRepresentativeDailyCreditUsed,
   getLowStockProducts,
   getOrdersWithTotals,
   getProductMap,
   getRetailerMap,
   isRepresentativeReturnEligible,
+  isRepresentativeSellThroughOrder,
+  isRepresentativeSellThroughTransaction,
   getStockHealth,
   stockCategoryIdForProduct
 } from "../services/calculations.js";
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
-import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
+import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
@@ -328,7 +329,7 @@ function buildCeoProductPerformance(state) {
   }));
   const rowMap = new Map(rows.map((row) => [row.id, row]));
 
-  (state.orders || []).forEach((order) => {
+  (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
     (order.items || []).forEach((item) => {
       const row = rowMap.get(item.productId);
       const product = productMap.get(item.productId);
@@ -343,7 +344,7 @@ function buildCeoProductPerformance(state) {
     });
   });
 
-  (state.stockTransactions || []).forEach((transaction) => {
+  (state.stockTransactions || []).filter((transaction) => !isRepresentativeSellThroughTransaction(transaction)).forEach((transaction) => {
     const row = rowMap.get(transaction.productId);
     if (!row) return;
 
@@ -761,7 +762,7 @@ function buildCeoSalesTrend(state, dayCount = 7) {
   const days = Array.from({ length: normalizedDayCount }, (_, index) => addDays(anchor, index - (normalizedDayCount - 1)));
   const totals = new Map(days.map((day) => [day, 0]));
 
-  (state.orders || []).forEach((order) => {
+  (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
     const key = dateKey(order.createdAt || order.dueAt);
     if (!totals.has(key)) return;
     totals.set(key, totals.get(key) + salesValueFromOrder(order, productMap));
@@ -797,7 +798,7 @@ function renderAdminOperationalAttention(state) {
   const delayedOrders = (state.orders || []).filter((order) => effectiveOrderStatus(order) === "delayed");
   const lowStockProducts = getLowStockProducts(activeStockProducts(state.products));
   const pendingCorrections = (state.correctionRequests || []).filter((request) => request.status === "pending");
-  const overdueInvoices = getInvoiceRecords(state).filter((invoice) => invoice.status === "overdue");
+  const overdueInvoices = getFinancialInvoiceRecords(state).filter((invoice) => invoice.status === "overdue");
   const overdueValue = overdueInvoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
   const attentionItems = [
     {
@@ -1036,14 +1037,14 @@ function productSalesTimeline(state, productId) {
     totals.set(key, row);
   };
   const linkedTransactionIds = new Set();
-  (state.orders || []).forEach((order) => {
+  (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
     if (order.transactionId) linkedTransactionIds.add(order.transactionId);
     (order.items || []).filter((item) => item.productId === productId).forEach((item) => {
       add(order.createdAt || order.orderDate || order.dueAt, item.quantity, Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0))));
     });
   });
   (state.stockTransactions || [])
-    .filter((transaction) => transaction.productId === productId && normalized(transaction.type) === "sale" && !linkedTransactionIds.has(transaction.id))
+    .filter((transaction) => transaction.productId === productId && normalized(transaction.type) === "sale" && !isRepresentativeSellThroughTransaction(transaction) && !linkedTransactionIds.has(transaction.id))
     .forEach((transaction) => add(transaction.createdAt || transaction.date, transaction.quantity, transaction.amount));
   return [...totals.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -2715,17 +2716,17 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
   `;
 }
 
-function renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage) {
-  const dailyLimit = Number(creditLimit?.limit || 0);
-  const creditLeft = Math.max(0, dailyLimit - Number(dailyCreditUsed || 0));
+function renderRepCreditPanel(creditLimit, factoryCreditOwed, creditUsage) {
+  const creditLimitAmount = Number(creditLimit?.limit || 0);
+  const creditLeft = Math.max(0, creditLimitAmount - Number(factoryCreditOwed || 0));
 
   return `
     <section class="panel rep-credit-panel">
-      ${panelHeader("Daily credit", creditLimit ? `${formatCurrency(dailyCreditUsed)} of ${formatCurrency(dailyLimit)} used today` : "No daily limit set")}
+      ${panelHeader("Factory credit", creditLimit ? `${formatCurrency(factoryCreditOwed)} of ${formatCurrency(creditLimitAmount)} owed for factory dispatches` : "No factory credit limit set")}
       <div class="stock-line rep-credit-line">
         <div class="stock-meta">
           <span>${formatPercent(creditUsage)} used</span>
-          <span>${formatCurrency(creditLeft)} left today</span>
+          <span>${formatCurrency(creditLeft)} available</span>
         </div>
         ${progressBar(creditUsage, creditUsage >= 100 ? "danger" : creditUsage >= 85 ? "warning" : "good")}
       </div>
@@ -2798,8 +2799,8 @@ function renderSalesRepDashboard(state) {
   const transactions = todaysRepTransactions(state, repName);
   const summary = repDaySummary(transactions);
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], repName);
-  const dailyCreditUsed = getRepresentativeDailyCreditUsed(state, repName, todayISO());
-  const creditUsage = creditLimit?.limit ? (dailyCreditUsed / Number(creditLimit.limit || 0)) * 100 : 0;
+  const factoryCreditOwed = Number(creditLimit?.balance || 0);
+  const creditUsage = creditLimit?.limit ? (factoryCreditOwed / Number(creditLimit.limit || 0)) * 100 : 0;
   const stockInHand = assignments.reduce((total, assignment) => total + assignment.outstanding, 0);
   const existingReport = (state.salesReports || []).find((report) => (
     normalized(report.repName) === normalized(repName) &&
@@ -2828,7 +2829,7 @@ function renderSalesRepDashboard(state) {
           </div>
           ${creditControlEnabled ? `
             <div class="${creditUsage >= 85 ? "is-warning" : ""}">
-              <span>Today credit</span>
+              <span>Factory credit</span>
               <strong>${formatPercent(creditUsage)}</strong>
             </div>
           ` : ""}
@@ -2839,7 +2840,7 @@ function renderSalesRepDashboard(state) {
         ${renderRepQuickLog(state, assignments)}
       ${fieldReportsEnabled ? renderRepReportPanel(repName, transactions, summary, existingReport, state) : ""}
       ${renderRecordCorrectionModal()}
-        ${creditControlEnabled ? renderRepCreditPanel(creditLimit, dailyCreditUsed, creditUsage) : ""}
+        ${creditControlEnabled ? renderRepCreditPanel(creditLimit, factoryCreditOwed, creditUsage) : ""}
       </div>
 
       <section class="panel">
@@ -4077,7 +4078,6 @@ function bindSalesRepDashboard({ root, store }) {
         .filter((assignment) => assignment.productId === productId && assignment.outstanding > 0)
         .reduce((total, assignment) => total + assignment.outstanding, 0)
     ]));
-    const amount = items.reduce((total, item) => total + item.amount, 0);
     const isCreditSale = normalized(paymentType).includes("credit");
 
     setRepMessage(message, "");
@@ -4107,21 +4107,6 @@ function bindSalesRepDashboard({ root, store }) {
       setRepMessage(message, "Credit sales need a saved customer.", "error");
       return;
     }
-    if (isCreditSale) {
-      const repLimit = getCreditLimitForParty(state.creditLimits || [], repName);
-      const customerLimit = getCreditLimitForParty(state.creditLimits || [], customer.name);
-      const repProjected = getRepresentativeDailyCreditUsed(state, repName, todayISO()) + amount;
-      const customerProjected = Number(customerLimit?.balance || 0) + amount;
-      if (!repLimit?.limit || repProjected > Number(repLimit.limit || 0)) {
-        setRepMessage(message, !repLimit?.limit ? "Daily credit limit has not been set." : "Daily credit limit reached for today.", "error");
-        return;
-      }
-      if (!customerLimit?.limit || customerProjected > Number(customerLimit.limit || 0)) {
-        setRepMessage(message, "Customer credit limit reached.", "error");
-        return;
-      }
-    }
-
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;
     const invoiceIdsBeforeSave = new Set((state.invoices || []).map((invoice) => invoice.id));
     store.dispatch({
@@ -4190,8 +4175,6 @@ function bindSalesRepDashboard({ root, store }) {
     const availableQuantity = selectedAssignments.reduce((total, assignment) => (
       total + (transactionType === "return" ? Number(assignment.sold || 0) : assignment.outstanding)
     ), 0);
-    const amount = quantity * Number(product?.unitPrice || 0);
-
     setRepMessage(message, "");
 
     if (!product || !selectedAssignments.length) {
@@ -4237,24 +4220,6 @@ function bindSalesRepDashboard({ root, store }) {
     if (isCreditSale && !customer) {
       setRepMessage(message, "Credit sales need a saved customer.", "error");
       return;
-    }
-
-    if (isCreditSale) {
-      const repLimit = getCreditLimitForParty(state.creditLimits || [], repName);
-      const customerLimit = getCreditLimitForParty(state.creditLimits || [], customer.name);
-      const repCreditUsedToday = getRepresentativeDailyCreditUsed(state, repName, todayISO());
-      const repProjected = repCreditUsedToday + amount;
-      const customerProjected = Number(customerLimit?.balance || 0) + amount;
-
-      if (!repLimit?.limit || repProjected > Number(repLimit.limit || 0)) {
-        setRepMessage(message, !repLimit?.limit ? "Daily credit limit has not been set." : "Daily credit limit reached for today.", "error");
-        return;
-      }
-
-      if (!customerLimit?.limit || customerProjected > Number(customerLimit.limit || 0)) {
-        setRepMessage(message, "Customer credit limit reached.", "error");
-        return;
-      }
     }
 
     const offline = typeof navigator !== "undefined" && navigator.onLine === false;

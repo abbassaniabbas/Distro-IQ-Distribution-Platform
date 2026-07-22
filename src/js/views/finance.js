@@ -16,7 +16,7 @@ import {
 import { isModuleEnabled } from "../services/features.js";
 import { saveRepresentativeCreditLimit } from "../services/backend.js";
 import { dateIsWithinRange, normalizeDateRange } from "../services/filtering.js";
-import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
+import { downloadInvoice, getFinancialInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -90,7 +90,7 @@ function renderFinanceSubtabs(activeTabId, state) {
 }
 
 function renderAgingRows(state) {
-  return getInvoiceAging(getInvoiceRecords(state))
+  return getInvoiceAging(getFinancialInvoiceRecords(state))
     .map(
       (bucket) => `
         <div class="aging-row" data-search-index="${escapeHtml(bucket.label.toLowerCase())}">
@@ -119,7 +119,7 @@ function renderInvoiceRows(state, permissions) {
   const retailerMap = getRetailerMap(state.retailers);
   const canUpdateCredit = permissions.canSetCreditLimits;
 
-  return getInvoiceRecords(state).map((invoice, index) => {
+  return getFinancialInvoiceRecords(state).map((invoice, index) => {
     const retailer = retailerMap.get(invoice.retailerId);
     const searchIndex = [
       invoice.id,
@@ -901,7 +901,7 @@ export function renderFinance({ state }) {
   const financialSummary = getAccountantSummary(state);
   const permissions = currentUserPermissions(state);
   const activeTabId = activeFinanceTabId(state);
-  const invoiceRecords = getInvoiceRecords(state);
+  const invoiceRecords = getFinancialInvoiceRecords(state);
   const paidTotal = invoiceRecords
     .filter((invoice) => invoice.status === "paid")
     .reduce((total, invoice) => total + invoice.amount, 0);
@@ -1411,7 +1411,7 @@ export function bindFinance({ root, store, signal }) {
   qsa(".js-view-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = getFinancialInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) openInvoiceQuickView(invoice, state);
     });
   });
@@ -1419,7 +1419,7 @@ export function bindFinance({ root, store, signal }) {
   qsa(".js-download-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = getFinancialInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) downloadInvoice(invoice, state);
     });
   });
@@ -1427,7 +1427,7 @@ export function bindFinance({ root, store, signal }) {
   qsa(".js-print-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = getFinancialInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) printInvoice(invoice, state);
     });
   });
