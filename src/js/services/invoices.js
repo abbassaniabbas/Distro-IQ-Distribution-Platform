@@ -40,6 +40,7 @@ export function getInvoiceRecords(state) {
       customerName: invoice.customerName || retailer?.name || order?.customerName || "Customer",
       customerAddress: invoice.customerAddress || retailer?.address || "",
       customerPhone: invoice.customerPhone || retailer?.contactPhone || "",
+      collectedBy: invoice.collectedBy || (order?.source === "factory_dispatch" ? (invoice.customerName || order?.customerName || "Customer") : ""),
       paymentType: representativeSellThrough ? "not_tracked" : invoice.paymentType || order?.paymentType || "cash",
       repName: invoice.repName || order?.repName || "Sales Representative",
       repUserId: invoice.repUserId || order?.repUserId || "",
@@ -137,6 +138,12 @@ export function buildInvoicePreviewContent(invoice, state) {
   ), 0));
   const isSalesReceipt = isRepresentativeSellThroughInvoice(invoice, state);
   const documentLabel = isSalesReceipt ? "Sales receipt" : "Invoice";
+  const sourceOrder = (state.orders || []).find((order) => order.id === invoice.orderId);
+  const isFactoryDispatch = Boolean(invoice.dispatchId || sourceOrder?.source === "factory_dispatch");
+  const handlingLabel = isFactoryDispatch ? "Collected by" : "Sold by";
+  const handlingName = isFactoryDispatch
+    ? (invoice.collectedBy || invoice.customerName || "Customer")
+    : (invoice.repName || "Sales Representative");
 
   return `
     <article class="invoice-modal-document">
@@ -168,7 +175,7 @@ export function buildInvoicePreviewContent(invoice, state) {
             <div><dt>Issued</dt><dd>${escapeHtml(formatDate(invoice.issuedAt))}</dd></div>
             ${isSalesReceipt ? "" : `<div><dt>Due</dt><dd>${escapeHtml(formatDate(invoice.dueAt))}</dd></div>`}
             ${isSalesReceipt ? "" : `<div><dt>Payment</dt><dd>${escapeHtml(statusText(invoice.paymentType))}</dd></div>`}
-            <div><dt>Sold by</dt><dd>${escapeHtml(invoice.repName || "Sales Representative")}</dd></div>
+            <div><dt>${handlingLabel}</dt><dd>${escapeHtml(handlingName)}</dd></div>
           </dl>
         </section>
       </div>
@@ -215,6 +222,12 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
   const total = Number(invoice.amount ?? items.reduce((sum, item) => sum + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0));
   const isSalesReceipt = isRepresentativeSellThroughInvoice(invoice, state);
   const documentLabel = isSalesReceipt ? "SALES RECEIPT" : "INVOICE";
+  const sourceOrder = (state.orders || []).find((order) => order.id === invoice.orderId);
+  const isFactoryDispatch = Boolean(invoice.dispatchId || sourceOrder?.source === "factory_dispatch");
+  const handlingLabel = isFactoryDispatch ? "Collected by" : "Sold by";
+  const handlingName = isFactoryDispatch
+    ? (invoice.collectedBy || invoice.customerName || "Customer")
+    : (invoice.repName || "Sales Representative");
   const logo = client.logoDataUrl
     ? `<img src="${escapeHtml(client.logoDataUrl)}" alt="${escapeHtml(companyName)} logo">`
     : `<div class="logo-fallback">${escapeHtml(companyName.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "DI")}</div>`;
@@ -267,7 +280,7 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
           </header>
           <div class="details">
             <section><h2>Customer</h2><strong>${escapeHtml(invoice.customerName || "Customer")}</strong>${invoice.customerAddress ? `<p class="muted">${escapeHtml(invoice.customerAddress)}</p>` : ""}${invoice.customerPhone ? `<p class="muted">${escapeHtml(invoice.customerPhone)}</p>` : ""}</section>
-            <section><h2>Sale details</h2><strong>Sold by ${escapeHtml(invoice.repName || "Sales Representative")}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p>${isSalesReceipt ? "" : `<p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p>`}</section>
+            <section><h2>Sale details</h2><strong>${handlingLabel} ${escapeHtml(handlingName)}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p>${isSalesReceipt ? "" : `<p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p>`}</section>
           </div>
           <table><thead><tr><th>Product</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map((item) => {
             const lineTotal = Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)));

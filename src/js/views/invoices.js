@@ -1,4 +1,4 @@
-import { downloadInvoice, getFinancialInvoiceRecords, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722";
+import { downloadInvoice, getFinancialInvoiceRecords, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722c";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
 import { printTabularReport } from "../services/report-export.js";
 import { currentUserRole } from "../services/rbac.js";

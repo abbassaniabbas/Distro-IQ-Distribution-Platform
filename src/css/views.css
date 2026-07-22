@@ -1123,36 +1123,20 @@
 }
 
 .ceo-stock-split-total {
-  display: flex;
+  display: grid;
   align-items: center;
-  justify-content: space-between;
-  gap: 18px;
+  grid-template-columns: 118px minmax(0, 1fr) 84px;
+  gap: 12px;
   width: 100%;
-  padding: 15px 16px;
-  border: 1px solid rgba(25, 185, 133, 0.3);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   color: var(--navy);
-  background: var(--mint-soft);
+  background: #fff;
   text-align: left;
   cursor: pointer;
 }
 
-.ceo-stock-split-total > span:first-child {
-  display: grid;
-  gap: 3px;
-}
-
-.ceo-stock-split-total small {
-  color: var(--muted);
-  font-weight: 800;
-  text-transform: uppercase;
-}
-
-.ceo-stock-split-total strong {
-  font-size: 1.35rem;
-}
-
-.ceo-stock-split-total > span:last-child,
 .stock-split-product-heading > span:last-child {
   display: flex;
   align-items: center;
@@ -1162,10 +1146,15 @@
   font-weight: 850;
 }
 
-.ceo-stock-split-total svg,
 .stock-split-product-heading svg {
   width: 16px;
   height: 16px;
+}
+
+.ceo-stock-split-total:hover,
+.ceo-stock-split-total:focus-visible {
+  border-color: var(--green);
+  background: var(--mint-soft);
 }
 
 .ceo-stock-split-modal {

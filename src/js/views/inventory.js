@@ -14,7 +14,7 @@ import {
   statusText
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
-import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722";
+import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722c";
 import { loadSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";

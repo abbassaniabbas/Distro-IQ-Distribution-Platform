@@ -714,7 +714,7 @@ function createQuickSaleOrder(state, {
     ...(state.orders || [])
   ];
 
-  state.invoices = [
+      state.invoices = [
     {
       id: invoiceId,
       clientId: state.client?.id || "",
@@ -838,6 +838,7 @@ function createDispatchSalesOrder(state, {
       amount,
       status: isCredit ? "open" : "paid",
       paymentType,
+      collectedBy: recipientName,
       repName: dispatchesToRepresentative ? recipientName : staffName,
       repUserId: dispatchesToRepresentative ? repUserId : state.user?.id || "",
       items: invoiceItems

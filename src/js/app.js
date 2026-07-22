@@ -1,7 +1,7 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
-import { createStore } from "./state/store.js?v=20260722";
+import { createStore } from "./state/store.js?v=20260722c";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
-import { loadWorkspace, loadWorkspaceFeatureModules, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js";
+import { loadWorkspace, loadWorkspaceFeatureModules, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260722c";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
@@ -25,10 +25,10 @@ import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20
 import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260722";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260722";
-import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722";
-import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722c";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260722c";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722c";
+import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722c";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js";
 import {

@@ -446,6 +446,7 @@ const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "ut
 assert.match(appSource, /saveSharedProductImage\([\s\S]*imageUrl: image\.imageUrl/, "surviving browser stock images must be backed up to Supabase after sign-in");
 const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
 assert.match(backendSource, /select\("sku, image_url"\)[\s\S]*single\(\)/, "remote stock picture saves must be read back and confirmed");
+assert.match(backendSource, /operationalActivityInitialized[\s\S]*activityLogs:[\s\S]*operationalActivityRows/, "initialized synchronized activity must remain authoritative over legacy activity rows");
 const inventorySource = readFileSync(new URL("../src/js/views/inventory.js", import.meta.url), "utf8");
 assert.match(inventorySource, /!existingProduct\?\.imageRemoteSynced/, "saving a stock item must retry any picture that has not reached Supabase");
 store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-IMAGE-PERSIST"] });
@@ -1082,8 +1083,9 @@ const separatedStockSplit = renderDashboard({
   }
 });
 assert.match(separatedStockSplit, /data-stock-split="representatives"[\s\S]*?<span class="strong">20<\/span>/, "representative-held stock must remain in the representative stock split");
+assert.match(separatedStockSplit, /Sales rep/, "the stock split must use the shorter sales-rep label");
 assert.match(separatedStockSplit, /data-stock-split="supermarkets"[\s\S]*?<span class="strong">7<\/span>/, "representative dispatches must not be added to supermarket stock");
-assert.match(separatedStockSplit, /Total stock produced[\s\S]*107 pieces/, "stock split must begin with the combined produced-stock total");
+assert.match(separatedStockSplit, /ceo-stock-split-total[\s\S]*Total stock produced[\s\S]*progress-track[\s\S]*<span class="strong">107<\/span>/, "total produced stock must use the same line-and-value treatment as the other stock splits");
 assert.match(separatedStockSplit, /id="ceo-stock-split-modal"[\s\S]*data-stock-split-family="Split Test Chips"/, "the stock split modal must list product-level splits");
 assert.match(separatedStockSplit, /data-stock-split-size-view="Split Test Chips"[\s\S]*Split Test Chips[\s\S]*Standard/, "each product must drill down to size-level stock splits");
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
@@ -1622,6 +1624,8 @@ const multiDispatchInvoicePreview = buildInvoicePreviewContent(multiDispatchStat
 assert.match(multiDispatchInvoicePreview, /Plantain Chips 50g/);
 assert.match(multiDispatchInvoicePreview, /Kuli Kuli 100g/);
 assert.match(multiDispatchInvoicePreview, /Credit/);
+assert.match(multiDispatchInvoicePreview, /Collected by[\s\S]*Multi Rep/, "factory dispatch invoices must identify who collected the stock");
+assert.doesNotMatch(multiDispatchInvoicePreview, /Sold by/, "factory dispatch invoices must not label the collector as the seller");
 const multiDispatchQuickView = buildInvoiceQuickViewMarkup(multiDispatchState.invoices[0], multiDispatchState);
 assert.match(multiDispatchQuickView, /js-download-invoice-preview/);
 assert.match(multiDispatchQuickView, /aria-label="Download invoice"/);

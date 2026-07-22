@@ -443,7 +443,9 @@ export async function loadWorkspace() {
     { data: creditHistoryRows, error: creditHistoryError },
     { data: packagingRequestRows, error: packagingRequestError },
     { data: messageRows, error: messageError },
-    { data: productImageRows, error: productImageError }
+    { data: productImageRows, error: productImageError },
+    { data: operationalActivityCollectionRows, error: operationalActivityCollectionError },
+    { data: operationalActivityRows, error: operationalActivityError }
   ] = await Promise.all([
     loadWorkspaceAccountRows(supabase, client.id),
     supabase
@@ -481,7 +483,18 @@ export async function loadWorkspace() {
     supabase
       .from("stock_products")
       .select("sku, image_url")
+      .eq("client_id", client.id),
+    supabase
+      .from("workspace_operational_collections")
+      .select("collection_name")
       .eq("client_id", client.id)
+      .eq("collection_name", "activityLogs"),
+    supabase
+      .from("workspace_operational_records")
+      .select("record_data, updated_at")
+      .eq("client_id", client.id)
+      .eq("collection_name", "activityLogs")
+      .order("updated_at", { ascending: false })
   ]);
 
   if (accountError) {
@@ -520,6 +533,11 @@ export async function loadWorkspace() {
     console.warn("Shared stock pictures could not be loaded:", productImageError.message);
   }
 
+  const operationalActivityInitialized = !operationalActivityCollectionError && Boolean(operationalActivityCollectionRows?.length);
+  if (operationalActivityInitialized && operationalActivityError) {
+    console.warn("Synchronized activity records could not be loaded:", operationalActivityError.message);
+  }
+
   const accounts = (accountRows || []).map(mapAccount);
   const accountByMembershipId = new Map(accounts.map((account) => [account.id, account]));
 
@@ -528,7 +546,9 @@ export async function loadWorkspace() {
     accounts,
     invites: (inviteRows || []).map(mapInvite),
     featureModules: featureModuleError ? [] : (featureModuleRows || []).map(mapFeatureModule),
-    activityLogs: activityError ? [] : (activityRows || []).map(mapActivityLog),
+    activityLogs: operationalActivityInitialized
+      ? (operationalActivityError ? [] : (operationalActivityRows || []).map((row) => row.record_data).filter(Boolean))
+      : (activityError ? [] : (activityRows || []).map(mapActivityLog)),
     creditLimits: creditLimitError ? undefined : (creditLimitRows || []).map((row) => mapCreditLimit(row, accountByMembershipId)),
     creditLimitHistory: creditHistoryError ? undefined : (creditHistoryRows || []).map(mapCreditLimitHistory),
     packagingChangeRequests: packagingRequestError ? undefined : (packagingRequestRows || []).map(mapPackagingChangeRequest),

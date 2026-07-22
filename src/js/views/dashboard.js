@@ -23,14 +23,14 @@ import {
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
-import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722";
+import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722c";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog } from "../ui/action-dialog.js";
 import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722c";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -905,7 +905,7 @@ function renderStockSplitBars(metrics, { includeTotal = true, compact = false } 
   const rows = [
     ...(includeTotal ? [{ key: "total", label: "Total stock produced", value: metrics.total, tone: "good" }] : []),
     { key: "factory", label: "Factory", value: metrics.factory, tone: "good" },
-    { key: "representatives", label: "Sales representatives", value: metrics.representatives, tone: metrics.representatives > metrics.factory ? "warning" : "good" },
+    { key: "representatives", label: "Sales rep", value: metrics.representatives, tone: metrics.representatives > metrics.factory ? "warning" : "good" },
     { key: "supermarkets", label: "Supermarkets", value: metrics.supermarkets, tone: "good" }
   ];
   const maxValue = Math.max(metrics.total, 1);
@@ -937,9 +937,10 @@ function renderCeoStockSplit(productRows) {
 
   return `
     <div class="ceo-stock-split-summary">
-      <button class="ceo-stock-split-total js-open-stock-split-modal" type="button" aria-haspopup="dialog">
-        <span><small>Total stock produced</small><strong>${formatNumber(overall.total)} pieces</strong></span>
-        <span>View products ${icon("arrowRight")}</span>
+      <button class="ceo-stock-split-total ceo-stock-row js-open-stock-split-modal" type="button" aria-haspopup="dialog" title="View stock split by product">
+        <strong>Total stock produced</strong>
+        ${progressBar(100, "good")}
+        <span class="strong">${formatNumber(overall.total)}</span>
       </button>
       ${renderStockSplitBars(overall, { includeTotal: false })}
     </div>
