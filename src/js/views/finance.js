@@ -9,6 +9,7 @@ import {
 import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import {
   currentUserPermissions,
+  currentUserRole,
   salesRepresentativeAccounts,
   salesRepresentativeNames
 } from "../services/rbac.js";
@@ -19,6 +20,7 @@ import { downloadInvoice, getInvoiceRecords, openInvoiceQuickView, printInvoice 
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 
 const DEFAULT_FINANCE_TAB = "overview";
 const FINANCE_PAGE_SIZE = 10;
@@ -910,6 +912,11 @@ export function renderFinance({ state }) {
   return `
     <section class="view finance-view">
       ${renderFinanceSubtabs(activeTabId, state)}
+      ${currentUserRole(state) === "ceo" ? `
+        <div class="page-reset-action">
+          ${textButton({ iconName: "trash", label: "Clear finance data", className: "warning", data: { "reset-workspace-scope": "finance" } })}
+        </div>
+      ` : ""}
       ${activeTabId === "overview" ? `
         <div class="finance-kpis">
           ${metricCard({
@@ -1364,7 +1371,8 @@ function bindFinancePagination(root) {
   });
 }
 
-export function bindFinance({ root, store }) {
+export function bindFinance({ root, store, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, signal });
   bindFinancePagination(root);
   bindCreditHistoryFilters(root);
 

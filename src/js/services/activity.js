@@ -223,11 +223,18 @@ function financialTransactionActivityLogs(state) {
 export function getScopedActivityLogs(state) {
   if (!state.client?.id) return [];
 
-  const savedLogs = (state.activityLogs || [])
+  const tenantLogs = (state.activityLogs || [])
     .filter((entry) => entry.clientId === state.client.id);
+  const latestResetAt = tenantLogs
+    .filter((entry) => entry.recordType === "activity_reset_marker")
+    .reduce((latest, entry) => Math.max(latest, new Date(entry.createdAt || 0).getTime() || 0), 0);
+  const isAfterReset = (entry) => !latestResetAt || (new Date(entry.createdAt || 0).getTime() || 0) > latestResetAt;
+  const savedLogs = tenantLogs
+    .filter((entry) => entry.recordType !== "activity_reset_marker")
+    .filter(isAfterReset);
   const logs = [
     ...savedLogs,
-    ...stockMovementActivityLogs(state, savedLogs)
+    ...stockMovementActivityLogs(state, savedLogs).filter(isAfterReset)
   ];
   const role = currentUserRole(state);
 

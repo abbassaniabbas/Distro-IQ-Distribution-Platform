@@ -1201,6 +1201,75 @@ function reducer(currentState, action) {
       };
     }
 
+    case "RESET_WORKSPACE_DATA_SCOPE": {
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
+      const scope = String(action.scope || "").trim().toLowerCase();
+      const markerCreatedAt = action.createdAt || new Date().toISOString();
+      const activityResetMarker = {
+        id: action.markerId || `ACTIVITY-RESET-${Date.now()}`,
+        clientId: state.client.id,
+        actionType: "reset",
+        recordType: "activity_reset_marker",
+        recordLabel: "",
+        actorUserId: state.user?.id || "",
+        actorName: "CEO",
+        actorEmail: state.user?.email || "",
+        summary: "",
+        hidden: true,
+        createdAt: markerCreatedAt
+      };
+
+      if (scope === "adjustments") {
+        state.correctionRequests = [];
+        return state;
+      }
+      if (scope === "customers") {
+        state.retailers = [];
+        return state;
+      }
+      if (scope === "finance") {
+        state.invoices = [];
+        state.salesReports = [];
+        state.creditLimits = [];
+        state.creditLimitHistory = [];
+        state.stockTransactions = (state.stockTransactions || []).filter((transaction) => (
+          !["sale", "return", "write off", "write_off"].includes(String(transaction.type || "").trim().toLowerCase())
+        ));
+        state.orders = (state.orders || []).filter((order) => String(order.source || "").trim().toLowerCase() !== "quick_sale");
+        return state;
+      }
+      if (scope === "activity") {
+        state.activityLogs = [activityResetMarker];
+        state.salesReports = [];
+        return state;
+      }
+      if (scope !== "factory") return state;
+
+      state.products = [];
+      state.stockCategories = [];
+      state.stockAssignments = [];
+      state.stockTransactions = [];
+      state.productionBatches = [];
+      state.retailers = [];
+      state.orders = [];
+      state.invoices = [];
+      state.salesReports = [];
+      state.correctionRequests = [];
+      state.stockRequests = [];
+      state.purchaseOrders = [];
+      state.procurementOrders = [];
+      state.routes = [];
+      state.creditLimits = [];
+      state.creditLimitHistory = [];
+      state.activityLogs = [];
+      state.packagingChangeRequests = [];
+      state.offlineSalesQueue = [];
+      state.notificationReadAt = "";
+      state.notificationClearedAt = "";
+      state.dismissedNotificationIds = [];
+      return state;
+    }
+
     case "UPDATE_MY_PROFILE": {
       if (state.client?.id) {
         appendActivityLog(state, {

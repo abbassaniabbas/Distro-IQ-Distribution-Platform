@@ -588,6 +588,28 @@ export async function syncOperationalWorkspace({ clientId, operationId, actionTy
   return data || {};
 }
 
+export async function resetWorkspaceData({ clientId, scope }) {
+  throwIfBackendMissing();
+  const supportedScopes = new Set(["adjustments", "customers", "finance", "activity", "factory"]);
+  const normalizedScope = String(scope || "").trim().toLowerCase();
+  if (!clientId || !supportedScopes.has(normalizedScope)) {
+    throw new Error("Choose a valid company data reset option.");
+  }
+
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("reset_workspace_data", {
+    p_client_id: clientId,
+    p_scope: normalizedScope
+  });
+
+  if (error) {
+    const failure = classifyAppFailure({ error, configured: true });
+    throw new Error(`${failure.label}: Company data could not be cleared. ${error.message}`);
+  }
+
+  return data || { scope: normalizedScope };
+}
+
 export async function saveSharedProductImage({ clientId, sku, previousSku = "", name, unit = "piece", status = "active", imageUrl = "" }) {
   throwIfBackendMissing();
   const supabase = await getSupabaseClient();

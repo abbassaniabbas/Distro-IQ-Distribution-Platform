@@ -1,9 +1,10 @@
 import { formatDateTime, formatNumber, statusText } from "../services/formatters.js";
 import { currentUserRole, roleLabel } from "../services/rbac.js";
 import { escapeHtml, qsa } from "../ui/dom.js";
-import { iconButton, metricCard, panelHeader, statusPill, table } from "../ui/components.js";
+import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { requestTextDialog } from "../ui/action-dialog.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 import { packagingQuantityLabel } from "../services/packaging.js";
 
 function correctionQuantityLabel(request, prefix) {
@@ -64,13 +65,18 @@ export function renderAdjustmentContent(state) {
         ${metricCard({ label: "Completed", value: formatNumber(requests.length - pending.length), meta: "Approved or rejected", iconName: "check" })}
       </div>
       <section class="panel">
-        ${panelHeader("Correction requests", role === "ceo" ? "Staff requests require approval; CEO adjustments are saved directly" : "Approve or reject staff requests with a recorded decision")}
+        ${panelHeader(
+          "Correction requests",
+          role === "ceo" ? "Staff requests require approval; CEO adjustments are saved directly" : "Approve or reject staff requests with a recorded decision",
+          role === "ceo" ? textButton({ iconName: "trash", label: "Delete all", className: "warning", data: { "reset-workspace-scope": "adjustments" } }) : ""
+        )}
         ${table(["Request", "Requested by", "Record", "Requested change", "Status", "Decision"], renderRows(state, role), "No correction requests have been submitted")}
       </section>
   `;
 }
 
-export function bindAdjustments({ root, store }) {
+export function bindAdjustments({ root, store, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, signal });
   qsa(".js-approve-adjustment", root).forEach((button) => button.addEventListener("click", () => {
     store.dispatch({
       type: "APPROVE_RECORD_CORRECTION",

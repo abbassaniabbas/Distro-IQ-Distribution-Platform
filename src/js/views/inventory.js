@@ -2059,7 +2059,7 @@ export function renderInventory({ state }) {
 }
 
 export function bindInventory({ root, store, signal }) {
-  bindAdjustments({ root, store });
+  bindAdjustments({ root, store, signal });
   const imageRefreshState = store.getState();
   if (isBackendConfigured() && imageRefreshState.client?.id) {
     const refreshSharedStockPictures = () => {

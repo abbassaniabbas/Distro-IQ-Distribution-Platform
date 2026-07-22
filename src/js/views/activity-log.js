@@ -9,7 +9,8 @@ import { downloadTabularReport, printTabularReport, tableSectionFromElement } fr
 import { accountForUser, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, panelHeader, table } from "../ui/components.js";
+import { iconButton, panelHeader, table, textButton } from "../ui/components.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
@@ -387,7 +388,12 @@ export function renderActivityLog({ state }) {
 
   const hasActivitySubnav = role === "ceo";
   const activeTab = hasActivitySubnav ? activeActivityTab(state, role) : DEFAULT_ACTIVITY_TAB;
-  const activitySubnav = hasActivitySubnav ? renderActivitySubnav(state, role, activeTab) : "";
+  const activitySubnav = hasActivitySubnav ? `
+    ${renderActivitySubnav(state, role, activeTab)}
+    <div class="page-reset-action">
+      ${textButton({ iconName: "trash", label: "Clear activity", className: "warning", data: { "reset-workspace-scope": "activity" } })}
+    </div>
+  ` : "";
 
   if (hasActivitySubnav && activeTab !== DEFAULT_ACTIVITY_TAB) {
     return `
@@ -467,7 +473,8 @@ export function renderActivityLog({ state }) {
   `;
 }
 
-export function bindActivityLog({ root, store }) {
+export function bindActivityLog({ root, store, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, signal });
   const pageSize = 10;
   let currentPage = 1;
   const searchFilter = qs("#activity-search", root);

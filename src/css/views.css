@@ -454,6 +454,16 @@
   width: 100%;
 }
 
+.page-reset-action {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.factory-data-reset-panel {
+  border-color: rgba(207, 77, 67, 0.24);
+  background: #fffafa;
+}
+
 .danger-panel {
   border-color: rgba(207, 77, 67, 0.24);
   background: #fffafa;

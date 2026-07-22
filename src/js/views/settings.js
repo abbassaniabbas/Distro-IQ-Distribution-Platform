@@ -30,6 +30,7 @@ import { escapeHtml, qs } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
 import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 
 function getCurrentAccount(state) {
   return getScopedAccounts(state).find((account) => account.userId === state.user?.id);
@@ -212,6 +213,22 @@ function renderFactoryDeletion(state) {
         </form>
       </section>
     </div>
+  `;
+}
+
+function renderFactoryDataReset(state) {
+  if (currentUserRole(state) !== "ceo") return "";
+
+  return `
+    <section class="panel factory-data-reset-panel">
+      ${panelHeader("Factory data reset", "")}
+      ${textButton({
+        iconName: "trash",
+        label: "Reset factory data",
+        className: "warning",
+        data: { "reset-workspace-scope": "factory" }
+      })}
+    </section>
   `;
 }
 
@@ -412,6 +429,7 @@ export function renderSettings({ state }) {
         <div class="settings-side">
           ${renderProfileSettings(state, account)}
           ${packagingUnderFactory ? "" : renderPackagingSettings(state)}
+          ${renderFactoryDataReset(state)}
           ${renderFactoryDeletion(state)}
         </div>
       </div>
@@ -497,7 +515,8 @@ function bindCompanyLogoUpload({ root, form, state }) {
   };
 }
 
-export function bindSettings({ root, store }) {
+export function bindSettings({ root, store, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, signal });
   const state = store.getState();
   const companyForm = qs("#company-settings-form", root);
   const profileForm = qs("#profile-settings-form", root);

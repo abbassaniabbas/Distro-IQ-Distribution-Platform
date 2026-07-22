@@ -9,6 +9,7 @@ import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
 import { nextFormattedId } from "../src/js/services/tenant.js";
 import { classifyAppFailure } from "../src/js/services/error-classification.js";
+import { getScopedActivityLogs } from "../src/js/services/activity.js";
 import { OPERATIONAL_COLLECTIONS, operationalChanges, operationalSnapshot } from "../src/js/services/operational-sync.js";
 import { dateIsWithinRange, normalizeDateRange } from "../src/js/services/filtering.js";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "../src/js/services/global-search.js";
@@ -150,6 +151,11 @@ const operationalMigrationSql = readFileSync(new URL("../supabase/operational-pe
 assert.match(operationalMigrationSql, /unique \(client_id, operation_id\)/, "operation retries must be idempotent");
 assert.match(operationalMigrationSql, /workspace_operation_events/, "every synchronized action must have an append-only event record");
 assert.match(operationalMigrationSql, /public\.is_client_member\(client_id\)/, "operational records must remain tenant isolated");
+const workspaceResetSql = readFileSync(new URL("../supabase/workspace-data-reset.sql", import.meta.url), "utf8");
+assert.match(workspaceResetSql, /security definer/, "workspace resets must run through a protected server function");
+assert.match(workspaceResetSql, /v_role <> 'ceo'/, "only the active CEO may reset workspace data");
+assert.match(workspaceResetSql, /where client_id = p_client_id/g, "every reset must remain within the selected factory");
+assert.doesNotMatch(workspaceResetSql, /delete from public\.memberships|delete from auth\.users|delete from public\.clients/, "factory reset must preserve the company and staff sign-ins");
 const passwordSetupHtml = renderPasswordReset({ state: { session: { user: { id: "password-user" } }, user: { email: "password@example.com" }, client: { companyName: "Test Factory" } } });
 assert.match(passwordSetupHtml, /minlength="8"/);
 assert.match(passwordSetupHtml, /Use 8\+ characters/);
@@ -237,6 +243,7 @@ assert.match(managerSettings, /data-packaging-option-state>Selected</, "CEO pack
 assert.match(managerSettings, /data-packaging-selection-summary>Pieces · Cartons · Packs</, "CEO packaging settings must clearly summarize all selected package types");
 assert.doesNotMatch(managerSettings, /name="packagingDefault-|Default pieces per/);
 assert.match(managerSettings, /Set the quantity inside each stock item/);
+assert.match(managerSettings, /data-reset-workspace-scope="factory"/, "CEO settings must include the factory data reset control");
 const managerAccountsBeforePackagingSync = store.getState().accounts.length;
 store.dispatch({
   type: "SYNC_CLIENT_SETTINGS",
@@ -939,6 +946,7 @@ assert.match(managerRecentOrders, /Activity log pages/);
 assert.match(managerRecentOrders, /Recent sales orders/);
 assert.match(managerRecentOrders, /js-download-recent-orders/);
 assert.match(managerRecentOrders, /js-print-recent-orders/);
+assert.match(managerRecentOrders, /data-reset-workspace-scope="activity"/, "CEO activity pages must include the clear-all control");
 globalThis.window.location.hash = "#/activity-log";
 const activityWithUserFilter = renderActivityLog({ state: store.getState() });
 const userFilterMarkup = activityWithUserFilter.match(/<select id="activity-user-filter">([\s\S]*?)<\/select>/)?.[1] || "";
@@ -1065,6 +1073,7 @@ assert.doesNotMatch(storeKeeperDashboard, /href="#\/inventory\?tab=dispatch"/);
 authenticate("user-manager");
 const ceoCustomersPage = renderRetailers({ state: store.getState() });
 assert.match(ceoCustomersPage, /Add Customer/);
+assert.match(ceoCustomersPage, /data-reset-workspace-scope="customers"/, "CEO customer records must include a delete-all control");
 assert.doesNotMatch(ceoCustomersPage, /Customer relationship/);
 assert.doesNotMatch(ceoCustomersPage, /Supermarkets, kiosks, wholesalers, contacts, and balances owed/);
 assert.equal(NIGERIA_STATE_NAMES.length, 37, "customer state list must contain all 36 states and FCT");
@@ -1149,6 +1158,7 @@ store.getState().orders = [{
 }];
 globalThis.window.location.hash = "#/finance?tab=overview";
 const financeOverview = renderFinance({ state: store.getState() });
+assert.match(financeOverview, /data-reset-workspace-scope="finance"/, "CEO finance pages must include a clear-all control");
 assert.doesNotMatch(financeOverview, /Customer balances/);
 assert.match(financeOverview, /Sales reports/);
 assert.match(financeOverview, /Invoices/);
@@ -1367,6 +1377,7 @@ const correctionApprovalDashboard = renderDashboard({ state: store.getState() })
 assert.doesNotMatch(correctionApprovalDashboard, /Correction approvals/);
 const correctionApprovalPage = renderAdjustments({ state: store.getState() });
 assert.match(correctionApprovalPage, /Adjustment approvals/);
+assert.match(correctionApprovalPage, /data-reset-workspace-scope="adjustments"/, "CEO correction requests must include a delete-all control");
 assert.match(correctionApprovalPage, /One carton was entered twice/);
 assert.match(correctionApprovalDashboard, /Added stock/);
 assert.match(correctionApprovalDashboard, /Dispatched product/);
@@ -1780,6 +1791,7 @@ assert.match(adminCustomers, /Customer outlets/);
 assert.match(adminCustomers, /Admin View Supermarket/, "Admin must be able to view saved customers");
 assert.match(adminCustomers, /customer-details-modal/, "Admin must be able to open saved customer details");
 assert.doesNotMatch(adminCustomers, /id="retailer-form"|Add Customer|Save customer/, "Admin customer access must remain read-only");
+assert.doesNotMatch(adminCustomers, /data-reset-workspace-scope=/, "Admin must not receive destructive company reset controls");
 const adminCustomerDetails = renderCustomerDetails(adminSavedCustomer, { ...multiDispatchStore.getState(), retailers: [adminSavedCustomer] }, currentUserPermissions(multiDispatchStore.getState()));
 assert.doesNotMatch(adminCustomerDetails, /Edit customer|Deactivate customer|Activate customer/, "Admin must not change saved customers");
 const adminInvoices = renderInvoices({ state: multiDispatchStore.getState() });
@@ -1791,6 +1803,7 @@ const adminSettings = renderSettings({ state: multiDispatchStore.getState() });
 assert.ok(adminSettings.indexOf("My profile") < adminSettings.indexOf("Sales packaging"), "Admin Sales packaging settings must appear below My profile");
 assert.match(adminSettings, /Send for approval/, "Admin packaging changes must be sent to the CEO");
 assert.doesNotMatch(adminSettings, /Save packaging/, "Admin must not apply packaging settings directly");
+assert.doesNotMatch(adminSettings, /data-reset-workspace-scope="factory"/, "Admin must not receive the factory reset control");
 const stockBeforeUnauthorizedAdminDispatch = multiDispatchStore.getState().products.find((product) => product.id === "MULTI-A").stock;
 multiDispatchStore.dispatch({
   type: "RECORD_STOCK_DISPATCH",
@@ -1929,6 +1942,113 @@ assert.match(renderSettings({ state: multiDispatchStore.getState() }), /Pending 
 multiDispatchStore.dispatch({ type: "REJECT_PACKAGING_SETTINGS_CHANGE", requestId: adminPackagingRequest.id, note: "Use the approved factory packaging mix" });
 assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === adminPackagingRequest.id).status, "rejected", "Only CEO must be able to decline an Admin packaging request");
 assert.deepEqual(multiDispatchStore.getState().client.packagingTypes || ["piece"], packagingBeforeAdminRequest, "Declining a request must preserve the active packaging settings");
+
+let resetFixtureNumber = 0;
+function createWorkspaceResetFixture(role = "ceo") {
+  resetFixtureNumber += 1;
+  const resetClient = {
+    id: `reset-client-${resetFixtureNumber}`,
+    companyName: "Reset Test Factory",
+    currencySymbol: "₦",
+    skuFormat: "SKU-{000}",
+    packagingTypes: ["piece", "carton"]
+  };
+  const resetUserId = `reset-user-${resetFixtureNumber}`;
+  const resetAccount = {
+    id: `reset-membership-${resetFixtureNumber}`,
+    clientId: resetClient.id,
+    userId: resetUserId,
+    name: role === "ceo" ? "Reset CEO" : "Reset Admin",
+    email: `reset-${resetFixtureNumber}@example.com`,
+    role,
+    status: "active"
+  };
+  const resetStore = createStore();
+  resetStore.dispatch({
+    type: "SET_AUTHENTICATED_WORKSPACE",
+    session: { user: { id: resetUserId } },
+    user: { id: resetUserId, email: resetAccount.email },
+    client: resetClient,
+    accounts: [resetAccount],
+    invites: [],
+    featureModules: [],
+    messages: [{ id: "RESET-MESSAGE", clientId: resetClient.id, body: "Preserve me" }],
+    activityLogs: []
+  });
+  Object.assign(resetStore.getState(), {
+    products: [{ id: "RESET-SKU", name: "Plantain Chips", stock: 20 }],
+    stockCategories: [{ id: "RESET-CATEGORY", name: "Finished products" }],
+    stockAssignments: [{ id: "RESET-ASSIGNMENT", productId: "RESET-SKU", assigned: 5 }],
+    stockTransactions: [
+      { id: "RESET-SUPPLY", clientId: resetClient.id, productId: "RESET-SKU", type: "supply", quantity: 5, createdAt: "2026-07-20T09:00:00.000Z" },
+      { id: "RESET-SALE", clientId: resetClient.id, productId: "RESET-SKU", type: "sale", quantity: 2, createdAt: "2026-07-20T10:00:00.000Z" }
+    ],
+    productionBatches: [{ id: "RESET-BATCH" }],
+    retailers: [{ id: "RESET-CUSTOMER", name: "Reset Customer" }],
+    orders: [
+      { id: "RESET-QUICK-SALE", source: "quick_sale" },
+      { id: "RESET-DISPATCH", source: "factory_dispatch" }
+    ],
+    invoices: [{ id: "RESET-INVOICE" }],
+    salesReports: [{ id: "RESET-REPORT" }],
+    correctionRequests: [{ id: "RESET-CORRECTION" }],
+    stockRequests: [{ id: "RESET-STOCK-REQUEST" }],
+    purchaseOrders: [{ id: "RESET-PURCHASE" }],
+    procurementOrders: [{ id: "RESET-PROCUREMENT" }],
+    routes: [{ id: "RESET-ROUTE" }],
+    creditLimits: [{ id: "RESET-CREDIT" }],
+    creditLimitHistory: [{ id: "RESET-CREDIT-HISTORY" }],
+    activityLogs: [{ id: "RESET-ACTIVITY", clientId: resetClient.id, recordType: "inventory", createdAt: "2026-07-20T11:00:00.000Z" }],
+    packagingChangeRequests: [{ id: "RESET-PACKAGING-REQUEST" }],
+    offlineSalesQueue: [{ id: "RESET-OFFLINE-SALE" }]
+  });
+  return resetStore;
+}
+
+const adjustmentResetStore = createWorkspaceResetFixture();
+adjustmentResetStore.dispatch({ type: "RESET_WORKSPACE_DATA_SCOPE", scope: "adjustments" });
+assert.equal(adjustmentResetStore.getState().correctionRequests.length, 0);
+assert.equal(adjustmentResetStore.getState().retailers.length, 1, "clearing adjustments must preserve customers");
+
+const customerResetStore = createWorkspaceResetFixture();
+customerResetStore.dispatch({ type: "RESET_WORKSPACE_DATA_SCOPE", scope: "customers" });
+assert.equal(customerResetStore.getState().retailers.length, 0);
+assert.equal(customerResetStore.getState().invoices.length, 1, "clearing customers must preserve finance history");
+
+const financeResetStore = createWorkspaceResetFixture();
+financeResetStore.dispatch({ type: "RESET_WORKSPACE_DATA_SCOPE", scope: "finance" });
+assert.equal(financeResetStore.getState().invoices.length, 0);
+assert.equal(financeResetStore.getState().salesReports.length, 0);
+assert.equal(financeResetStore.getState().creditLimits.length, 0);
+assert.deepEqual(financeResetStore.getState().stockTransactions.map((entry) => entry.id), ["RESET-SUPPLY"], "finance reset must preserve non-financial stock supply movements");
+assert.deepEqual(financeResetStore.getState().orders.map((entry) => entry.id), ["RESET-DISPATCH"], "finance reset must preserve factory dispatch operations");
+
+const activityResetStore = createWorkspaceResetFixture();
+activityResetStore.dispatch({ type: "RESET_WORKSPACE_DATA_SCOPE", scope: "activity", createdAt: "2026-07-22T12:00:00.000Z" });
+assert.equal(activityResetStore.getState().salesReports.length, 0);
+assert.equal(activityResetStore.getState().activityLogs.length, 1);
+assert.equal(activityResetStore.getState().activityLogs[0].recordType, "activity_reset_marker");
+assert.equal(getScopedActivityLogs(activityResetStore.getState()).length, 0, "cleared activity must not be reconstructed from older stock movements");
+
+const factoryResetStore = createWorkspaceResetFixture();
+const preservedResetClient = factoryResetStore.getState().client;
+const preservedResetAccounts = factoryResetStore.getState().accounts;
+const preservedResetMessages = factoryResetStore.getState().messages;
+factoryResetStore.dispatch({ type: "RESET_WORKSPACE_DATA_SCOPE", scope: "factory" });
+[
+  "products", "stockCategories", "stockAssignments", "stockTransactions", "productionBatches",
+  "retailers", "orders", "invoices", "salesReports", "correctionRequests", "stockRequests",
+  "purchaseOrders", "procurementOrders", "routes", "creditLimits", "creditLimitHistory",
+  "activityLogs", "packagingChangeRequests", "offlineSalesQueue"
+].forEach((collection) => assert.equal(factoryResetStore.getState()[collection].length, 0, `factory reset must clear ${collection}`));
+assert.deepEqual(factoryResetStore.getState().client, preservedResetClient, "factory reset must preserve company settings");
+assert.deepEqual(factoryResetStore.getState().accounts, preservedResetAccounts, "factory reset must preserve staff accounts");
+assert.deepEqual(factoryResetStore.getState().messages, preservedResetMessages, "factory reset must preserve staff messages");
+assert.ok(factoryResetStore.getState().session?.user?.id, "factory reset must preserve the signed-in CEO session");
+
+const unauthorizedResetStore = createWorkspaceResetFixture("admin");
+unauthorizedResetStore.dispatch({ type: "RESET_WORKSPACE_DATA_SCOPE", scope: "factory" });
+assert.equal(unauthorizedResetStore.getState().products.length, 1, "Admin must not be able to reset factory data");
 
 const onboardingStore = createStore();
 onboardingStore.dispatch({

@@ -5,11 +5,12 @@ import {
   getCustomerRating
 } from "../services/calculations.js";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
-import { accountForUser, currentUserPermissions, scopeStateForCurrentRole } from "../services/rbac.js";
+import { accountForUser, currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { getNigeriaLgas, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../data/nigeria-locations.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 
 function formatTermPercent(value) {
   return `${new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(Number(value || 0))}%`;
@@ -393,6 +394,7 @@ export function renderRetailers({ state }) {
         <div class="toolbar">
           ${panelHeader("Customer outlets", "")}
           <div class="toolbar-group">
+            ${currentUserRole(state) === "ceo" ? textButton({ iconName: "trash", label: "Delete all", className: "warning", data: { "reset-workspace-scope": "customers" } }) : ""}
             <label class="field">
               <span class="sr-only">Filter by customer rating</span>
               <select id="retailer-rating-filter">
@@ -413,6 +415,7 @@ export function renderRetailers({ state }) {
 }
 
 export function bindRetailers({ root, store, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, signal });
   const ratingFilter = qs("#retailer-rating-filter", root);
   const retailerForm = qs("#retailer-form", root);
   const stateSelect = retailerForm?.elements.stateName;
