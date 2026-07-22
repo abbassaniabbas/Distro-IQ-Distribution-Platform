@@ -23,14 +23,14 @@ import {
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
-import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722c";
+import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog } from "../ui/action-dialog.js";
 import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722c";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722d";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -2791,7 +2791,18 @@ function renderRepStockRequestPanel(state) {
               ${finishedProducts.map((product) => `
                 <label class="rep-request-product">
                   <span><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.id)} · ${escapeHtml(product.size || product.unit || "Unit")}</small></span>
-                  <input type="number" min="0" step="1" name="request-${escapeHtml(product.id)}" data-request-product-id="${escapeHtml(product.id)}" placeholder="0" aria-label="Quantity of ${escapeHtml(product.name)}">
+                  <span class="rep-request-quantity-control">
+                    <span class="rep-request-quantity-fields">
+                      <input class="rep-request-number" type="number" min="0" step="1" name="request-${escapeHtml(product.id)}" data-request-product-id="${escapeHtml(product.id)}" placeholder="0" aria-label="Quantity of ${escapeHtml(product.name)}">
+                      <select data-request-packaging-id="${escapeHtml(product.id)}" aria-label="Packaging for ${escapeHtml(product.name)}">
+                        ${productPackagingTypes(state.client, product)
+                          .filter((type) => ["piece", "carton"].includes(type))
+                          .map((type) => `<option value="${escapeHtml(type)}">${escapeHtml(packagingOption(type).label)}</option>`)
+                          .join("")}
+                      </select>
+                    </span>
+                    <small data-request-piece-summary="${escapeHtml(product.id)}">0 pieces</small>
+                  </span>
                 </label>
               `).join("") || '<div class="empty-state">No finished products are available to request</div>'}
             </div>
@@ -3708,12 +3719,47 @@ function bindSalesRepDashboard({ root, store }) {
   stockRequestModal?.addEventListener("click", (event) => {
     if (event.target === stockRequestModal) closeStockRequestModal();
   });
+  function updateStockRequestQuantity(input) {
+    const productId = input?.dataset.requestProductId || "";
+    const currentState = store.getState();
+    const product = (currentState.products || []).find((item) => item.id === productId);
+    const packagingSelect = qsa("[data-request-packaging-id]", stockRequestForm || root)
+      .find((select) => select.dataset.requestPackagingId === productId);
+    const summary = qsa("[data-request-piece-summary]", stockRequestForm || root)
+      .find((item) => item.dataset.requestPieceSummary === productId);
+    const pieces = quantityInPieces(product, Number(input?.value || 0), packagingSelect?.value || "piece", currentState.client);
+    if (summary) summary.textContent = `${formatNumber(pieces)} piece${pieces === 1 ? "" : "s"}`;
+  }
+
+  qsa("[data-request-product-id]", stockRequestForm || root).forEach((input) => {
+    input.addEventListener("input", () => updateStockRequestQuantity(input));
+  });
+  qsa("[data-request-packaging-id]", stockRequestForm || root).forEach((select) => {
+    select.addEventListener("change", () => {
+      const input = qsa("[data-request-product-id]", stockRequestForm || root)
+        .find((item) => item.dataset.requestProductId === select.dataset.requestPackagingId);
+      updateStockRequestQuantity(input);
+    });
+  });
   stockRequestForm?.addEventListener("submit", (event) => {
     event.preventDefault();
     const formData = new FormData(stockRequestForm);
+    const currentState = store.getState();
     const items = qsa("[data-request-product-id]", stockRequestForm)
-      .map((input) => ({ productId: input.dataset.requestProductId, quantity: Number(input.value || 0) }))
-      .filter((item) => item.quantity > 0);
+      .map((input) => {
+        const productId = input.dataset.requestProductId;
+        const product = (currentState.products || []).find((item) => item.id === productId);
+        const packagingType = qsa("[data-request-packaging-id]", stockRequestForm)
+          .find((select) => select.dataset.requestPackagingId === productId)?.value || "piece";
+        const packagingQuantity = Number(input.value || 0);
+        return {
+          productId,
+          packagingType,
+          packagingQuantity,
+          quantity: quantityInPieces(product, packagingQuantity, packagingType, currentState.client)
+        };
+      })
+      .filter((item) => item.packagingQuantity > 0 && item.quantity > 0);
 
     if (!stockRequestForm.reportValidity()) return;
     if (!items.length) {

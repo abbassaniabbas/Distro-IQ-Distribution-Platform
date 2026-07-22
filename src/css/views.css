@@ -3769,16 +3769,6 @@
   font-size: 1.05rem;
 }
 
-.invoice-modal-accounting-note {
-  margin: 0;
-  padding: 10px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--mint-soft);
-  color: var(--mint-dark);
-  font-size: 0.76rem;
-  font-weight: 800;
-}
-
 .invoice-modal-footer {
   display: flex;
   justify-content: space-between;
@@ -7052,11 +7042,70 @@
   width: 92px;
 }
 
+.rep-request-quantity-control {
+  display: grid;
+  justify-items: end;
+  gap: 5px;
+}
+
+.rep-request-quantity-fields {
+  display: grid;
+  grid-template-columns: 86px minmax(108px, 132px);
+  align-items: center;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-soft);
+  transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+}
+
+.rep-request-quantity-fields:focus-within {
+  border-color: var(--green);
+  background: #fff;
+  box-shadow: 0 0 0 3px rgba(25, 185, 133, 0.14);
+}
+
+.rep-request-quantity-fields .rep-request-number {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 0;
+  color: var(--navy);
+  background: transparent;
+  font-size: 1rem;
+  font-weight: 800;
+  text-align: center;
+}
+
+.rep-request-quantity-fields select {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  padding: 8px 28px 8px 10px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  border-radius: 0;
+  background-color: #fff;
+  font-weight: 750;
+}
+
+.rep-request-quantity-control > small {
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+
 .po-item-summary {
   max-width: 360px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stock-request-item-summary {
+  max-width: 520px;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {
@@ -7084,5 +7133,18 @@
   .po-stock-row,
   .rep-request-product {
     align-items: flex-start;
+  }
+
+  .rep-request-product {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .rep-request-quantity-control {
+    justify-items: stretch;
+  }
+
+  .rep-request-quantity-control > small {
+    text-align: right;
   }
 }

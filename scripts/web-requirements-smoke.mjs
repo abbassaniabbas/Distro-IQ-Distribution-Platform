@@ -43,6 +43,7 @@ assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-b
 assert.match(responsiveComponentCss, /\.table-wrap[\s\S]*-webkit-overflow-scrolling: touch/, "wide tables must scroll safely on touch devices");
 assert.match(responsiveViewCss, /@media \(max-width: 640px\)[\s\S]*max-height: calc\(100dvh - 20px\)/, "mobile modals must remain inside the visible viewport");
 assert.match(responsiveViewCss, /\.stock-health-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "Stock Health grid cards must keep a normal width and fill from the left");
+assert.match(responsiveViewCss, /\.rep-request-quantity-fields:focus-within[\s\S]*box-shadow:[^;]+;/, "representative stock-request quantity controls must have a clear polished focus state");
 const currentTestDate = new Date().toISOString().slice(0, 10);
 const browserStorage = new Map();
 globalThis.localStorage = {
@@ -612,14 +613,14 @@ assert.match(invoiceDocument, /Walk-in customer/);
 assert.match(invoiceDocument, /Plantain Chips/);
 assert.match(invoiceDocument, /Sold by Amina Rep/);
 assert.match(invoiceDocument, /SALES RECEIPT/);
-assert.match(invoiceDocument, /Factory revenue was already recognised/);
+assert.doesNotMatch(invoiceDocument, /Representative sell-through record only|Factory revenue was already recognised/);
 assert.doesNotMatch(invoiceDocument, /Payment:/, "representative sales receipts must not expose a customer payment source");
 const invoicePreview = buildInvoicePreviewContent(cashInvoice, state);
 assert.match(invoicePreview, /invoice-modal-document/);
 assert.match(invoicePreview, /Bill to/);
 assert.match(invoicePreview, /Plantain Chips/);
 assert.match(invoicePreview, /Sales receipt/);
-assert.match(invoicePreview, /factory revenue was already recognised/i);
+assert.doesNotMatch(invoicePreview, /Representative sell-through record only|factory revenue was already recognised/i);
 assert.doesNotMatch(invoicePreview, /iframe/);
 const packagedInvoicePreview = buildInvoicePreviewContent({
   ...cashInvoice,
@@ -1556,7 +1557,7 @@ authenticate("user-manager");
 assert.ok(store.getState().products.some((product) => product.id === "SKU-CHIPS"), "returning to a company restores only that company's records");
 
 const multiDispatchStore = createStore();
-const multiDispatchClient = { id: "client-multi-dispatch", companyName: "Multi Dispatch Factory", currencySymbol: "₦" };
+const multiDispatchClient = { id: "client-multi-dispatch", companyName: "Multi Dispatch Factory", currencySymbol: "₦", packagingTypes: ["piece", "carton"], packagingDefaults: { piece: 1, carton: 0 } };
 const multiDispatchAccounts = [
   { id: "multi-ceo", clientId: multiDispatchClient.id, userId: "multi-ceo-user", name: "Multi CEO", email: "multi-ceo@example.com", role: "ceo", status: "active" },
   { id: "multi-rep", clientId: multiDispatchClient.id, userId: "multi-rep-user", name: "Multi Rep", email: "multi-rep@example.com", role: "sales_rep", status: "active" },
@@ -1817,12 +1818,14 @@ function authenticateMulti(userId) {
 
 authenticateMulti("multi-rep-user");
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canRequestStock, true);
-assert.match(renderDashboard({ state: scopeStateForCurrentRole(multiDispatchStore.getState()) }), /Request stock/);
+const repStockRequestDashboard = renderDashboard({ state: scopeStateForCurrentRole(multiDispatchStore.getState()) });
+assert.match(repStockRequestDashboard, /Request stock/);
+assert.match(repStockRequestDashboard, /data-request-packaging-id="MULTI-A"[\s\S]*Cartons/, "stock requests must let the representative choose cartons or pieces when a carton conversion exists");
 multiDispatchStore.dispatch({
   type: "SUBMIT_STOCK_REQUEST",
   items: [
-    { productId: "MULTI-A", quantity: 2 },
-    { productId: "MULTI-B", quantity: 3 }
+    { productId: "MULTI-A", packagingType: "carton", packagingQuantity: 1, quantity: 10 },
+    { productId: "MULTI-B", packagingType: "piece", packagingQuantity: 3, quantity: 3 }
   ],
   neededBy: "2099-07-20",
   priority: "urgent",
@@ -1832,12 +1835,24 @@ const stockRequest = multiDispatchStore.getState().stockRequests[0];
 assert.ok(stockRequest?.id.startsWith("REQ-"), "Sales Representative must be able to submit a stock request");
 assert.equal(stockRequest.status, "submitted");
 assert.equal(stockRequest.items.length, 2);
+assert.equal(stockRequest.items[0].packagingType, "carton");
+assert.equal(stockRequest.items[0].packagingQuantity, 1);
+assert.equal(stockRequest.items[0].quantity, 10, "one requested carton must be saved as its correct piece quantity");
+
+authenticateMulti("multi-ceo-user");
+globalThis.window.location.hash = "#/inventory?tab=stock-requests";
+const ceoStockRequests = renderInventory({ state: multiDispatchStore.getState() });
+assert.match(ceoStockRequests, /class="subtab-link is-active"[\s\S]*Stock requests/);
+assert.match(ceoStockRequests, new RegExp(`${stockRequest.id}[\\s\\S]*1 carton \\(10 pieces\\)`), "CEO must see representative stock requests and their packaging");
 
 authenticateMulti("multi-admin-user");
 assert.equal(currentUserRole(multiDispatchStore.getState()), "admin", "Admin must remain a distinct role");
 assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"]);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canCoordinateStockRequests, false);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canDispatchStock, false);
+globalThis.window.location.hash = "#/inventory?tab=stock-requests";
+const adminStockRequests = renderInventory({ state: multiDispatchStore.getState() });
+assert.match(adminStockRequests, new RegExp(`${stockRequest.id}[\\s\\S]*1 carton \\(10 pieces\\)`), "Admin must see representative stock requests and their packaging");
 globalThis.window.location.hash = "#/inventory?tab=adjustments";
 assert.match(renderInventory({ state: multiDispatchStore.getState() }), /class="subtab-link is-active"[\s\S]*>\s*Adjustments/);
 const adminDashboard = renderDashboard({ state: multiDispatchStore.getState() });
@@ -1931,6 +1946,9 @@ if (procurementOrder) {
 authenticateMulti("multi-store-user");
 assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "inventory", "activity-log", "settings"]);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canFulfillPurchaseOrders, false);
+globalThis.window.location.hash = "#/inventory?tab=stock-requests";
+const storeKeeperStockRequests = renderInventory({ state: multiDispatchStore.getState() });
+assert.match(storeKeeperStockRequests, new RegExp(`${stockRequest.id}[\\s\\S]*1 carton \\(10 pieces\\)`), "Store Keeper must see representative stock requests and their packaging");
 const multiStoreDashboard = renderDashboard({ state: multiDispatchStore.getState() });
 assert.doesNotMatch(multiStoreDashboard, /Forwarded Purchase Orders/);
 assert.match(multiStoreDashboard, /storekeeper-factory-stock-dropdown/);

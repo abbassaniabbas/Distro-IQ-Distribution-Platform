@@ -14,7 +14,7 @@ import {
   statusText
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
-import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722c";
+import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
 import { loadSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
@@ -125,6 +125,10 @@ function stockTabsForPermissions(permissions, state) {
       id: "assignments",
       label: "Rep stock ledger"
     },
+    ...(["ceo", "admin", "store_keeper"].includes(currentUserRole(state)) ? [{
+      id: "stock-requests",
+      label: "Stock requests"
+    }] : []),
     {
       id: "movement-history",
       label: "Movement history"
@@ -1703,6 +1707,38 @@ function renderTransactionRows(state) {
   });
 }
 
+function stockRequestItemSummary(items = []) {
+  return items.map((item) => {
+    const packagingType = item.packagingType || "piece";
+    const packagingQuantity = Number(item.packagingQuantity ?? item.quantity ?? 0);
+    const requested = packagingType === "piece"
+      ? `${formatNumber(item.quantity)} pieces`
+      : `${packagingQuantityLabel(packagingQuantity, packagingType)} (${formatNumber(item.quantity)} pieces)`;
+    return `${item.productName || item.productId}: ${requested}`;
+  }).join(" · ");
+}
+
+function renderStockRequestsPage(state) {
+  const requests = [...(state.stockRequests || [])]
+    .sort((a, b) => String(b.requestedAt || "").localeCompare(String(a.requestedAt || "")));
+  const rows = requests.map((request) => `
+    <tr data-search-index="${escapeHtml(`${request.id} ${request.repName} ${request.status} ${request.priority} ${request.neededBy} ${stockRequestItemSummary(request.items)}`.toLowerCase())}">
+      <td><strong>${escapeHtml(request.id)}</strong><div class="muted">${request.requestedAt ? formatDate(String(request.requestedAt).slice(0, 10)) : "Not recorded"}</div></td>
+      <td><strong>${escapeHtml(request.repName || "Sales Representative")}</strong><div class="muted">Needed ${formatDate(request.neededBy)}</div></td>
+      <td><strong>${formatNumber(request.items?.length || 0)} product${request.items?.length === 1 ? "" : "s"}</strong><div class="muted stock-request-item-summary">${escapeHtml(stockRequestItemSummary(request.items))}</div></td>
+      <td>${statusPill(request.priority || "normal")}</td>
+      <td>${statusPill(request.status || "submitted")}</td>
+    </tr>
+  `);
+
+  return `
+    <section class="panel">
+      ${panelHeader("Representative stock requests", "Requests submitted to the factory by sales representatives")}
+      ${table(["Request", "Sales rep", "Products and packaging", "Priority", "Status"], rows, "No representative stock requests have been submitted")}
+    </section>
+  `;
+}
+
 function renderStockHealthPage(state, permissions) {
   const canAddStock = permissions.canManageProducts || permissions.canAddStock;
   const visibleProducts = permissions.canManageProducts
@@ -2043,6 +2079,7 @@ function renderStockTabPage({ activeTabId, state, permissions }) {
   if (activeTabId === "dispatch") return renderDispatchPage(state, permissions);
   if (activeTabId === "overview") return renderOverviewPage(state);
   if (activeTabId === "assignments") return renderAssignmentsPage(state, permissions);
+  if (activeTabId === "stock-requests") return renderStockRequestsPage(state);
   if (activeTabId === "movement-history") return renderTransactionsPage(state);
   if (activeTabId === "adjustments") return renderAdjustmentContent(state);
   return renderStockHealthPage(state, permissions);

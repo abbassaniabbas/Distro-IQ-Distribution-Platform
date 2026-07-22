@@ -1,5 +1,5 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
-import { createStore } from "./state/store.js?v=20260722c";
+import { createStore } from "./state/store.js?v=20260722d";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace, loadWorkspaceFeatureModules, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260722c";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
@@ -25,10 +25,10 @@ import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20
 import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260722";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722c";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260722c";
-import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722c";
-import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722c";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722d";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260722d";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722d";
+import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722d";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js";
 import {
@@ -40,7 +40,7 @@ import {
 import { renderOrders, bindOrders } from "./views/orders.js?v=20260722";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
-import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js";
+import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260722d";
 import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260722";
 import { renderSettings, bindSettings } from "./views/settings.js";
 import { renderTeam, bindTeam } from "./views/team.js?v=20260722";

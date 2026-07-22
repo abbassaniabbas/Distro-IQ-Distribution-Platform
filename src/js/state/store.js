@@ -2534,12 +2534,16 @@ function reducer(currentState, action) {
       const productIds = requestedItems.map((item) => String(item.productId || "")).filter(Boolean);
       const items = requestedItems.map((item) => {
         const product = state.products.find((candidate) => candidate.id === item.productId);
+        const packagingType = String(item.packagingType || "piece").trim().toLowerCase();
+        const packagingQuantity = Number(item.packagingQuantity ?? item.quantity ?? 0);
         return {
           productId: product?.id || "",
           productName: product?.name || "",
           sku: product?.id || "",
-          unit: product?.unit || "unit",
-          quantity: Number(item.quantity || 0)
+          unit: "pieces",
+          packagingType,
+          packagingQuantity,
+          quantity: quantityInPieces(product, packagingQuantity, packagingType, state.client)
         };
       });
       const neededBy = dateOnly(action.neededBy);
@@ -2550,7 +2554,7 @@ function reducer(currentState, action) {
         new Set(productIds).size !== productIds.length ||
         items.some((item) => {
           const product = state.products.find((candidate) => candidate.id === item.productId);
-          return !product || product.status === "inactive" || stockCategoryIdForProduct(product) !== "finished_products" || !Number.isFinite(item.quantity) || item.quantity <= 0;
+          return !product || product.status === "inactive" || stockCategoryIdForProduct(product) !== "finished_products" || !["piece", "carton"].includes(item.packagingType) || !Number.isFinite(item.packagingQuantity) || item.packagingQuantity <= 0 || !Number.isFinite(item.quantity) || item.quantity <= 0;
         }) ||
         !isValidISODate(neededBy) ||
         neededBy < todayISO() ||
@@ -2578,7 +2582,7 @@ function reducer(currentState, action) {
         recordType: "stock_request",
         recordLabel: request.id,
         summary: `${request.repName} submitted ${request.id}`,
-        details: items.map((item) => `${item.quantity} ${item.unit} ${item.productName}`).join(", ")
+        details: items.map((item) => `${packagingQuantityLabel(item.packagingQuantity, item.packagingType)} ${item.productName} (${item.quantity} pieces)`).join(", ")
       });
       return state;
     }
@@ -2590,7 +2594,12 @@ function reducer(currentState, action) {
       if (!request) return state;
       const items = (Array.isArray(action.items) && action.items.length ? action.items : request.items).map((item) => {
         const requestedItem = request.items.find((candidate) => candidate.productId === item.productId);
-        return requestedItem ? { ...requestedItem, quantity: Number(item.quantity || 0) } : null;
+        return requestedItem ? {
+          ...requestedItem,
+          packagingType: String(item.packagingType || requestedItem.packagingType || "piece"),
+          packagingQuantity: Number(item.packagingQuantity ?? requestedItem.packagingQuantity ?? item.quantity ?? 0),
+          quantity: Number(item.quantity || 0)
+        } : null;
       }).filter(Boolean);
       const destination = String(action.destination || "").trim();
       const paymentType = normalized(action.paymentType || "credit");

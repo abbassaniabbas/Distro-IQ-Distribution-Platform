@@ -1,10 +1,11 @@
 import { formatDate, formatDateTime, formatNumber, statusText } from "../services/formatters.js";
 import { currentUserRole } from "../services/rbac.js";
-import { openInvoiceQuickView } from "../services/invoices.js";
+import { openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { requestTextDialog } from "../ui/action-dialog.js";
+import { packagingOption, packagingQuantityLabel, quantityInPieces } from "../services/packaging.js";
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -15,7 +16,14 @@ function requestFor(state, purchaseOrder) {
 }
 
 function itemSummary(items = []) {
-  return items.map((item) => `${formatNumber(item.quantity)} ${item.unit || "units"} ${item.productName}`).join(" · ");
+  return items.map((item) => {
+    const packagingType = item.packagingType || "piece";
+    const packagingQuantity = Number(item.packagingQuantity ?? item.quantity ?? 0);
+    const requested = packagingType === "piece"
+      ? `${formatNumber(item.quantity)} pieces`
+      : `${packagingQuantityLabel(packagingQuantity, packagingType)} (${formatNumber(item.quantity)} pieces)`;
+    return `${requested} ${item.productName}`;
+  }).join(" · ");
 }
 
 function stockAvailable(state, productId) {
@@ -138,7 +146,7 @@ export function renderPurchaseOrders({ state }) {
         ${metricCard({ label: "Forwarded", value: formatNumber(forwarded), meta: "Waiting for Store Keeper", iconName: "arrowRight" })}
         ${metricCard({ label: "Issued", value: formatNumber(issued), meta: "Allocated and dispatched", iconName: "check" })}
       </div>
-      ${role === "store_keeper" ? "" : `<section class="panel">${panelHeader("Representative stock requests", role === "admin" ? "Review each request before preparing its Purchase Order" : "Original requests and their current status")}${table(["Request", "Representative", "Products", "Priority", "Status", "Action"], renderRequestRows(state, role), "No representative stock requests have been submitted")}</section>`}
+      <section class="panel">${panelHeader("Representative stock requests", role === "admin" ? "Review each request before preparing its Purchase Order" : "Original requests and their current status")}${table(["Request", "Representative", "Products", "Priority", "Status", "Action"], renderRequestRows(state, role), "No representative stock requests have been submitted")}</section>
       <section class="panel">${panelHeader(role === "store_keeper" ? "Forwarded Purchase Orders" : "Purchase Order register", role === "store_keeper" ? "Verify availability, then allocate and dispatch the listed products" : "Documents forwarded to the Store Keeper and their issue status")}${table(["Purchase Order", "Representative", "Products", "Terms", "Status", role === "store_keeper" ? "Allocation" : "Record"], renderPurchaseOrderRows(state, role), "No Purchase Orders have been prepared")}</section>
       ${role === "admin" ? renderPrepareModal() : ""}
       ${role === "store_keeper" ? renderIssueModal() : ""}
@@ -161,7 +169,11 @@ export function bindPurchaseOrders({ root, store }) {
       form.reset();
       form.elements.requestId.value = request.id;
       qs("[data-purchase-order-request-summary]", modal).innerHTML = `<strong>${escapeHtml(request.id)} · ${escapeHtml(request.repName)}</strong><span>Needed ${formatDate(request.neededBy)} · ${escapeHtml(statusText(request.priority))}</span>`;
-      qs("[data-purchase-order-items]", modal).innerHTML = request.items.map((item) => `<label class="po-edit-item"><span>${escapeHtml(item.productName)} <small>${escapeHtml(item.sku)}</small></span><span><input type="number" min="1" step="1" name="quantity-${escapeHtml(item.productId)}" value="${escapeHtml(item.quantity)}" required><small>${escapeHtml(item.unit)}</small></span></label>`).join("");
+      qs("[data-purchase-order-items]", modal).innerHTML = request.items.map((item) => {
+        const packagingType = item.packagingType || "piece";
+        const packagingQuantity = Number(item.packagingQuantity ?? item.quantity ?? 0);
+        return `<label class="po-edit-item"><span>${escapeHtml(item.productName)} <small>${escapeHtml(item.sku)} · ${formatNumber(item.quantity)} pieces</small></span><span><input type="number" min="1" step="1" name="quantity-${escapeHtml(item.productId)}" value="${escapeHtml(packagingQuantity)}" required><small>${escapeHtml(packagingOption(packagingType).label)}</small></span></label>`;
+      }).join("");
       if (message) message.textContent = "";
       modal.hidden = false;
     }));
@@ -185,7 +197,17 @@ export function bindPurchaseOrders({ root, store }) {
       const requestId = String(formData.get("requestId") || "");
       const request = (state.stockRequests || []).find((item) => item.id === requestId);
       if (!request) return;
-      const items = request.items.map((item) => ({ productId: item.productId, quantity: Number(formData.get(`quantity-${item.productId}`) || 0) }));
+      const items = request.items.map((item) => {
+        const product = (state.products || []).find((candidate) => candidate.id === item.productId);
+        const packagingType = item.packagingType || "piece";
+        const packagingQuantity = Number(formData.get(`quantity-${item.productId}`) || 0);
+        return {
+          productId: item.productId,
+          packagingType,
+          packagingQuantity,
+          quantity: quantityInPieces(product, packagingQuantity, packagingType, state.client)
+        };
+      });
       if (!form.reportValidity() || items.some((item) => item.quantity <= 0)) {
         if (message) message.textContent = "Please complete the required fields";
         return;
@@ -228,7 +250,23 @@ export function bindPurchaseOrders({ root, store }) {
       }
       const invoiceIds = new Set((state.invoices || []).map((invoice) => invoice.id));
       const dispatchIds = new Set((state.stockTransactions || []).map((transaction) => transaction.dispatchId).filter(Boolean));
-      store.dispatch({ type: "RECORD_STOCK_DISPATCH", items: purchaseOrder.items.map((item) => ({ productId: item.productId, quantity: item.quantity })), recipientType: "Sales Representative", recipientName: purchaseOrder.repName, paymentType: purchaseOrder.paymentType, destination: purchaseOrder.destination, dispatchDate: formData.get("dispatchDate"), expectedDeliveryAt: formData.get("expectedDeliveryAt"), staffName: "Store Keeper", message: "Purchase Order stock issued" });
+      store.dispatch({
+        type: "RECORD_STOCK_DISPATCH",
+        items: purchaseOrder.items.map((item) => ({
+          productId: item.productId,
+          quantity: Number(item.packagingQuantity ?? item.quantity ?? 0),
+          packagingQuantity: Number(item.packagingQuantity ?? item.quantity ?? 0),
+          packagingType: item.packagingType || "piece"
+        })),
+        recipientType: "Sales Representative",
+        recipientName: purchaseOrder.repName,
+        paymentType: purchaseOrder.paymentType,
+        destination: purchaseOrder.destination,
+        dispatchDate: formData.get("dispatchDate"),
+        expectedDeliveryAt: formData.get("expectedDeliveryAt"),
+        staffName: "Store Keeper",
+        message: "Purchase Order stock issued"
+      });
       const nextState = store.getState();
       const invoice = (nextState.invoices || []).find((item) => !invoiceIds.has(item.id));
       const transaction = (nextState.stockTransactions || []).find((item) => item.dispatchId && !dispatchIds.has(item.dispatchId));
