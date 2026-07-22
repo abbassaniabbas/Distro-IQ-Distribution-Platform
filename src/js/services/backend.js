@@ -713,6 +713,47 @@ export async function saveSharedProductImage({ clientId, sku, previousSku = "", 
   return verifySavedRow(savedRow);
 }
 
+export async function purgeSharedProductImages({ clientId, skus = [] }) {
+  throwIfBackendMissing();
+  const normalizedSkus = [...new Set(
+    (Array.isArray(skus) ? skus : [skus])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  )];
+  if (!clientId || !normalizedSkus.length) return { cleared: 0, deleted: 0 };
+
+  const supabase = await getSupabaseClient();
+  const { error: clearError } = await supabase
+    .from("stock_products")
+    .update({ image_url: "", updated_at: new Date().toISOString() })
+    .eq("client_id", clientId)
+    .in("sku", normalizedSkus);
+
+  if (clearError) {
+    throw sharedImageFailure(clearError, "The past stock picture data could not be cleared.");
+  }
+
+  const { data: deletedRows, error: deleteError } = await supabase
+    .from("stock_products")
+    .delete()
+    .eq("client_id", clientId)
+    .in("sku", normalizedSkus)
+    .select("sku");
+
+  // Older installations did not grant DELETE on this compatibility table,
+  // and legacy foreign keys can retain its non-image product shell. The
+  // image data has already been erased above, so neither condition may revive
+  // a deleted stock picture when its SKU is reused.
+  if (deleteError && !["23503", "42501"].includes(String(deleteError.code || ""))) {
+    throw sharedImageFailure(deleteError, "The past stock picture record could not be deleted.");
+  }
+
+  return {
+    cleared: normalizedSkus.length,
+    deleted: Array.isArray(deletedRows) ? deletedRows.length : 0
+  };
+}
+
 export async function loadWorkspaceFeatureModules(clientId) {
   throwIfBackendMissing();
 

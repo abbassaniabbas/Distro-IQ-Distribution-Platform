@@ -335,6 +335,15 @@ function applySharedProductImages(products, images) {
         imageRemoteSynced: false
       };
     }
+    if (product.imageRemoteSynced !== true && !product.imageStorageKey) {
+      return {
+        ...product,
+        // A matching SKU alone is not proof that this picture belongs to the
+        // current stock record. New records must explicitly synchronize their
+        // own image (including an intentional empty image).
+        imageRemoteSynced: false
+      };
+    }
     return {
       ...product,
       imageUrl: String(image.imageUrl || ""),
@@ -969,11 +978,15 @@ function reducer(currentState, action) {
           const localProducts = new Map((state.products || []).map((product) => [String(product.id || ""), product]));
           nextState.products = clone(records).map((product) => {
             const localProduct = localProducts.get(String(product.id || ""));
+            const remoteImageSynced = product.imageRemoteSynced === true;
+            const hasDurableLocalImage = Boolean(localProduct?.imageStorageKey || product.imageStorageKey);
             return {
               ...product,
-              imageUrl: localProduct?.imageUrl || product.imageUrl || "",
+              imageUrl: remoteImageSynced || hasDurableLocalImage
+                ? (localProduct?.imageUrl || product.imageUrl || "")
+                : "",
               imageStorageKey: localProduct?.imageStorageKey || product.imageStorageKey || "",
-              imageRemoteSynced: Boolean(localProduct?.imageRemoteSynced || product.imageRemoteSynced)
+              imageRemoteSynced: remoteImageSynced
             };
           });
           return;

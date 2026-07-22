@@ -2257,7 +2257,7 @@ grant select, insert on public.stock_categories to authenticated;
 grant update (code, name, timeframe, behavior)
 on public.stock_categories to authenticated;
 
-grant select, insert on public.stock_products to authenticated;
+grant select, insert, delete on public.stock_products to authenticated;
 grant update (
   category_id,
   sku,

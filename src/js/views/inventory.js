@@ -15,8 +15,8 @@ import {
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
 import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
-import { loadSharedProductImages, saveSharedProductImage } from "../services/backend.js";
-import { removeProductImage, saveProductImage } from "../services/product-images.js";
+import { loadSharedProductImages, purgeSharedProductImages, saveSharedProductImage } from "../services/backend.js";
+import { productImageStorageKey, removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { printTabularReport } from "../services/report-export.js";
 import { dateIsWithinRange } from "../services/filtering.js";
@@ -2111,14 +2111,30 @@ export function bindInventory({ root, store, signal }) {
   const imageRefreshState = store.getState();
   if (isBackendConfigured() && imageRefreshState.client?.id) {
     const refreshSharedStockPictures = () => {
-      loadSharedProductImages(imageRefreshState.client.id).then((images) => {
+      loadSharedProductImages(imageRefreshState.client.id).then(async (images) => {
         if (signal?.aborted) return;
         const currentProducts = new Map((store.getState().products || []).map((product) => [String(product.id), product]));
+        const staleImageSkus = images.filter((image) => {
+          const product = currentProducts.get(String(image.productId || ""));
+          return product && String(image.imageUrl || "") && !product.imageRemoteSynced && !product.imageStorageKey;
+        }).map((image) => image.productId);
+
+        if (staleImageSkus.length && currentUserRole(store.getState()) === "ceo") {
+          await purgeSharedProductImages({ clientId: imageRefreshState.client.id, skus: staleImageSkus });
+          images = images.map((image) => staleImageSkus.includes(image.productId)
+            ? { ...image, imageUrl: "", remoteSynced: true }
+            : image);
+          store.dispatch({
+            type: "HYDRATE_PRODUCT_IMAGES",
+            images: staleImageSkus.map((productId) => ({ productId, imageUrl: "", remoteSynced: true })),
+            authoritative: true
+          });
+        }
+
         const changedImages = images.filter((image) => {
           const product = currentProducts.get(String(image.productId || ""));
-          return product && (
-            String(product.imageUrl || "") !== String(image.imageUrl || "") ||
-            !product.imageRemoteSynced
+          return product && product.imageRemoteSynced && (
+            String(product.imageUrl || "") !== String(image.imageUrl || "")
           );
         });
         if (changedImages.length) {
@@ -2912,9 +2928,30 @@ export function bindInventory({ root, store, signal }) {
     if (event.key === "Escape") closeStockDeletionConfirmation();
   });
 
-  confirmStockDeleteButton?.addEventListener("click", () => {
+  confirmStockDeleteButton?.addEventListener("click", async () => {
     if (!pendingStockDeletionIds.length) return;
     const productIds = [...pendingStockDeletionIds];
+    const state = store.getState();
+    const deletedProducts = (state.products || []).filter((product) => productIds.includes(String(product.id || "")));
+    confirmStockDeleteButton.disabled = true;
+
+    try {
+      if (isBackendConfigured()) {
+        await purgeSharedProductImages({
+          clientId: state.client?.id,
+          skus: deletedProducts.map((product) => product.id)
+        });
+      }
+
+      await Promise.all(deletedProducts.map((product) => removeProductImage(
+        product.imageStorageKey || productImageStorageKey(state.client?.id, product.id)
+      ).catch(() => undefined)));
+    } catch (error) {
+      confirmStockDeleteButton.disabled = false;
+      if (stockDeleteSummary) stockDeleteSummary.textContent = error.message;
+      return;
+    }
+
     closeStockDeletionConfirmation();
     store.dispatch({
       type: "DELETE_PRODUCTS",
@@ -3570,7 +3607,7 @@ export function bindInventory({ root, store, signal }) {
       imageUrlForState = "";
     }
 
-    const sharedImageChanged = shouldStoreImage || stockImageCleared || Boolean(
+    const sharedImageChanged = !existingProductId || shouldStoreImage || stockImageCleared || Boolean(
       imageUrlForState && (
         !existingProduct?.imageRemoteSynced ||
         (existingProduct && existingProduct.id !== sku)

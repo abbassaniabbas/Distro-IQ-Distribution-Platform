@@ -27,7 +27,7 @@ import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
 import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722d";
 import { renderFinance, bindFinance } from "./views/finance.js?v=20260722f";
-import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722d";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722e";
 import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722d";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js";

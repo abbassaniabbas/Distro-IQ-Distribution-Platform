@@ -30,7 +30,7 @@ import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, te
 import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog } from "../ui/action-dialog.js";
 import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722d";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722e";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 

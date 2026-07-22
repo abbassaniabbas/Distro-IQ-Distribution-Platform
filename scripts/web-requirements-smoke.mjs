@@ -534,9 +534,36 @@ const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "ut
 assert.match(appSource, /saveSharedProductImage\([\s\S]*imageUrl: image\.imageUrl/, "surviving browser stock images must be backed up to Supabase after sign-in");
 const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
 assert.match(backendSource, /select\("sku, image_url"\)[\s\S]*single\(\)/, "remote stock picture saves must be read back and confirmed");
+assert.match(backendSource, /purgeSharedProductImages[\s\S]*update\(\{ image_url: ""[\s\S]*\.delete\(\)/, "stock deletion must erase shared picture data before removing its compatibility row");
 assert.match(backendSource, /operationalActivityInitialized[\s\S]*activityLogs:[\s\S]*operationalActivityRows/, "initialized synchronized activity must remain authoritative over legacy activity rows");
 const inventorySource = readFileSync(new URL("../src/js/views/inventory.js", import.meta.url), "utf8");
 assert.match(inventorySource, /!existingProduct\?\.imageRemoteSynced/, "saving a stock item must retry any picture that has not reached Supabase");
+assert.match(inventorySource, /sharedImageChanged = !existingProductId \|\| shouldStoreImage/, "a newly created stock item must explicitly replace any past image saved under the same SKU");
+assert.match(inventorySource, /await purgeSharedProductImages\([\s\S]*await Promise\.all\(deletedProducts/, "deleting stock must clear its Supabase and browser picture traces before removing the row");
+
+store.dispatch({
+  type: "UPSERT_PRODUCT",
+  productId: "SKU-STALE-IMAGE",
+  sku: "SKU-STALE-IMAGE",
+  name: "Fresh stock without picture",
+  stockCategory: "finished_products",
+  stock: 10,
+  status: "active"
+});
+store.dispatch({
+  type: "HYDRATE_PRODUCT_IMAGES",
+  images: [{ productId: "SKU-STALE-IMAGE", imageUrl: "data:image/png;base64,PAST_STOCK_IMAGE", remoteSynced: true }],
+  authoritative: true
+});
+const operationalProductsWithoutStaleImage = store.getState().products.map((product) => (
+  product.id === "SKU-STALE-IMAGE"
+    ? { ...product, imageUrl: "", imageStorageKey: "", imageRemoteSynced: false }
+    : product
+));
+store.dispatch({ type: "SET_OPERATIONAL_RECORDS", collections: { products: operationalProductsWithoutStaleImage } });
+assert.equal(store.getState().products.find((product) => product.id === "SKU-STALE-IMAGE").imageUrl, "", "an unsynchronized new stock record must not inherit a past image merely because its SKU matches");
+assert.equal(store.getState().products.find((product) => product.id === "SKU-STALE-IMAGE").imageRemoteSynced, false, "operational image ownership must override a stale browser hydration flag");
+store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-STALE-IMAGE"] });
 store.dispatch({ type: "DELETE_PRODUCTS", productIds: ["SKU-IMAGE-PERSIST"] });
 
 store.dispatch({
