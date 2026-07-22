@@ -218,6 +218,170 @@ function authenticate(userId) {
 
 authenticate("user-manager");
 assert.equal(currentUserRole(store.getState()), "ceo", "legacy Manager memberships must be absorbed into CEO access");
+
+const salesOrderCleanupStore = createStore();
+const salesOrderCleanupClient = { ...client, id: "client-sales-order-cleanup" };
+const salesOrderCleanupAccount = { ...accounts.find((item) => item.role === "ceo"), clientId: salesOrderCleanupClient.id };
+salesOrderCleanupStore.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: salesOrderCleanupAccount.userId } },
+  user: { id: salesOrderCleanupAccount.userId, email: salesOrderCleanupAccount.email },
+  client: salesOrderCleanupClient,
+  accounts: [salesOrderCleanupAccount],
+  invites: [],
+  activityLogs: []
+});
+salesOrderCleanupStore.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: {
+    orders: [
+      { id: "ORD-OLD", createdAt: "2026-07-18T09:00:00.000Z", items: [] },
+      { id: "ORD-TODAY", createdAt: "2026-07-22T09:00:00.000Z", items: [] }
+    ],
+    invoices: [
+      { id: "INV-OLD", orderId: "ORD-OLD", issuedAt: "2026-07-18" },
+      { id: "INV-TODAY", orderId: "ORD-TODAY", issuedAt: "2026-07-22" }
+    ],
+    routes: [{ id: "ROUTE-CLEANUP", orderIds: ["ORD-OLD", "ORD-TODAY"] }],
+    stockTransactions: [{ id: "TXN-OLD-ORDER", orderId: "ORD-OLD", type: "supply", date: "2026-07-18" }]
+  }
+});
+salesOrderCleanupStore.dispatch({ type: "DELETE_SALES_ORDERS_BEFORE_DATE", cutoffDate: "2026-07-22" });
+assert.deepEqual(salesOrderCleanupStore.getState().orders.map((order) => order.id), ["ORD-TODAY"], "sales-order cleanup must retain only today's orders");
+assert.deepEqual(salesOrderCleanupStore.getState().invoices.map((invoice) => invoice.id), ["INV-TODAY"], "sales-order cleanup must remove linked old invoices");
+assert.deepEqual(salesOrderCleanupStore.getState().routes[0].orderIds, ["ORD-TODAY"], "sales-order cleanup must remove deleted order references from routes");
+assert.equal(salesOrderCleanupStore.getState().stockTransactions.some((transaction) => transaction.id === "TXN-OLD-ORDER"), true, "sales-order cleanup must preserve stock movement history");
+
+const productRevenueCleanupStore = createStore();
+const productRevenueCleanupClient = { ...client, id: "client-product-revenue-cleanup" };
+const productRevenueCleanupAccount = { ...accounts.find((item) => item.role === "ceo"), clientId: productRevenueCleanupClient.id };
+productRevenueCleanupStore.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: productRevenueCleanupAccount.userId } },
+  user: { id: productRevenueCleanupAccount.userId, email: productRevenueCleanupAccount.email },
+  client: productRevenueCleanupClient,
+  accounts: [productRevenueCleanupAccount],
+  invites: [],
+  activityLogs: []
+});
+productRevenueCleanupStore.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: {
+    orders: [
+      { id: "ORD-OLD-REVENUE", createdAt: "2026-07-18", financialImpact: true, items: [] },
+      { id: "ORD-OLD-SELL-THROUGH", createdAt: "2026-07-18", financialImpact: false, accountingTreatment: "sell_through_only", items: [] },
+      { id: "ORD-TODAY-REVENUE", createdAt: "2026-07-22", financialImpact: true, items: [] }
+    ],
+    invoices: [
+      { id: "INV-OLD-REVENUE", orderId: "ORD-OLD-REVENUE", issuedAt: "2026-07-18", financialImpact: true },
+      { id: "INV-OLD-SELL-THROUGH", orderId: "ORD-OLD-SELL-THROUGH", issuedAt: "2026-07-18", financialImpact: false, accountingTreatment: "sell_through_only" },
+      { id: "INV-TODAY-REVENUE", orderId: "ORD-TODAY-REVENUE", issuedAt: "2026-07-22", financialImpact: true }
+    ],
+    stockTransactions: [
+      { id: "TXN-OLD-REVENUE", type: "sale", date: "2026-07-18", financialImpact: true },
+      { id: "TXN-OLD-SELL-THROUGH", type: "sale", date: "2026-07-18", financialImpact: false, accountingTreatment: "sell_through_only" },
+      { id: "TXN-TODAY-REVENUE", type: "sale", date: "2026-07-22", financialImpact: true }
+    ]
+  }
+});
+productRevenueCleanupStore.dispatch({ type: "DELETE_PRODUCT_REVENUE_BEFORE_DATE", cutoffDate: "2026-07-22" });
+assert.deepEqual(productRevenueCleanupStore.getState().orders.map((order) => order.id).sort(), ["ORD-OLD-SELL-THROUGH", "ORD-TODAY-REVENUE"], "product-revenue cleanup must keep representative sell-through and today's orders");
+assert.deepEqual(productRevenueCleanupStore.getState().stockTransactions.map((transaction) => transaction.id).sort(), ["TXN-OLD-SELL-THROUGH", "TXN-TODAY-REVENUE"], "product-revenue cleanup must preserve representative sell-through transactions");
+assert.deepEqual(productRevenueCleanupStore.getState().invoices.map((invoice) => invoice.id).sort(), ["INV-OLD-SELL-THROUGH", "INV-TODAY-REVENUE"], "product-revenue cleanup must retain sell-through and today's invoices");
+
+const historicalCleanupStore = createStore();
+const historicalCleanupClient = { ...client, id: "client-historical-cleanup" };
+const historicalCleanupAccount = { ...accounts.find((item) => item.role === "ceo"), clientId: historicalCleanupClient.id };
+historicalCleanupStore.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: historicalCleanupAccount.userId } },
+  user: { id: historicalCleanupAccount.userId, email: historicalCleanupAccount.email },
+  client: historicalCleanupClient,
+  accounts: [historicalCleanupAccount],
+  invites: [],
+  activityLogs: []
+});
+historicalCleanupStore.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: {
+    products: [{ id: "SKU-CURRENT", name: "Current product", stock: 40, status: "active" }],
+    retailers: [{ id: "CUS-CURRENT", name: "Current customer", createdAt: "2026-07-15" }],
+    stockAssignments: [{ id: "ASN-CURRENT", assignedAt: "2026-07-15", assigned: 20, sold: 5, returned: 0 }],
+    creditLimits: [{ id: "CRD-CURRENT", partyName: "Current account", limit: 10000, balance: 2000, changedAt: "2026-07-15" }],
+    stockTransactions: [
+      { id: "TXN-HISTORY-OLD", type: "supply", date: "2026-07-18" },
+      { id: "TXN-HISTORY-TODAY", type: "supply", date: "2026-07-22" }
+    ],
+    productionBatches: [
+      { id: "BATCH-HISTORY-OLD", batchDate: "2026-07-18" },
+      { id: "BATCH-HISTORY-TODAY", batchDate: "2026-07-22" }
+    ],
+    orders: [
+      { id: "ORD-HISTORY-OLD", createdAt: "2026-07-18", items: [] },
+      { id: "ORD-HISTORY-TODAY", createdAt: "2026-07-22", items: [] }
+    ],
+    invoices: [
+      { id: "INV-HISTORY-OLD", orderId: "ORD-HISTORY-OLD", issuedAt: "2026-07-18" },
+      { id: "INV-HISTORY-TODAY", orderId: "ORD-HISTORY-TODAY", issuedAt: "2026-07-22" }
+    ],
+    stockRequests: [
+      { id: "REQ-HISTORY-OLD", requestedAt: "2026-07-18T09:00:00.000Z" },
+      { id: "REQ-HISTORY-TODAY", requestedAt: "2026-07-22T09:00:00.000Z" }
+    ],
+    purchaseOrders: [
+      { id: "PO-HISTORY-OLD", requestId: "REQ-HISTORY-OLD", preparedAt: "2026-07-18" },
+      { id: "PO-HISTORY-TODAY", requestId: "REQ-HISTORY-TODAY", preparedAt: "2026-07-22" }
+    ],
+    procurementOrders: [
+      { id: "PROC-HISTORY-OLD", preparedAt: "2026-07-18" },
+      { id: "PROC-HISTORY-TODAY", preparedAt: "2026-07-22" }
+    ],
+    correctionRequests: [
+      { id: "COR-HISTORY-OLD", transactionId: "TXN-HISTORY-OLD", createdAt: "2026-07-18" },
+      { id: "COR-HISTORY-TODAY", transactionId: "TXN-HISTORY-TODAY", createdAt: "2026-07-22" }
+    ],
+    salesReports: [
+      { id: "RPT-HISTORY-OLD", reportDate: "2026-07-18", transactionIds: [] },
+      { id: "RPT-HISTORY-TODAY", reportDate: "2026-07-22", transactionIds: ["TXN-HISTORY-TODAY"], reportLines: [] }
+    ],
+    routes: [
+      { id: "ROUTE-HISTORY-OLD", routeDate: "2026-07-18", orderIds: ["ORD-HISTORY-OLD"] },
+      { id: "ROUTE-HISTORY-TODAY", routeDate: "2026-07-22", orderIds: ["ORD-HISTORY-TODAY"] }
+    ],
+    creditLimitHistory: [
+      { id: "CLH-HISTORY-OLD", changedAt: "2026-07-18" },
+      { id: "CLH-HISTORY-TODAY", changedAt: "2026-07-22" }
+    ],
+    activityLogs: [
+      { id: "ACT-HISTORY-OLD", clientId: historicalCleanupClient.id, createdAt: "2026-07-18", summary: "Old" },
+      { id: "ACT-HISTORY-TODAY", clientId: historicalCleanupClient.id, createdAt: "2026-07-22", summary: "Today" }
+    ]
+  }
+});
+historicalCleanupStore.dispatch({ type: "DELETE_HISTORICAL_RECORDS_BEFORE_DATE", cutoffDate: "2026-07-22" });
+const historicalCleanupState = historicalCleanupStore.getState();
+[
+  ["stockTransactions", "TXN-HISTORY-TODAY"],
+  ["productionBatches", "BATCH-HISTORY-TODAY"],
+  ["orders", "ORD-HISTORY-TODAY"],
+  ["invoices", "INV-HISTORY-TODAY"],
+  ["stockRequests", "REQ-HISTORY-TODAY"],
+  ["purchaseOrders", "PO-HISTORY-TODAY"],
+  ["procurementOrders", "PROC-HISTORY-TODAY"],
+  ["correctionRequests", "COR-HISTORY-TODAY"],
+  ["salesReports", "RPT-HISTORY-TODAY"],
+  ["routes", "ROUTE-HISTORY-TODAY"],
+  ["creditLimitHistory", "CLH-HISTORY-TODAY"]
+].forEach(([collection, retainedId]) => {
+  assert.deepEqual(historicalCleanupState[collection].map((record) => record.id), [retainedId], `${collection} must retain only today's historical record`);
+});
+assert.equal(historicalCleanupState.activityLogs.some((entry) => entry.id === "ACT-HISTORY-OLD"), false, "old activity must be removed");
+assert.equal(historicalCleanupState.activityLogs.some((entry) => entry.id === "ACT-HISTORY-TODAY"), true, "today's activity must remain");
+assert.equal(historicalCleanupState.products[0].id, "SKU-CURRENT", "master stock products must remain");
+assert.equal(historicalCleanupState.retailers[0].id, "CUS-CURRENT", "saved customers must remain");
+assert.equal(historicalCleanupState.stockAssignments[0].id, "ASN-CURRENT", "representative balances must remain");
+assert.equal(historicalCleanupState.creditLimits[0].id, "CRD-CURRENT", "current credit limits must remain");
+
 globalThis.window.location.hash = "#/messages?with=__all_staff__";
 const broadcastBody = "Company-wide stock review at 4 PM";
 const broadcastMessagesHtml = renderMessages({

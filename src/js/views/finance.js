@@ -20,6 +20,7 @@ import { downloadInvoice, getFinancialInvoiceRecords, openInvoiceQuickView, prin
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { confirmActionDialog } from "../ui/action-dialog.js";
 import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 
 const DEFAULT_FINANCE_TAB = "overview";
@@ -860,7 +861,17 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
     return `
       ${renderAccountantFilters(state)}
       <section class="panel">
-        ${panelHeader("Product revenue", "Top product lines by sales value")}
+        ${panelHeader(
+          "Product revenue",
+          "Top product lines by sales value",
+          currentUserRole(state) === "ceo"
+            ? textButton({
+                iconName: "trash",
+                label: "Delete before today",
+                className: "warning js-delete-old-product-revenue"
+              })
+            : ""
+        )}
         <div class="bar-list">${renderAccountantProductRevenue(state)}</div>
       </section>
       <section class="panel" data-export-table="true" data-export-title="Revenue cost and profit">
@@ -1379,6 +1390,28 @@ export function bindFinance({ root, store, signal }) {
   bindCreditHistoryFilters(root);
 
   bindAccountantFinance({ root });
+
+  const deleteOldProductRevenueButton = qs(".js-delete-old-product-revenue", root);
+  deleteOldProductRevenueButton?.addEventListener("click", async () => {
+    const state = store.getState();
+    if (currentUserRole(state) !== "ceo") return;
+
+    const cutoffDate = new Date().toISOString().slice(0, 10);
+    const confirmed = await confirmActionDialog({
+      title: "Delete product revenue before today?",
+      message: `This permanently removes product-revenue sales, returns, linked orders, and linked invoices dated before ${formatDate(cutoffDate)}. Today's records will remain.`,
+      confirmLabel: "Delete before today",
+      tone: "danger"
+    });
+    if (!confirmed) return;
+
+    deleteOldProductRevenueButton.disabled = true;
+    store.dispatch({
+      type: "DELETE_PRODUCT_REVENUE_BEFORE_DATE",
+      cutoffDate,
+      message: "Product revenue records before today deleted"
+    });
+  }, { signal });
 
   const creditForm = qs("#credit-limit-form", root);
   const repCreditForm = qs("#rep-credit-limit-form", root);

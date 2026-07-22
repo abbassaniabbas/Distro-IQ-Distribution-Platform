@@ -80,6 +80,15 @@ function dateOnly(value) {
   return String(value || "").slice(0, 10);
 }
 
+function recordPredates(record, cutoffDate, dateFields) {
+  for (const field of dateFields) {
+    const candidate = dateOnly(record?.[field]);
+    if (!candidate || !isValidISODate(candidate)) continue;
+    return candidate < cutoffDate;
+  }
+  return false;
+}
+
 function isValidISODate(value) {
   const candidate = String(value || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(candidate)) return false;
@@ -1287,6 +1296,209 @@ function reducer(currentState, action) {
       state.notificationReadAt = "";
       state.notificationClearedAt = "";
       state.dismissedNotificationIds = [];
+      return state;
+    }
+
+    case "DELETE_PRODUCT_REVENUE_BEFORE_DATE": {
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
+
+      const cutoffDate = isValidISODate(action.cutoffDate) ? action.cutoffDate : todayISO();
+      const deletedTransactionIds = new Set();
+      const deletedOrderIds = new Set();
+
+      state.stockTransactions = (state.stockTransactions || []).filter((transaction) => {
+        const transactionType = normalized(transaction.type);
+        const transactionDate = dateOnly(transaction.date || transaction.createdAt);
+        const shouldDelete = (
+          ["sale", "return"].includes(transactionType) &&
+          !isRepresentativeSellThroughTransaction(transaction) &&
+          Boolean(transactionDate) &&
+          transactionDate < cutoffDate
+        );
+
+        if (shouldDelete) deletedTransactionIds.add(String(transaction.id || ""));
+        return !shouldDelete;
+      });
+
+      state.orders = (state.orders || []).filter((order) => {
+        const orderDate = dateOnly(order.createdAt || order.updatedAt || order.dueAt);
+        const linkedTransactionIds = [order.transactionId, ...(order.transactionIds || [])]
+          .map((id) => String(id || ""))
+          .filter(Boolean);
+        const linkedToDeletedTransaction = linkedTransactionIds.some((id) => deletedTransactionIds.has(id));
+        const shouldDelete = !isRepresentativeSellThroughOrder(order, state) && (
+          linkedToDeletedTransaction || (Boolean(orderDate) && orderDate < cutoffDate)
+        );
+
+        if (shouldDelete) deletedOrderIds.add(String(order.id || ""));
+        return !shouldDelete;
+      });
+
+      state.invoices = (state.invoices || []).filter((invoice) => {
+        if (isRepresentativeSellThroughInvoice(invoice, state)) return true;
+
+        const invoiceDate = dateOnly(invoice.issuedAt || invoice.createdAt || invoice.dueAt);
+        const linkedTransactionIds = [invoice.transactionId, ...(invoice.transactionIds || [])]
+          .map((id) => String(id || ""))
+          .filter(Boolean);
+        return !(
+          deletedOrderIds.has(String(invoice.orderId || "")) ||
+          linkedTransactionIds.some((id) => deletedTransactionIds.has(id)) ||
+          (Boolean(invoiceDate) && invoiceDate < cutoffDate)
+        );
+      });
+
+      state.routes = (state.routes || []).map((route) => ({
+        ...route,
+        orderIds: (route.orderIds || []).filter((orderId) => !deletedOrderIds.has(String(orderId || "")))
+      }));
+      state.offlineSalesQueue = (state.offlineSalesQueue || []).filter((entry) => (
+        !deletedTransactionIds.has(String(entry.transactionId || "")) &&
+        !deletedOrderIds.has(String(entry.orderId || ""))
+      ));
+
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "deleted",
+        recordType: "product_revenue",
+        recordLabel: `Before ${cutoffDate}`,
+        summary: `Deleted product revenue records dated before ${cutoffDate}`
+      });
+      return state;
+    }
+
+    case "DELETE_SALES_ORDERS_BEFORE_DATE": {
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
+
+      const cutoffDate = isValidISODate(action.cutoffDate) ? action.cutoffDate : todayISO();
+      const deletedOrderIds = new Set();
+
+      state.orders = (state.orders || []).filter((order) => {
+        const orderDate = dateOnly(order.createdAt || order.updatedAt || order.dueAt);
+        const shouldDelete = Boolean(orderDate) && orderDate < cutoffDate;
+        if (shouldDelete) deletedOrderIds.add(String(order.id || ""));
+        return !shouldDelete;
+      });
+
+      if (!deletedOrderIds.size) return state;
+
+      state.invoices = (state.invoices || []).filter((invoice) => (
+        !deletedOrderIds.has(String(invoice.orderId || ""))
+      ));
+      state.routes = (state.routes || []).map((route) => ({
+        ...route,
+        orderIds: (route.orderIds || []).filter((orderId) => !deletedOrderIds.has(String(orderId || "")))
+      }));
+      state.offlineSalesQueue = (state.offlineSalesQueue || []).filter((entry) => (
+        !deletedOrderIds.has(String(entry.orderId || ""))
+      ));
+
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "deleted",
+        recordType: "sales_order",
+        recordLabel: `Before ${cutoffDate}`,
+        summary: `Deleted ${deletedOrderIds.size} sales order${deletedOrderIds.size === 1 ? "" : "s"} dated before ${cutoffDate}`
+      });
+      return state;
+    }
+
+    case "DELETE_HISTORICAL_RECORDS_BEFORE_DATE": {
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
+
+      const cutoffDate = isValidISODate(action.cutoffDate) ? action.cutoffDate : todayISO();
+      const deletedTransactionIds = new Set();
+      const deletedOrderIds = new Set();
+      const deletedStockRequestIds = new Set();
+      const deletedBatchIds = new Set();
+
+      state.stockTransactions = (state.stockTransactions || []).filter((transaction) => {
+        const shouldDelete = recordPredates(transaction, cutoffDate, ["date", "occurredAt", "createdAt", "updatedAt"]);
+        if (shouldDelete) deletedTransactionIds.add(String(transaction.id || ""));
+        return !shouldDelete;
+      });
+
+      state.productionBatches = (state.productionBatches || []).filter((batch) => {
+        const shouldDelete = recordPredates(batch, cutoffDate, ["batchDate", "createdAt", "updatedAt"]);
+        if (shouldDelete) deletedBatchIds.add(String(batch.id || ""));
+        return !shouldDelete;
+      });
+
+      state.orders = (state.orders || []).filter((order) => {
+        const linkedTransactionIds = [order.transactionId, ...(order.transactionIds || [])]
+          .map((id) => String(id || ""))
+          .filter(Boolean);
+        const shouldDelete = (
+          recordPredates(order, cutoffDate, ["createdAt", "orderDate", "updatedAt", "dueAt"]) ||
+          linkedTransactionIds.some((id) => deletedTransactionIds.has(id))
+        );
+        if (shouldDelete) deletedOrderIds.add(String(order.id || ""));
+        return !shouldDelete;
+      });
+
+      state.invoices = (state.invoices || []).filter((invoice) => {
+        const linkedTransactionIds = [invoice.transactionId, ...(invoice.transactionIds || [])]
+          .map((id) => String(id || ""))
+          .filter(Boolean);
+        return !(
+          recordPredates(invoice, cutoffDate, ["issuedAt", "createdAt", "updatedAt", "dueAt"]) ||
+          deletedOrderIds.has(String(invoice.orderId || "")) ||
+          linkedTransactionIds.some((id) => deletedTransactionIds.has(id))
+        );
+      });
+
+      state.stockRequests = (state.stockRequests || []).filter((request) => {
+        const shouldDelete = recordPredates(request, cutoffDate, ["requestedAt", "createdAt", "reviewedAt", "fulfilledAt"]);
+        if (shouldDelete) deletedStockRequestIds.add(String(request.id || ""));
+        return !shouldDelete;
+      });
+
+      state.purchaseOrders = (state.purchaseOrders || []).filter((purchaseOrder) => (
+        !recordPredates(purchaseOrder, cutoffDate, ["preparedAt", "forwardedAt", "issuedAt", "createdAt"]) &&
+        !deletedStockRequestIds.has(String(purchaseOrder.requestId || ""))
+      ));
+      state.procurementOrders = (state.procurementOrders || []).filter((procurementOrder) => (
+        !recordPredates(procurementOrder, cutoffDate, ["preparedAt", "orderedAt", "receivedAt", "createdAt"])
+      ));
+
+      state.correctionRequests = (state.correctionRequests || []).filter((request) => (
+        !recordPredates(request, cutoffDate, ["createdAt", "requestedAt", "reviewedAt"]) &&
+        !deletedTransactionIds.has(String(request.transactionId || ""))
+      ));
+
+      state.salesReports = (state.salesReports || [])
+        .filter((report) => !recordPredates(report, cutoffDate, ["reportDate", "submittedAt", "createdAt"]))
+        .map((report) => ({
+          ...report,
+          transactionIds: (report.transactionIds || []).filter((id) => !deletedTransactionIds.has(String(id || ""))),
+          reportLines: (report.reportLines || []).filter((line) => !deletedTransactionIds.has(String(line.transactionId || "")))
+        }));
+
+      state.routes = (state.routes || [])
+        .filter((route) => !recordPredates(route, cutoffDate, ["routeDate", "date", "startedAt", "createdAt"]))
+        .map((route) => ({
+          ...route,
+          orderIds: (route.orderIds || []).filter((orderId) => !deletedOrderIds.has(String(orderId || "")))
+        }));
+      state.creditLimitHistory = (state.creditLimitHistory || []).filter((entry) => (
+        !recordPredates(entry, cutoffDate, ["changedAt", "createdAt"])
+      ));
+      state.activityLogs = (state.activityLogs || []).filter((entry) => (
+        !recordPredates(entry, cutoffDate, ["createdAt", "date"])
+      ));
+      state.offlineSalesQueue = (state.offlineSalesQueue || []).filter((entry) => (
+        !recordPredates(entry, cutoffDate, ["createdAt", "date"]) &&
+        !deletedTransactionIds.has(String(entry.transactionId || "")) &&
+        !deletedOrderIds.has(String(entry.orderId || ""))
+      ));
+
+      appendActivityLog(state, {
+        clientId: state.client.id,
+        actionType: "deleted",
+        recordType: "historical_data",
+        recordLabel: `Before ${cutoffDate}`,
+        summary: `Deleted company operational history dated before ${cutoffDate} across all portals`
+      });
       return state;
     }
 

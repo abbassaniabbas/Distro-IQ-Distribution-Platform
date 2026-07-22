@@ -6,8 +6,9 @@ import {
 import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, panelHeader, statusPill, table } from "../ui/components.js";
+import { iconButton, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
+import { confirmActionDialog } from "../ui/action-dialog.js";
 
 const ORDER_PAGE_SIZE = 10;
 const ORDER_STATUSES = ["in_transit", "delayed", "delivered"];
@@ -319,6 +320,11 @@ export function renderOrders({ state }) {
                 ${regions.map((region) => `<option value="${escapeHtml(region)}">${escapeHtml(region)}</option>`).join("")}
               </select>
             </label>
+            ${currentUserRole(state) === "ceo" ? textButton({
+              iconName: "trash",
+              label: "Delete before today",
+              className: "warning js-delete-old-sales-orders"
+            }) : ""}
             ${renderDelayAttentionIcon(orders)}
           </div>
         </div>
@@ -345,6 +351,28 @@ export function bindOrders({ root, store, signal }) {
   const globalSearch = qs("#global-search", document);
   const delayModal = qs("#order-delay-modal", root);
   const delayContent = qs("#order-delay-content", root);
+  const deleteOldSalesOrdersButton = qs(".js-delete-old-sales-orders", root);
+
+  deleteOldSalesOrdersButton?.addEventListener("click", async () => {
+    const state = store.getState();
+    if (currentUserRole(state) !== "ceo") return;
+
+    const cutoffDate = new Date().toISOString().slice(0, 10);
+    const confirmed = await confirmActionDialog({
+      title: "Delete sales orders before today?",
+      message: `This permanently removes every sales order and linked invoice dated before ${formatDate(cutoffDate)}. Today's orders and stock movement history will remain.`,
+      confirmLabel: "Delete before today",
+      tone: "danger"
+    });
+    if (!confirmed) return;
+
+    deleteOldSalesOrdersButton.disabled = true;
+    store.dispatch({
+      type: "DELETE_SALES_ORDERS_BEFORE_DATE",
+      cutoffDate,
+      message: "Sales orders before today deleted"
+    });
+  }, { signal });
 
   function closeDelayModal() {
     if (delayModal) delayModal.hidden = true;
