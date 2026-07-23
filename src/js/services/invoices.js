@@ -56,6 +56,7 @@ export function getInvoiceRecords(state) {
   const limitsByName = new Map((state.creditLimits || []).map((limit) => [String(limit.partyName || "").trim().toLowerCase(), limit]));
   const derivedInvoices = (state.orders || [])
     .filter((order) => order.source === "quick_sale")
+    .filter((order) => !order.invoiceDeleted)
     .filter((order) => !linkedOrderIds.has(order.id))
     .map((order) => {
       const retailer = retailersById.get(order.retailerId);

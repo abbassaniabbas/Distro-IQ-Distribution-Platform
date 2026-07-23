@@ -20,8 +20,8 @@ import { downloadInvoice, getFinancialInvoiceRecords, openInvoiceQuickView, prin
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
-import { confirmActionDialog } from "../ui/action-dialog.js";
 import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
 
 const DEFAULT_FINANCE_TAB = "overview";
 const FINANCE_PAGE_SIZE = 10;
@@ -133,6 +133,7 @@ function renderInvoiceRows(state, permissions) {
 
     return `
       <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="invoices" data-search-index="${escapeHtml(searchIndex)}">
+        ${currentUserRole(state) === "ceo" ? ceoSelectionCell("invoices", invoice.id, `invoice ${invoice.id}`) : ""}
         <td>
           <strong>${escapeHtml(invoice.id)}</strong>
           <div class="muted">Issued ${formatDate(invoice.issuedAt)}</div>
@@ -203,21 +204,25 @@ function renderCreditAccountList(state, accountType) {
       : !isRepresentativeCreditAccount(limit));
 
   if (!matchingAccounts.length) {
-    return `<div class="empty-state">No ${accountType === "representative" ? "sales representative" : "customer"} credit reports available</div>`;
+    return `<div class="empty-state">No ${accountType === "representative" ? "sales representative credit reports" : "customer credit terms"} available</div>`;
   }
 
   return `
     <div class="credit-account-list">
       ${matchingAccounts.map(({ limit, index }) => {
         const { usagePercent, status } = creditAccountStatus(limit);
+        const scope = accountType === "representative" ? "representative_credit_limits" : "customer_credit_limits";
         return `
-          <button class="credit-account-list-item js-open-credit-account" type="button" data-credit-account-index="${index}" data-search-index="${escapeHtml(`${limit.partyName} ${limit.partyType} ${status}`.toLowerCase())}">
-            <span class="credit-account-avatar">${escapeHtml(String(limit.partyName || "AC").slice(0, 2).toUpperCase())}</span>
-            <span class="credit-account-name"><strong>${escapeHtml(limit.partyName)}</strong><small>${escapeHtml(limit.partyType || "Credit account")}</small></span>
-            <span class="credit-account-usage"><strong>${formatPercent(usagePercent)}</strong><small>used</small></span>
-            ${statusPill(status)}
-            <span class="credit-account-view" aria-hidden="true">${icon("eye")}</span>
-          </button>
+          <div class="credit-account-select-row">
+            <input type="checkbox" data-ceo-delete-item="${scope}" value="${escapeHtml(limit.id)}" aria-label="Select ${escapeHtml(limit.partyName)} credit report">
+            <button class="credit-account-list-item js-open-credit-account" type="button" data-credit-account-index="${index}" data-search-index="${escapeHtml(`${limit.partyName} ${limit.partyType} ${status}`.toLowerCase())}">
+              <span class="credit-account-avatar">${escapeHtml(String(limit.partyName || "AC").slice(0, 2).toUpperCase())}</span>
+              <span class="credit-account-name"><strong>${escapeHtml(limit.partyName)}</strong><small>${escapeHtml(limit.partyType || "Credit account")}</small></span>
+              <span class="credit-account-usage"><strong>${formatPercent(usagePercent)}</strong><small>used</small></span>
+              ${statusPill(status)}
+              <span class="credit-account-view" aria-hidden="true">${icon("eye")}</span>
+            </button>
+          </div>
         `;
       }).join("")}
     </div>
@@ -417,6 +422,11 @@ function renderCreditHistoryRows(state, accountType) {
 
     return `
       <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="${pageId}" data-credit-history-row data-credit-history-account="${escapeHtml(entry.partyName)}" data-credit-history-date="${escapeHtml(String(entry.changedAt || "").slice(0, 10))}" data-search-index="${escapeHtml(searchIndex)}">
+        ${currentUserRole(state) === "ceo" ? ceoSelectionCell(
+          accountType === "representative" ? "representative_credit_history" : "customer_credit_history",
+          entry.id,
+          `${entry.partyName} credit history`
+        ) : ""}
         <td>
           <strong>${escapeHtml(entry.partyName)}</strong>
           <div class="muted">${escapeHtml(entry.partyType)}</div>
@@ -644,6 +654,7 @@ function renderAccountantSalesReportRows(state) {
           data-sales="${Number(report.salesAmount || 0)}"
           data-search-index="${escapeHtml(searchIndex)}"
         >
+          ${currentUserRole(state) === "ceo" ? ceoSelectionCell("sales_reports", report.id, `sales report ${report.id}`) : ""}
           <td>
             <strong>${escapeHtml(report.id)}</strong>
             <div class="muted">${escapeHtml(report.tripLabel || "Sales report")}</div>
@@ -688,6 +699,7 @@ function renderAccountantProductRows(state) {
           data-return="${line.returnAmount || 0}"
           data-search-index="${escapeHtml(searchIndex)}"
         >
+          ${currentUserRole(state) === "ceo" ? ceoSelectionCell("product_revenue", line.id, `${line.productName} revenue record`) : ""}
           <td>
             ${formatDate(line.date)}
             <div class="muted">${escapeHtml(line.source || line.recordId)}</div>
@@ -830,11 +842,17 @@ function renderCreditHistoryFilters(state) {
 
 function renderAccountantFinanceTab(activeTabId, state, summary) {
   if (activeTabId === "invoices") {
+    const canDelete = currentUserRole(state) === "ceo";
     return `
       <section class="panel accountant-invoices-panel">
         ${panelHeader("Invoices", "Download, print, and confirm customer payments")}
+        ${canDelete ? ceoDeleteControls({
+          scope: "invoices",
+          clearLabel: "Clear invoices",
+          disabled: !getFinancialInvoiceRecords(state).length
+        }) : ""}
         ${table(
-          ["Invoice", "Customer", "Status", "Due", "Amount", "Actions"],
+          [...(canDelete ? [""] : []), "Invoice", "Customer", "Status", "Due", "Amount", "Actions"],
           renderInvoiceRows(state, currentUserPermissions(state)),
           "No invoices available"
         )}
@@ -844,12 +862,18 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
   }
 
   if (activeTabId === "sales-reports") {
+    const canDelete = currentUserRole(state) === "ceo";
     return `
       ${renderAccountantFilters(state)}
       <section class="panel" data-export-table="true" data-export-title="Sales reports">
         ${panelHeader("Sales reports", "Read-only submitted sales activity")}
+        ${canDelete ? ceoDeleteControls({
+          scope: "sales_reports",
+          clearLabel: "Clear sales reports",
+          disabled: !(state.salesReports || []).length
+        }) : ""}
         ${table(
-          ["Report", "Sales representative", "Date", "Sales", "Returns", "Status"],
+          [...(canDelete ? [""] : []), "Report", "Sales representative", "Date", "Sales", "Returns", "Status"],
           renderAccountantSalesReportRows(state),
           "No sales reports available"
         )}
@@ -858,26 +882,23 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
   }
 
   if (activeTabId === "product-revenue") {
+    const canDelete = currentUserRole(state) === "ceo";
+    const revenueLines = getAccountantSalesLines(state);
     return `
       ${renderAccountantFilters(state)}
       <section class="panel">
-        ${panelHeader(
-          "Product revenue",
-          "Top product lines by sales value",
-          currentUserRole(state) === "ceo"
-            ? textButton({
-                iconName: "trash",
-                label: "Delete",
-                className: "warning js-delete-product-revenue"
-              })
-            : ""
-        )}
+        ${panelHeader("Product revenue", "Top product lines by sales value")}
         <div class="bar-list">${renderAccountantProductRevenue(state)}</div>
       </section>
       <section class="panel" data-export-table="true" data-export-title="Revenue cost and profit">
         ${panelHeader("Revenue, cost, and profit", "Product-level financial summary")}
+        ${canDelete ? ceoDeleteControls({
+          scope: "product_revenue",
+          clearLabel: "Clear revenue data",
+          disabled: !revenueLines.length
+        }) : ""}
         ${table(
-          ["Date", "Product", "Sales representative", "Customer", "Qty", "Payment", "Revenue", "Cost", "Profit", "Margin"],
+          [...(canDelete ? [""] : []), "Date", "Product", "Sales representative", "Customer", "Qty", "Payment", "Revenue", "Cost", "Profit", "Margin"],
           renderAccountantProductRows(state),
           "No product financial records available"
         )}
@@ -925,7 +946,7 @@ export function renderFinance({ state }) {
   return `
     <section class="view finance-view">
       ${renderFinanceSubtabs(activeTabId, state)}
-      ${currentUserRole(state) === "ceo" ? `
+      ${currentUserRole(state) === "ceo" && activeTabId === "overview" ? `
         <div class="page-reset-action">
           ${textButton({ iconName: "trash", label: "Clear finance data", className: "warning", data: { "reset-workspace-scope": "finance" } })}
         </div>
@@ -969,10 +990,20 @@ export function renderFinance({ state }) {
         ${renderCreditLimitManager(state, permissions)}
         <section class="panel credit-report-panel" data-credit-report-type="representative">
           ${panelHeader("Sales representative credit reports", "Select a sales representative to view their complete credit information")}
+          ${ceoDeleteControls({
+            scope: "representative_credit_limits",
+            clearLabel: "Clear representative credit reports",
+            disabled: !creditAccounts(state).some(isRepresentativeCreditAccount)
+          })}
           ${renderCreditAccountList(state, "representative")}
         </section>
         <section class="panel credit-report-panel" data-credit-report-type="customer">
-          ${panelHeader("Customer credit reports", "Select a customer to view their complete credit information")}
+          ${panelHeader("Customer credit terms", "Select a customer to view their complete credit information")}
+          ${ceoDeleteControls({
+            scope: "customer_credit_limits",
+            clearLabel: "Clear customer credit terms",
+            disabled: !creditAccounts(state).some((limit) => !isRepresentativeCreditAccount(limit))
+          })}
           ${renderCreditAccountList(state, "customer")}
         </section>
         ${renderCreditAccountModal()}
@@ -982,8 +1013,13 @@ export function renderFinance({ state }) {
         ${renderCreditHistoryFilters(state)}
         <section class="panel">
           ${panelHeader("Sales representative credit terms history", "Every change stays visible and cannot be edited")}
+          ${ceoDeleteControls({
+            scope: "representative_credit_history",
+            clearLabel: "Clear representative credit history",
+            disabled: !creditHistoryEntries(state, "representative").length
+          })}
           ${table(
-            ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
+            ["", "Account", "Previous", "New", "Terms", "Reason", "Changed by"],
             renderCreditHistoryRows(state, "representative"),
             "No sales representative credit changes recorded"
           )}
@@ -991,8 +1027,13 @@ export function renderFinance({ state }) {
         </section>
         <section class="panel">
           ${panelHeader("Customer credit terms history", "Every change stays visible and cannot be edited")}
+          ${ceoDeleteControls({
+            scope: "customer_credit_history",
+            clearLabel: "Clear customer credit history",
+            disabled: !creditHistoryEntries(state, "customer").length
+          })}
           ${table(
-            ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
+            ["", "Account", "Previous", "New", "Terms", "Reason", "Changed by"],
             renderCreditHistoryRows(state, "customer"),
             "No customer credit changes recorded"
           )}
@@ -1386,30 +1427,11 @@ function bindFinancePagination(root) {
 
 export function bindFinance({ root, store, signal }) {
   bindWorkspaceDataResetButtons({ root, store, signal });
+  bindCeoDataDeletion({ root, store, signal });
   bindFinancePagination(root);
   bindCreditHistoryFilters(root);
 
   bindAccountantFinance({ root });
-
-  const deleteProductRevenueButton = qs(".js-delete-product-revenue", root);
-  deleteProductRevenueButton?.addEventListener("click", async () => {
-    const state = store.getState();
-    if (currentUserRole(state) !== "ceo") return;
-
-    const confirmed = await confirmActionDialog({
-      title: "Delete all product revenue?",
-      message: "This permanently removes every Product Revenue sale, return, financial order, and linked invoice from the interface and Supabase. Representative sell-through records and stock balances will remain.",
-      confirmLabel: "Delete",
-      tone: "danger"
-    });
-    if (!confirmed) return;
-
-    deleteProductRevenueButton.disabled = true;
-    store.dispatch({
-      type: "DELETE_ALL_PRODUCT_REVENUE_DATA",
-      message: "All product revenue data deleted"
-    });
-  }, { signal });
 
   const creditForm = qs("#credit-limit-form", root);
   const repCreditForm = qs("#rep-credit-limit-form", root);

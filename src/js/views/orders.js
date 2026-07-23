@@ -6,9 +6,9 @@ import {
 import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, panelHeader, statusPill, table, textButton } from "../ui/components.js";
+import { iconButton, panelHeader, statusPill, table } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
-import { confirmActionDialog } from "../ui/action-dialog.js";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
 
 const ORDER_PAGE_SIZE = 10;
 const ORDER_STATUSES = ["in_transit", "delayed", "delivered"];
@@ -232,6 +232,7 @@ function renderOrderRows(orders, state, permissions) {
         data-search-index="${escapeHtml(searchIndex)}"
         data-search-suggestions="${escapeHtml(JSON.stringify(searchSuggestions))}"
       >
+        ${canManageOrderFlow ? ceoSelectionCell("orders", order.id, `sales order ${order.id}`) : ""}
         <td>
           <strong>${escapeHtml(order.id)}</strong>
           <div class="muted">${escapeHtml(scheduleLabel)} - ${escapeHtml(statusText(order.paymentType))}</div>
@@ -320,17 +321,17 @@ export function renderOrders({ state }) {
                 ${regions.map((region) => `<option value="${escapeHtml(region)}">${escapeHtml(region)}</option>`).join("")}
               </select>
             </label>
-            ${currentUserRole(state) === "ceo" ? textButton({
-              iconName: "trash",
-              label: "Delete",
-              className: "warning js-delete-sales-orders"
-            }) : ""}
             ${renderDelayAttentionIcon(orders)}
           </div>
         </div>
 
+        ${currentUserRole(state) === "ceo" ? ceoDeleteControls({
+          scope: "orders",
+          clearLabel: "Clear sales orders",
+          disabled: !orders.length
+        }) : ""}
         ${table(
-          ["Sales order", "Customer", "Status", "Credit guard", "Value", ""],
+          [...(currentUserRole(state) === "ceo" ? [""] : []), "Sales order", "Customer", "Status", "Credit guard", "Value", ""],
           renderOrderRows(orders, state, permissions),
           "No sales orders available"
         )}
@@ -346,32 +347,12 @@ export function renderOrders({ state }) {
 }
 
 export function bindOrders({ root, store, signal }) {
+  bindCeoDataDeletion({ root, store, signal });
   const statusFilter = qs("#order-status-filter", root);
   const regionFilter = qs("#order-region-filter", root);
   const globalSearch = qs("#global-search", document);
   const delayModal = qs("#order-delay-modal", root);
   const delayContent = qs("#order-delay-content", root);
-  const deleteSalesOrdersButton = qs(".js-delete-sales-orders", root);
-
-  deleteSalesOrdersButton?.addEventListener("click", async () => {
-    const state = store.getState();
-    if (currentUserRole(state) !== "ceo") return;
-
-    const confirmed = await confirmActionDialog({
-      title: "Delete all sales orders?",
-      message: "This permanently removes every sales order, its linked invoice, and sale record from the interface and Supabase. Current product stock and representative balances will remain.",
-      confirmLabel: "Delete",
-      tone: "danger"
-    });
-    if (!confirmed) return;
-
-    deleteSalesOrdersButton.disabled = true;
-    store.dispatch({
-      type: "DELETE_ALL_SALES_ORDERS_DATA",
-      message: "All sales orders deleted"
-    });
-  }, { signal });
-
   function closeDelayModal() {
     if (delayModal) delayModal.hidden = true;
   }

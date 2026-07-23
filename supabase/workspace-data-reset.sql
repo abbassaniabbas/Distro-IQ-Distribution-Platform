@@ -144,6 +144,9 @@ begin
         updated_at = excluded.updated_at;
   end if;
 
+  delete from public.workspace_operation_events
+  where client_id = p_client_id;
+
   return jsonb_build_object(
     'scope', v_scope,
     'deleted', v_deleted,

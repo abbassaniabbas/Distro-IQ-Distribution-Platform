@@ -9,8 +9,8 @@ import { downloadTabularReport, printTabularReport, tableSectionFromElement } fr
 import { accountForUser, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, panelHeader, table, textButton } from "../ui/components.js";
-import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
+import { iconButton, panelHeader, table } from "../ui/components.js";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
 import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
@@ -325,7 +325,7 @@ function renderUserOptions(logs) {
     .join("");
 }
 
-function renderRows(logs) {
+function renderRows(logs, canDelete = false) {
   return logs.map((entry) => {
     const actionLabel = actionTypeLabel(entry.actionType);
     const recordLabel = recordTypeLabel(entry.recordType);
@@ -349,6 +349,7 @@ function renderRows(logs) {
         data-user="${escapeHtml(actorKey(entry))}"
         data-date="${escapeHtml(entryDate(entry.createdAt))}"
       >
+        ${canDelete ? ceoSelectionCell("activity", entry.id, `${actionLabel} activity`) : ""}
         <td>${renderActivityTimestamp(entry.createdAt)}</td>
         <td><span class="activity-action">${escapeHtml(actionLabel)}</span></td>
         <td>
@@ -388,9 +389,6 @@ export function renderActivityLog({ state }) {
   const activeTab = hasActivitySubnav ? activeActivityTab(state, role) : DEFAULT_ACTIVITY_TAB;
   const activitySubnav = hasActivitySubnav ? `
     ${renderActivitySubnav(state, role, activeTab)}
-    <div class="page-reset-action">
-      ${textButton({ iconName: "trash", label: "Clear activity", className: "warning", data: { "reset-workspace-scope": "activity" } })}
-    </div>
   ` : "";
 
   if (hasActivitySubnav && activeTab !== DEFAULT_ACTIVITY_TAB) {
@@ -457,22 +455,27 @@ export function renderActivityLog({ state }) {
           </div>
         </div>
 
+        ${role === "ceo" ? ceoDeleteControls({
+          scope: "activity",
+          clearLabel: "Clear activity",
+          disabled: !logs.length
+        }) : ""}
         <div data-activity-export-table>
           ${table(
-            ["Timestamp", "Action", "Record", "User", "Details"],
-            renderRows(logs),
+            [...(role === "ceo" ? [""] : []), "Timestamp", "Action", "Record", "User", "Details"],
+            renderRows(logs, role === "ceo"),
             "No activity has been recorded yet"
           )}
         </div>
         ${renderActivityPagination()}
-        <p class="activity-readonly-note">Activity entries are read-only and cannot be edited or deleted.</p>
+        ${role === "ceo" ? "" : '<p class="activity-readonly-note">Activity entries are read-only and cannot be edited or deleted.</p>'}
       </section>
     </section>
   `;
 }
 
 export function bindActivityLog({ root, store, signal }) {
-  bindWorkspaceDataResetButtons({ root, store, signal });
+  bindCeoDataDeletion({ root, store, signal });
   const pageSize = 10;
   let currentPage = 1;
   const searchFilter = qs("#activity-search", root);

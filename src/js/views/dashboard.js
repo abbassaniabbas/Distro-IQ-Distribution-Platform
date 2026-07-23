@@ -29,6 +29,7 @@ import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog } from "../ui/action-dialog.js";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
 import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
 import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722e";
 
@@ -1818,6 +1819,7 @@ function renderAlerts(state, permissions) {
 
 function renderRecentOrders(state, permissions) {
   const canAdvanceSales = permissions.canLogSalesReturns || permissions.canDispatchStock;
+  const canDelete = currentUserRole(state) === "ceo";
 
   return getOrdersWithTotals(state)
     .slice(0, 5)
@@ -1839,6 +1841,7 @@ function renderRecentOrders(state, permissions) {
           data-search-index="${escapeHtml(searchValues.join(" ").toLowerCase())}"
           data-search-suggestions="${escapeHtml(JSON.stringify([...new Set(searchValues)]))}"
         >
+          ${canDelete ? ceoSelectionCell("orders", order.id, `recent sales order ${order.id}`) : ""}
           <td>
             <strong>${escapeHtml(order.id)}</strong>
             <div class="muted">${escapeHtml(customerName)}</div>
@@ -1997,7 +2000,7 @@ function reportLinesFor(report, state) {
 }
 
 function renderManagerReportRows(state, { readOnly = false } = {}) {
-
+  const canDelete = currentUserRole(state) === "ceo";
   return (state.salesReports || []).map((report) => {
     const reportLines = reportLinesFor(report, state);
     const linePreview = reportLines
@@ -2014,6 +2017,7 @@ function renderManagerReportRows(state, { readOnly = false } = {}) {
 
     return `
       <tr data-search-index="${escapeHtml(searchIndex)}">
+        ${canDelete ? ceoSelectionCell("sales_reports", report.id, `submitted sales report ${report.id}`) : ""}
         <td>
           <strong>${escapeHtml(report.repName)}</strong>
           <div class="muted">${formatDate(report.reportDate)} - ${escapeHtml(report.tripLabel || "Daily report")}</div>
@@ -2216,6 +2220,7 @@ function renderReportDetailsModal() {
 }
 
 export function renderManagerReportReview(state, { readOnly = false } = {}) {
+  const canDelete = currentUserRole(state) === "ceo";
   return `
     <section class="panel" id="manager-report-review">
       ${panelHeader(
@@ -2226,10 +2231,16 @@ export function renderManagerReportReview(state, { readOnly = false } = {}) {
           ${iconButton({ iconName: "print", label: "Print submitted sales reports table", className: "js-print-submitted-reports" })}
         </div>`
       )}
+      ${canDelete ? ceoDeleteControls({
+        scope: "sales_reports",
+        clearLabel: "Clear submitted sales reports",
+        disabled: !(state.salesReports || []).length
+      }) : ""}
       <div class="table-wrap" data-submitted-reports-export-table>
         <table class="data-table">
           <thead>
             <tr>
+              ${canDelete ? '<th class="record-select-cell" data-export-ignore></th>' : ""}
               <th>Report</th>
               <th>Status</th>
               <th>Sales</th>
@@ -2237,7 +2248,7 @@ export function renderManagerReportReview(state, { readOnly = false } = {}) {
               <th data-export-ignore></th>
             </tr>
           </thead>
-          <tbody>${renderManagerReportRows(state, { readOnly }) || '<tr><td colspan="5">No submitted reports yet</td></tr>'}</tbody>
+          <tbody>${renderManagerReportRows(state, { readOnly }) || `<tr><td colspan="${canDelete ? 6 : 5}">No submitted reports yet</td></tr>`}</tbody>
         </table>
       </div>
     </section>
@@ -3249,6 +3260,8 @@ export function renderDashboard({ state }) {
 export function renderManagerRecentSalesOrders(state) {
   const metrics = calculateMetrics(state);
   const permissions = currentUserPermissions(state);
+  const canDelete = currentUserRole(state) === "ceo";
+  const recentOrders = getOrdersWithTotals(state).slice(0, 5);
 
   return `
     <section class="panel">
@@ -3260,10 +3273,16 @@ export function renderManagerRecentSalesOrders(state) {
           ${iconButton({ iconName: "print", label: "Print recent sales orders table", className: "js-print-recent-orders" })}
         </div>`
       )}
+      ${canDelete ? ceoDeleteControls({
+        scope: "orders",
+        clearLabel: "Clear recent sales orders",
+        disabled: !recentOrders.length
+      }) : ""}
       <div class="table-wrap" data-recent-orders-export-table>
         <table class="data-table">
           <thead>
             <tr>
+              ${canDelete ? '<th class="record-select-cell" data-export-ignore></th>' : ""}
               <th>Sales order</th>
               <th>Region</th>
               <th>Status</th>
@@ -3279,6 +3298,7 @@ export function renderManagerRecentSalesOrders(state) {
 }
 
 export function bindManagerActivitySections({ root, store }) {
+  bindCeoDataDeletion({ root, store });
   bindSubmittedReportDetails({ root, store });
   bindManagerTableExports(root);
 

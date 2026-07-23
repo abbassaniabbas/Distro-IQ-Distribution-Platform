@@ -235,6 +235,12 @@ begin
     v_deleted_count := v_deleted_count + 1;
   end loop;
 
+  if upper(trim(p_action_type)) = 'DELETE_CEO_DATA_RECORDS' then
+    delete from public.workspace_operation_events
+    where id = v_inserted_event;
+    v_inserted_event := null;
+  end if;
+
   return jsonb_build_object(
     'duplicate', false,
     'saved', v_saved_count,

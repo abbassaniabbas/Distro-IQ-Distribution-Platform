@@ -643,6 +643,28 @@ export async function resetWorkspaceData({ clientId, scope }) {
   return data || { scope: normalizedScope };
 }
 
+export async function deleteCeoWorkspaceData({ clientId, scope, ids = [] }) {
+  throwIfBackendMissing();
+  const normalizedIds = [...new Set(ids.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!clientId || !String(scope || "").trim() || !normalizedIds.length) {
+    throw new Error("Choose at least one record to delete.");
+  }
+
+  const supabase = await getSupabaseClient();
+  const { data, error } = await supabase.rpc("delete_ceo_workspace_data", {
+    p_client_id: clientId,
+    p_scope: String(scope).trim().toLowerCase(),
+    p_record_ids: normalizedIds
+  });
+
+  if (error) {
+    const failure = classifyAppFailure({ error, configured: true });
+    throw new Error(`${failure.label}: The selected records could not be permanently deleted. ${error.message}`);
+  }
+
+  return data || { scope, deleted: normalizedIds.length };
+}
+
 export async function saveSharedProductImage({ clientId, sku, previousSku = "", name, unit = "piece", status = "active", imageUrl = "" }) {
   throwIfBackendMissing();
   const supabase = await getSupabaseClient();

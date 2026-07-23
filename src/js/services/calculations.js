@@ -197,6 +197,7 @@ export function getFinancialSalesLines(state) {
       const retailer = retailerMap.get(order.retailerId);
 
       return (order.items || []).map((item, itemIndex) => {
+        if (item.financeRevenueDeleted) return null;
         const product = productMap.get(item.productId);
         const quantity = Number(item.quantity || 0);
         const revenue = Number(item.lineAmount ?? (quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0)));
@@ -223,12 +224,16 @@ export function getFinancialSalesLines(state) {
           creditAmount: String(order.paymentType || "").toLowerCase().includes("credit") ? revenue : 0,
           returnAmount: 0
         };
-      });
+      }).filter(Boolean);
     });
   const transactionLines = (state.stockTransactions || [])
     .filter((transaction) => {
       const type = String(transaction.type || "").toLowerCase();
-      return (type === "sale" || type === "return") && !isRepresentativeSellThroughTransaction(transaction);
+      return (
+        (type === "sale" || type === "return") &&
+        !transaction.financeRevenueDeleted &&
+        !isRepresentativeSellThroughTransaction(transaction)
+      );
     })
     .map((transaction) => {
       const product = productMap.get(transaction.productId);

@@ -2215,6 +2215,63 @@
   cursor: pointer;
 }
 
+.record-select-cell {
+  width: 44px;
+  min-width: 44px;
+  padding-right: 4px !important;
+  text-align: center !important;
+}
+
+.record-select-cell input[type="checkbox"],
+.ceo-select-all input,
+.credit-account-select-row > input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--teal);
+  cursor: pointer;
+}
+
+.ceo-delete-controls {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin: 12px 0;
+}
+
+.ceo-select-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  font-size: 0.8rem;
+  font-weight: 800;
+  color: var(--navy);
+}
+
+.credit-account-select-row {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+}
+
+.credit-account-select-row > input {
+  justify-self: center;
+}
+
+@media (max-width: 640px) {
+  .ceo-delete-controls {
+    align-items: stretch;
+    justify-content: flex-start;
+  }
+
+  .ceo-delete-controls .button {
+    flex: 1 1 auto;
+  }
+}
+
 .stock-health-row.is-inactive {
   opacity: 0.62;
 }

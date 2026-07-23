@@ -3,6 +3,7 @@ import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
+  getFinancialSalesLines,
   isRepresentativeSellThroughInvoice,
   isRepresentativeSellThroughOrder,
   isRepresentativeSellThroughTransaction,
@@ -129,6 +130,87 @@ function updateCreditBalance(state, partyName, creditImpact) {
   if (limit) {
     limit.balance = Math.max(0, Number(limit.balance || 0) + Number(creditImpact || 0));
   }
+}
+
+function deleteSalesOrders(state, orderIds, { includeAllSales = false } = {}) {
+  const deletedOrderIds = new Set(orderIds.map(String));
+  const deletedTransactionIds = new Set(
+    [
+      ...(state.orders || [])
+        .filter((order) => deletedOrderIds.has(String(order.id || "")))
+        .flatMap((order) => [
+          order.transactionId,
+          ...(order.transactionIds || []),
+          ...(order.items || []).map((item) => item.transactionId)
+        ]),
+      ...(includeAllSales
+        ? (state.stockTransactions || [])
+          .filter((transaction) => normalized(transaction.type) === "sale")
+          .map((transaction) => transaction.id)
+        : [])
+    ]
+      .map(String)
+      .filter(Boolean)
+  );
+  const deletedInvoices = (state.invoices || []).filter((invoice) => (
+    deletedOrderIds.has(String(invoice.orderId || "")) ||
+    [invoice.transactionId, ...(invoice.transactionIds || [])].some((id) => deletedTransactionIds.has(String(id || "")))
+  ));
+
+  deletedInvoices
+    .filter((invoice) => normalized(invoice.paymentType).includes("credit") && normalized(invoice.status) !== "paid")
+    .forEach((invoice) => updateCreditBalance(state, invoice.customerName || invoice.repName, -Number(invoice.amount || 0)));
+
+  state.orders = (state.orders || []).filter((order) => !deletedOrderIds.has(String(order.id || "")));
+  state.stockTransactions = (state.stockTransactions || []).filter((transaction) => (
+    !deletedTransactionIds.has(String(transaction.id || ""))
+  ));
+  state.invoices = (state.invoices || []).filter((invoice) => !deletedInvoices.includes(invoice));
+  state.routes = (state.routes || []).map((route) => ({
+    ...route,
+    orderIds: (route.orderIds || []).filter((orderId) => !deletedOrderIds.has(String(orderId || "")))
+  }));
+  state.correctionRequests = (state.correctionRequests || []).filter((request) => (
+    !deletedTransactionIds.has(String(request.transactionId || ""))
+  ));
+  state.salesReports = (state.salesReports || []).map((report) => ({
+    ...report,
+    transactionIds: (report.transactionIds || []).filter((id) => !deletedTransactionIds.has(String(id || ""))),
+    reportLines: (report.reportLines || []).filter((line) => !deletedTransactionIds.has(String(line.transactionId || "")))
+  }));
+  state.offlineSalesQueue = (state.offlineSalesQueue || []).filter((entry) => (
+    !deletedTransactionIds.has(String(entry.transactionId || "")) &&
+    !deletedOrderIds.has(String(entry.orderId || ""))
+  ));
+}
+
+function deleteProductRevenueLines(state, lineIds) {
+  const selected = new Set(lineIds.map(String));
+  const lines = getFinancialSalesLines(state).filter((line) => selected.has(String(line.id || "")));
+  const transactionIds = new Set(
+    lines
+      .filter((line) => line.source !== "Sales order")
+      .map((line) => String(line.id || ""))
+      .filter(Boolean)
+  );
+  const orderLineIds = new Set(
+    lines
+      .filter((line) => line.source === "Sales order")
+      .map((line) => String(line.id || ""))
+  );
+  state.orders = (state.orders || []).map((order) => ({
+    ...order,
+    items: (order.items || []).map((item, itemIndex) => {
+      const lineId = `${order.id}-${item.productId}-${item.packagingType || "piece"}-${itemIndex}`;
+      return orderLineIds.has(lineId) ? { ...item, financeRevenueDeleted: true } : item;
+    })
+  }));
+
+  state.stockTransactions = (state.stockTransactions || []).map((transaction) => (
+    transactionIds.has(String(transaction.id || ""))
+      ? { ...transaction, financeRevenueDeleted: true }
+      : transaction
+  ));
 }
 
 function boundedPercent(value) {
@@ -1303,6 +1385,47 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "DELETE_CEO_DATA_RECORDS": {
+      if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
+      const scope = String(action.scope || "").trim().toLowerCase();
+      const ids = [...new Set((action.ids || []).map((id) => String(id || "")).filter(Boolean))];
+      const selected = new Set(ids);
+      if (!ids.length) return state;
+
+      if (scope === "sales_reports") {
+        state.salesReports = (state.salesReports || []).filter((report) => !selected.has(String(report.id || "")));
+        return state;
+      }
+      if (scope === "invoices") {
+        state.invoices = (state.invoices || []).filter((invoice) => !selected.has(String(invoice.id || "")));
+        state.orders = (state.orders || []).map((order) => (
+          selected.has(`INV-${order.id}`) ? { ...order, invoiceDeleted: true } : order
+        ));
+        return state;
+      }
+      if (scope === "product_revenue") {
+        deleteProductRevenueLines(state, ids);
+        return state;
+      }
+      if (scope === "representative_credit_limits" || scope === "customer_credit_limits") {
+        state.creditLimits = (state.creditLimits || []).filter((limit) => !selected.has(String(limit.id || "")));
+        return state;
+      }
+      if (scope === "representative_credit_history" || scope === "customer_credit_history") {
+        state.creditLimitHistory = (state.creditLimitHistory || []).filter((entry) => !selected.has(String(entry.id || "")));
+        return state;
+      }
+      if (scope === "activity") {
+        state.activityLogs = (state.activityLogs || []).filter((entry) => !selected.has(String(entry.id || "")));
+        return state;
+      }
+      if (scope === "orders") {
+        deleteSalesOrders(state, ids);
+        return state;
+      }
+      return state;
+    }
+
     case "DELETE_ALL_PRODUCT_REVENUE_DATA": {
       if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
 
@@ -1356,41 +1479,7 @@ function reducer(currentState, action) {
 
     case "DELETE_ALL_SALES_ORDERS_DATA": {
       if (!state.client?.id || currentUserRole(state) !== "ceo") return state;
-
-      const deletedOrderIds = new Set((state.orders || []).map((order) => String(order.id || "")).filter(Boolean));
-      const deletedTransactionIds = new Set(
-        (state.stockTransactions || [])
-          .filter((transaction) => normalized(transaction.type) === "sale")
-          .map((transaction) => String(transaction.id || ""))
-          .filter(Boolean)
-      );
-      const deletedInvoices = (state.invoices || []).filter((invoice) => (
-        deletedOrderIds.has(String(invoice.orderId || "")) ||
-        [invoice.transactionId, ...(invoice.transactionIds || [])].some((id) => deletedTransactionIds.has(String(id || "")))
-      ));
-
-      deletedInvoices
-        .filter((invoice) => normalized(invoice.paymentType).includes("credit") && normalized(invoice.status) !== "paid")
-        .forEach((invoice) => updateCreditBalance(state, invoice.customerName || invoice.repName, -Number(invoice.amount || 0)));
-
-      state.orders = [];
-      state.stockTransactions = (state.stockTransactions || []).filter((transaction) => (
-        !deletedTransactionIds.has(String(transaction.id || ""))
-      ));
-      state.invoices = (state.invoices || []).filter((invoice) => !deletedInvoices.includes(invoice));
-      state.routes = (state.routes || []).map((route) => ({ ...route, orderIds: [] }));
-      state.correctionRequests = (state.correctionRequests || []).filter((request) => (
-        !deletedTransactionIds.has(String(request.transactionId || ""))
-      ));
-      state.salesReports = (state.salesReports || []).map((report) => ({
-        ...report,
-        transactionIds: (report.transactionIds || []).filter((id) => !deletedTransactionIds.has(String(id || ""))),
-        reportLines: (report.reportLines || []).filter((line) => !deletedTransactionIds.has(String(line.transactionId || "")))
-      }));
-      state.offlineSalesQueue = (state.offlineSalesQueue || []).filter((entry) => (
-        !deletedTransactionIds.has(String(entry.transactionId || "")) &&
-        !deletedOrderIds.has(String(entry.orderId || ""))
-      ));
+      deleteSalesOrders(state, (state.orders || []).map((order) => order.id), { includeAllSales: true });
 
       appendActivityLog(state, {
         clientId: state.client.id,

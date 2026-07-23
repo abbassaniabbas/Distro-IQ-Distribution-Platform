@@ -303,6 +303,51 @@ assert.equal(productRevenueCleanupChanges.deleted.some((record) => record.collec
 assert.equal(productRevenueCleanupChanges.deleted.some((record) => record.collection === "invoices" && record.id === "INV-TODAY-REVENUE"), true, "Product Revenue Delete must queue backend invoice deletion");
 assert.equal(productRevenueCleanupChanges.deleted.some((record) => record.collection === "stockTransactions" && record.id === "TXN-TODAY-REVENUE"), true, "Product Revenue Delete must queue backend revenue-transaction deletion");
 
+productRevenueCleanupStore.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: {
+    products: [{ id: "SKU-CHIPS", sku: "SKU-CHIPS", name: "Plantain Chips", stockCategory: "finished_products", unitPrice: 500, unitCost: 200 }],
+    invoices: [{ id: "INV-KEEP" }, { id: "INV-DELETE" }],
+    salesReports: [{ id: "REPORT-KEEP" }, { id: "REPORT-DELETE" }],
+    creditLimits: [
+      { id: "LIMIT-REP", partyType: "Sales Representative", partyName: "Rep" },
+      { id: "LIMIT-CUSTOMER", partyType: "Customer", partyName: "Customer" }
+    ],
+    creditLimitHistory: [
+      { id: "HISTORY-KEEP", partyType: "Customer", partyName: "Customer" },
+      { id: "HISTORY-DELETE", partyType: "Sales Representative", partyName: "Rep" }
+    ],
+    activityLogs: [{ id: "ACTIVITY-KEEP" }, { id: "ACTIVITY-DELETE" }],
+    orders: [
+      { id: "ORDER-KEEP", transactionId: "TXN-KEEP", items: [] },
+      { id: "ORDER-DELETE", transactionId: "TXN-DELETE", items: [] }
+    ],
+    stockTransactions: [
+      { id: "TXN-KEEP", type: "sale", productId: "SKU-CHIPS", quantity: 1, amount: 500 },
+      { id: "TXN-DELETE", type: "sale", productId: "SKU-CHIPS", quantity: 1, amount: 500 }
+    ]
+  }
+});
+productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "invoices", ids: ["INV-DELETE"] });
+productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "sales_reports", ids: ["REPORT-DELETE"] });
+productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "representative_credit_limits", ids: ["LIMIT-REP"] });
+productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "representative_credit_history", ids: ["HISTORY-DELETE"] });
+productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "activity", ids: ["ACTIVITY-DELETE"] });
+assert.equal(getFinancialSalesLines(productRevenueCleanupStore.getState()).some((line) => line.id === "TXN-KEEP"), true);
+const ordersBeforeScopedRevenueDeletion = structuredClone(productRevenueCleanupStore.getState().orders);
+productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "product_revenue", ids: ["TXN-KEEP"] });
+assert.deepEqual(productRevenueCleanupStore.getState().orders, ordersBeforeScopedRevenueDeletion, "product-revenue deletion must not change sales orders");
+assert.equal(productRevenueCleanupStore.getState().stockTransactions.some((record) => record.id === "TXN-KEEP"), true, "product-revenue deletion must preserve the underlying sales activity");
+assert.equal(getFinancialSalesLines(productRevenueCleanupStore.getState()).some((line) => line.id === "TXN-KEEP"), false, "deleted revenue records must not regenerate in finance");
+productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "orders", ids: ["ORDER-DELETE"] });
+assert.deepEqual(productRevenueCleanupStore.getState().invoices.map((record) => record.id), ["INV-KEEP"], "invoice deletion must not clear adjacent finance data");
+assert.deepEqual(productRevenueCleanupStore.getState().salesReports.map((record) => record.id), ["REPORT-KEEP"], "sales-report deletion must preserve other reports");
+assert.deepEqual(productRevenueCleanupStore.getState().creditLimits.map((record) => record.id), ["LIMIT-CUSTOMER"], "representative credit deletion must preserve customer credit reports");
+assert.deepEqual(productRevenueCleanupStore.getState().creditLimitHistory.map((record) => record.id), ["HISTORY-KEEP"], "credit-history deletion must stay record scoped");
+assert.deepEqual(productRevenueCleanupStore.getState().activityLogs.map((record) => record.id), ["ACTIVITY-KEEP"], "activity deletion must preserve unselected activity");
+assert.deepEqual(productRevenueCleanupStore.getState().orders.map((record) => record.id), ["ORDER-KEEP"], "sales-order deletion must preserve unselected orders");
+assert.deepEqual(productRevenueCleanupStore.getState().stockTransactions.map((record) => record.id), ["TXN-KEEP"], "sales-order deletion must remove only its linked sale record");
+
 globalThis.window.location.hash = "#/messages?with=__all_staff__";
 const broadcastBody = "Company-wide stock review at 4 PM";
 const broadcastMessagesHtml = renderMessages({
@@ -1086,9 +1131,16 @@ assert.match(managerRecentOrders, /Activity log pages/);
 assert.match(managerRecentOrders, /Recent sales orders/);
 assert.match(managerRecentOrders, /js-download-recent-orders/);
 assert.match(managerRecentOrders, /js-print-recent-orders/);
-assert.match(managerRecentOrders, /data-reset-workspace-scope="activity"/, "CEO activity pages must include the clear-all control");
+assert.match(managerRecentOrders, /data-ceo-clear-section="orders"/, "Recent sales orders must have their own scoped clear control");
+assert.doesNotMatch(managerRecentOrders, /data-reset-workspace-scope="activity"/, "Recent sales orders must not use the activity-log clear scope");
+globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
+const managerSubmittedReportsWithDeletion = renderActivityLog({ state: store.getState() });
+assert.match(managerSubmittedReportsWithDeletion, /data-ceo-clear-section="sales_reports"/);
+assert.match(managerSubmittedReportsWithDeletion, />Clear submitted sales reports</);
 globalThis.window.location.hash = "#/activity-log";
 const activityWithUserFilter = renderActivityLog({ state: store.getState() });
+assert.match(activityWithUserFilter, /data-ceo-clear-section="activity"/);
+assert.match(activityWithUserFilter, /data-ceo-delete-selected="activity"/);
 const userFilterMarkup = activityWithUserFilter.match(/<select id="activity-user-filter">([\s\S]*?)<\/select>/)?.[1] || "";
 assert.doesNotMatch(userFilterMarkup, /@/, "activity user filter must show names without email addresses");
 const conciseStockActivity = renderActivityLog({
@@ -1343,15 +1395,27 @@ const ceoFinanceInvoices = renderFinance({ state: store.getState() });
 assert.match(ceoFinanceInvoices, /Download, print, and confirm customer payments/);
 assert.match(ceoFinanceInvoices, /js-view-invoice/);
 assert.match(ceoFinanceInvoices, /js-download-invoice/);
+assert.match(ceoFinanceInvoices, /data-ceo-clear-section="invoices"/);
+assert.match(ceoFinanceInvoices, />Clear invoices</);
+assert.doesNotMatch(ceoFinanceInvoices, /data-reset-workspace-scope="finance"/, "the broad finance clear control must stay on Overview only");
+
+globalThis.window.location.hash = "#/finance?tab=sales-reports";
+const ceoFinanceSalesReports = renderFinance({ state: store.getState() });
+assert.match(ceoFinanceSalesReports, /data-ceo-clear-section="sales_reports"/);
+assert.match(ceoFinanceSalesReports, />Clear sales reports</);
+assert.doesNotMatch(ceoFinanceSalesReports, /data-reset-workspace-scope="finance"/);
 
 globalThis.window.location.hash = "#/finance?tab=product-revenue";
 const ceoProductRevenue = renderFinance({ state: store.getState() });
 assert.match(ceoProductRevenue, /Revenue, cost, and profit/);
+assert.match(ceoProductRevenue, /data-ceo-clear-section="product_revenue"/);
+assert.match(ceoProductRevenue, /data-ceo-delete-selected="product_revenue"/);
+assert.doesNotMatch(ceoProductRevenue, /data-reset-workspace-scope="finance"/);
 
 globalThis.window.location.hash = "#/finance?tab=credit-limits";
 const financeLimits = renderFinance({ state: store.getState() });
 assert.match(financeLimits, /Sales representative credit reports/);
-assert.match(financeLimits, /Customer credit reports/);
+assert.match(financeLimits, /Customer credit terms/);
 const representativeCreditReports = financeLimits.match(/data-credit-report-type="representative"[\s\S]*?<\/section>/)?.[0] || "";
 const customerCreditReports = financeLimits.match(/data-credit-report-type="customer"[\s\S]*?<\/section>/)?.[0] || "";
 assert.equal((representativeCreditReports.match(/js-open-credit-account/g) || []).length, 1, "sales representative credit reports must be listed separately");
@@ -1360,6 +1424,9 @@ assert.doesNotMatch(financeLimits, /Credit exposure/);
 assert.equal((financeLimits.match(/js-open-credit-account/g) || []).length, 12);
 assert.match(financeLimits, /id="credit-account-modal"/);
 assert.match(financeLimits, /data-credit-account-detail/);
+assert.match(financeLimits, /data-ceo-clear-section="representative_credit_limits"/);
+assert.match(financeLimits, /data-ceo-clear-section="customer_credit_limits"/);
+assert.doesNotMatch(financeLimits, /data-reset-workspace-scope="finance"/);
 
 globalThis.window.location.hash = "#/finance?tab=credit-history";
 const financeHistory = renderFinance({ state: store.getState() });
@@ -1367,6 +1434,8 @@ assert.match(financeHistory, /Sales representative credit terms history/);
 assert.match(financeHistory, /Customer credit terms history/);
 assert.match(financeHistory, /credit-history-account/);
 assert.match(financeHistory, /Download CSV/);
+assert.match(financeHistory, /data-ceo-clear-section="representative_credit_history"/);
+assert.match(financeHistory, /data-ceo-clear-section="customer_credit_history"/);
 assert.equal((financeHistory.match(/data-finance-page-row="credit-history-representative"/g) || []).length, 12);
 
 const retiredAccountantStore = createStore();
