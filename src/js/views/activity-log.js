@@ -9,13 +9,13 @@ import { downloadTabularReport, printTabularReport, tableSectionFromElement } fr
 import { accountForUser, currentUserRole } from "../services/rbac.js";
 import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, panelHeader, table } from "../ui/components.js";
-import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
+import { iconButton, panelHeader, table } from "../ui/components.js?v=20260724b";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
   renderManagerReportReview
-} from "./dashboard.js?v=20260722";
+} from "./dashboard.js?v=20260724b";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
 
@@ -456,15 +456,14 @@ export function renderActivityLog({ state }) {
         </div>
 
         ${role === "ceo" ? ceoDeleteControls({
-          scope: "activity",
-          clearLabel: "Clear activity",
-          disabled: !logs.length
+          scope: "activity"
         }) : ""}
         <div data-activity-export-table>
           ${table(
-            [...(role === "ceo" ? [""] : []), "Timestamp", "Action", "Record", "User", "Details"],
+            ["Timestamp", "Action", "Record", "User", "Details"],
             renderRows(logs, role === "ceo"),
-            "No activity has been recorded yet"
+            "No activity has been recorded yet",
+            { selectionScope: role === "ceo" ? "activity" : "" }
           )}
         </div>
         ${renderActivityPagination()}

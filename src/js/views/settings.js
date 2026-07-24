@@ -30,6 +30,7 @@ import { escapeHtml, qs } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
 import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
+import { verifyCeoPassword } from "../ui/ceo-password-verification.js";
 import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 
 function getCurrentAccount(state) {
@@ -195,12 +196,7 @@ function renderFactoryDeletion(state) {
           <button class="icon-button" type="button" data-close-delete-factory aria-label="Close">${icon("x")}</button>
         </header>
         <form id="delete-factory-form" class="form-grid" novalidate>
-        <p class="field-help span-full">This permanently deletes the factory records and linked staff sign-ins.</p>
-        <label class="field span-full">
-          <span>Enter ${escapeHtml(state.client.companyName)} to confirm</span>
-          <input name="confirmCompanyName" autocomplete="off" placeholder="${escapeHtml(state.client.companyName)}">
-          ${renderFieldError("confirmCompanyName")}
-        </label>
+        <p class="field-help span-full">This permanently deletes the factory records and linked staff sign-ins. CEO password verification is required.</p>
         <span id="delete-factory-message" class="field-error span-full"></span>
         <div class="span-full manager-form-actions">
           ${textButton({
@@ -221,7 +217,7 @@ function renderFactoryDataReset(state) {
 
   return `
     <section class="panel factory-data-reset-panel">
-      ${panelHeader("Factory data reset", "")}
+      ${panelHeader("Factory data reset", "CEO password required")}
       ${textButton({
         iconName: "trash",
         label: "Reset factory data",
@@ -256,23 +252,6 @@ function renderPackagingSettings(state) {
           ${statusPill("pending")}
         </article>
       ` : ""}
-      ${pendingApprovals.length ? `
-        <div class="packaging-approval-queue">
-          <span class="eyebrow">Pending approval</span>
-          ${pendingApprovals.map((request) => `
-            <article class="packaging-approval-request">
-              <div>
-                <strong>${escapeHtml(request.requestedBy || "Staff member")}</strong>
-                <span>${escapeHtml(packageSummary(request))}</span>
-              </div>
-              <div class="row-actions">
-                ${iconButton({ iconName: "check", label: "Approve packaging change", className: "js-approve-packaging-request", data: { "request-id": request.id } })}
-                ${iconButton({ iconName: "x", label: "Reject packaging change", className: "js-reject-packaging-request warning", data: { "request-id": request.id } })}
-              </div>
-            </article>
-          `).join("")}
-        </div>
-      ` : ""}
       <form id="packaging-settings-form" class="form-grid" novalidate>
         <fieldset class="span-full packaging-settings-options" aria-describedby="packaging-selection-summary">
           <legend>Packaging used by the factory — select all that apply</legend>
@@ -302,6 +281,23 @@ function renderPackagingSettings(state) {
           })}
         </div>
       </form>
+      ${pendingApprovals.length ? `
+        <div class="packaging-approval-queue">
+          <span class="eyebrow">Packaging changes awaiting CEO approval</span>
+          ${pendingApprovals.map((request) => `
+            <article class="packaging-approval-request">
+              <div>
+                <strong>${escapeHtml(request.requestedBy || "Staff member")}</strong>
+                <span>${escapeHtml(packageSummary(request))}</span>
+              </div>
+              <div class="row-actions">
+                ${iconButton({ iconName: "check", label: "Approve packaging change", className: "js-approve-packaging-request", data: { "request-id": request.id } })}
+                ${iconButton({ iconName: "x", label: "Reject packaging change", className: "js-reject-packaging-request warning", data: { "request-id": request.id } })}
+              </div>
+            </article>
+          `).join("")}
+        </div>
+      ` : ""}
     </section>
   `;
 }
@@ -314,7 +310,7 @@ function renderProfileSettings(state, account) {
   return `
     <section class="panel">
       ${panelHeader("My profile", "")}
-      <form id="profile-settings-form" class="form-grid" novalidate>
+      <form id="profile-settings-form" class="form-grid profile-settings-form" novalidate>
         <div class="span-full staff-image-picker-row">
           <div class="profile-image-control">
             <button class="staff-image-preview staff-image-picker" type="button" aria-label="Choose profile picture">
@@ -421,17 +417,30 @@ export function renderSettings({ state }) {
     <section class="view settings-view">
       <div class="settings-layout ${showFactorySettings ? "" : "personal-settings-layout"}">
         ${showFactorySettings ? `
-          <div class="settings-primary">
+          <div class="settings-primary settings-top-panel">
             ${renderCompanySettings(state, account)}
-            ${packagingUnderFactory ? renderPackagingSettings(state) : ""}
           </div>
-        ` : ""}
-        <div class="settings-side">
-          ${renderProfileSettings(state, account)}
-          ${packagingUnderFactory ? "" : renderPackagingSettings(state)}
-          ${renderFactoryDataReset(state)}
-          ${renderFactoryDeletion(state)}
-        </div>
+          <div class="settings-side settings-top-panel">
+            ${renderProfileSettings(state, account)}
+          </div>
+          ${packagingUnderFactory ? `
+            <div class="settings-primary settings-followup-panel">
+              ${renderPackagingSettings(state)}
+            </div>
+          ` : ""}
+          <div class="settings-side settings-followup-panel">
+            ${packagingUnderFactory ? "" : renderPackagingSettings(state)}
+            ${renderFactoryDataReset(state)}
+            ${renderFactoryDeletion(state)}
+          </div>
+        ` : `
+          <div class="settings-side">
+            ${renderProfileSettings(state, account)}
+            ${renderPackagingSettings(state)}
+            ${renderFactoryDataReset(state)}
+            ${renderFactoryDeletion(state)}
+          </div>
+        `}
       </div>
     </section>
   `;
@@ -733,7 +742,7 @@ export function bindSettings({ root, store, signal }) {
   });
   qs("[data-open-delete-factory]", root)?.addEventListener("click", () => {
     deleteFactoryModal.hidden = false;
-    deleteFactoryForm?.elements.confirmCompanyName?.focus();
+    qs('button[type="submit"]', deleteFactoryForm)?.focus();
   });
   qs("[data-close-delete-factory]", root)?.addEventListener("click", () => { deleteFactoryModal.hidden = true; });
   deleteFactoryModal?.addEventListener("click", (event) => {
@@ -918,8 +927,6 @@ export function bindSettings({ root, store, signal }) {
   deleteFactoryForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
     const currentState = store.getState();
-    const formData = new FormData(deleteFactoryForm);
-    const typedName = String(formData.get("confirmCompanyName") || "").trim();
     const factoryName = currentState.client?.companyName || "";
     const message = qs("#delete-factory-message", deleteFactoryForm);
     const submitButton = qs('button[type="submit"]', deleteFactoryForm);
@@ -932,22 +939,22 @@ export function bindSettings({ root, store, signal }) {
       return;
     }
 
-    if (typedName !== factoryName) {
-      writeErrors(deleteFactoryForm, {
-        confirmCompanyName: "Enter the factory name exactly."
-      });
-      return;
-    }
-
     submitButton.disabled = true;
 
     try {
       if (!isBackendConfigured()) {
         throw new Error("Backend setup error: connect Supabase before deleting the factory.");
       }
+      const passwordVerified = await verifyCeoPassword({
+        state: store.getState(),
+        title: "Verify CEO password",
+        message: "Enter the password for the currently signed-in CEO account to authorize permanent deletion of this factory and its linked staff sign-ins."
+      });
+      if (!passwordVerified) return;
+
       const deletionResult = await deleteWorkspace({
         clientId: currentState.client.id,
-        confirmationName: typedName
+        confirmationName: factoryName
       });
 
       try {

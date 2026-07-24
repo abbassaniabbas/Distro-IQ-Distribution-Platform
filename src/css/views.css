@@ -434,7 +434,7 @@
 
 .settings-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(320px, 0.9fr);
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
   align-items: start;
   gap: 18px;
 }
@@ -452,6 +452,27 @@
 .settings-primary > .panel,
 .settings-primary > .settings-packaging-panel {
   width: 100%;
+}
+
+.settings-top-panel {
+  align-self: stretch;
+}
+
+.settings-top-panel > .panel {
+  height: 100%;
+}
+
+.profile-settings-form {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.profile-settings-form .field,
+.profile-settings-form .field input {
+  min-width: 0;
+}
+
+.profile-settings-form .field-error:empty {
+  display: none;
 }
 
 .page-reset-action {
@@ -809,7 +830,7 @@
   gap: 12px;
 }
 
-#ceo-product-size-modal .ceo-size-picture-grid {
+.product-catalogue-size-modal .ceo-size-picture-grid {
   grid-template-columns: repeat(auto-fill, minmax(230px, 280px));
   justify-content: start;
   align-items: start;
@@ -862,7 +883,7 @@
 }
 
 @media (max-width: 640px) {
-  #ceo-product-size-modal .ceo-size-picture-grid {
+  .product-catalogue-size-modal .ceo-size-picture-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -1792,10 +1813,6 @@
   min-height: 108px;
 }
 
-.rep-product-size-modal .ceo-size-picture {
-  min-height: 150px;
-}
-
 .rep-catalogue-size-metrics {
   grid-template-columns: repeat(2, minmax(120px, 1fr));
   width: min(100%, 390px);
@@ -2223,7 +2240,6 @@
 }
 
 .record-select-cell input[type="checkbox"],
-.ceo-select-all input,
 .credit-account-select-row > input {
   width: 16px;
   height: 16px;
@@ -2241,16 +2257,6 @@
   margin: 12px 0;
 }
 
-.ceo-select-all {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 38px;
-  font-size: 0.8rem;
-  font-weight: 800;
-  color: var(--navy);
-}
-
 .credit-account-select-row {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr);
@@ -2259,6 +2265,28 @@
 
 .credit-account-select-row > input {
   justify-self: center;
+}
+
+.credit-account-list-header {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 0;
+  margin-bottom: 8px;
+  padding: 0 12px 8px 0;
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.credit-account-list-header .record-select-cell {
+  display: grid;
+  width: 30px;
+  min-width: 30px;
+  place-items: center;
+  padding: 0 !important;
 }
 
 @media (max-width: 640px) {
@@ -3776,6 +3804,12 @@
 
 .invoice-modal-details p {
   margin: 0;
+}
+
+.invoice-modal-origin-note {
+  color: var(--muted);
+  font-size: 0.66rem;
+  font-weight: 800;
 }
 
 .invoice-modal-details dl {
@@ -6677,7 +6711,9 @@
 
 .packaging-approval-queue {
   gap: 8px;
-  margin-bottom: 14px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
 }
 
 .packaging-settings-options,

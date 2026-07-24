@@ -1108,6 +1108,22 @@ function reducer(currentState, action) {
       };
     }
 
+    case "SET_PACKAGING_WORKSPACE_STATE": {
+      return {
+        ...state,
+        client: state.client ? {
+          ...state.client,
+          packagingTypes: Array.isArray(action.packagingTypes) ? action.packagingTypes : state.client.packagingTypes,
+          packagingDefaults: action.packagingDefaults && typeof action.packagingDefaults === "object"
+            ? action.packagingDefaults
+            : state.client.packagingDefaults
+        } : state.client,
+        packagingChangeRequests: Array.isArray(action.packagingChangeRequests)
+          ? action.packagingChangeRequests
+          : state.packagingChangeRequests
+      };
+    }
+
     case "CLEAR_AUTH_CONTEXT": {
       return {
         ...ensureStateShape(seedData),

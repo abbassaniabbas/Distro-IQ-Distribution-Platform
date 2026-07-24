@@ -6,9 +6,9 @@ import {
 import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, panelHeader, statusPill, table } from "../ui/components.js";
+import { iconButton, panelHeader, statusPill, table } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js";
-import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 
 const ORDER_PAGE_SIZE = 10;
 const ORDER_STATUSES = ["in_transit", "delayed", "delivered"];
@@ -326,14 +326,13 @@ export function renderOrders({ state }) {
         </div>
 
         ${currentUserRole(state) === "ceo" ? ceoDeleteControls({
-          scope: "orders",
-          clearLabel: "Clear sales orders",
-          disabled: !orders.length
+          scope: "orders"
         }) : ""}
         ${table(
-          [...(currentUserRole(state) === "ceo" ? [""] : []), "Sales order", "Customer", "Status", "Credit guard", "Value", ""],
+          ["Sales order", "Customer", "Status", "Credit guard", "Value", ""],
           renderOrderRows(orders, state, permissions),
-          "No sales orders available"
+          "No sales orders available",
+          { selectionScope: currentUserRole(state) === "ceo" ? "orders" : "" }
         )}
         <div class="activity-pagination" data-order-pagination hidden>
           <button class="button" type="button" data-order-page="prev">Previous</button>

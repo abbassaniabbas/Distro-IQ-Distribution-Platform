@@ -58,20 +58,23 @@ export function ceoSelectionCell(scope, id, label) {
   `;
 }
 
-export function ceoDeleteControls({ scope, clearLabel, disabled = false }) {
+export function ceoSelectAllCheckbox(scope, disabled = false) {
+  return `
+    <input
+      type="checkbox"
+      data-ceo-select-all="${escapeHtml(scope)}"
+      aria-label="Select or deselect every row"
+      ${disabled ? "disabled" : ""}
+    >
+  `;
+}
+
+export function ceoDeleteControls({ scope }) {
   return `
     <div class="ceo-delete-controls" data-ceo-delete-controls="${escapeHtml(scope)}">
-      <label class="ceo-select-all">
-        <input type="checkbox" data-ceo-select-all="${escapeHtml(scope)}" ${disabled ? "disabled" : ""}>
-        <span>Select all</span>
-      </label>
       <button class="button warning" type="button" data-ceo-delete-selected="${escapeHtml(scope)}" disabled>
         ${icon("trash")}
-        <span>Delete selected</span>
-      </button>
-      <button class="button warning" type="button" data-ceo-clear-section="${escapeHtml(scope)}" ${disabled ? "disabled" : ""}>
-        ${icon("trash")}
-        <span>${escapeHtml(clearLabel)}</span>
+        <span>Delete</span>
       </button>
     </div>
   `;
@@ -81,11 +84,7 @@ function selectedIds(root, scope) {
   return qsa(`[data-ceo-delete-item="${scope}"]:checked`, root).map((checkbox) => checkbox.value);
 }
 
-function allIds(root, scope) {
-  return qsa(`[data-ceo-delete-item="${scope}"]`, root).map((checkbox) => checkbox.value);
-}
-
-async function confirmDeletion(scope, ids, clearing) {
+async function confirmDeletion(scope, ids) {
   const copy = DELETE_COPY[scope];
   if (!copy || !ids.length) return false;
   const plural = ids.length === 1
@@ -95,9 +94,9 @@ async function confirmDeletion(scope, ids, clearing) {
       : `${copy.noun}s`;
 
   return confirmActionDialog({
-    title: clearing ? `Clear ${plural}?` : `Delete ${ids.length} ${plural}?`,
+    title: `Delete ${ids.length} ${plural}?`,
     message: copy.message,
-    confirmLabel: clearing ? "Clear" : "Delete",
+    confirmLabel: "Delete",
     tone: "danger"
   });
 }
@@ -109,9 +108,8 @@ export function bindCeoDataDeletion({ root, store, signal }) {
     if (controls.dataset.ceoDeleteBound === "true") return;
     controls.dataset.ceoDeleteBound = "true";
     const scope = controls.dataset.ceoDeleteControls;
-    const selectAll = qs(`[data-ceo-select-all="${scope}"]`, controls);
+    const selectAll = qs(`[data-ceo-select-all="${scope}"]`, root);
     const deleteSelected = qs(`[data-ceo-delete-selected="${scope}"]`, controls);
-    const clearSection = qs(`[data-ceo-clear-section="${scope}"]`, controls);
     const checkboxes = qsa(`[data-ceo-delete-item="${scope}"]`, root);
 
     const updateControls = () => {
@@ -119,7 +117,7 @@ export function bindCeoDataDeletion({ root, store, signal }) {
       if (deleteSelected) {
         deleteSelected.disabled = selected.length === 0;
         const label = qs("span", deleteSelected);
-        if (label) label.textContent = selected.length ? `Delete selected (${selected.length})` : "Delete selected";
+        if (label) label.textContent = selected.length ? `Delete (${selected.length})` : "Delete";
       }
       if (selectAll) {
         selectAll.checked = checkboxes.length > 0 && selected.length === checkboxes.length;
@@ -135,9 +133,9 @@ export function bindCeoDataDeletion({ root, store, signal }) {
       updateControls();
     }, { signal });
 
-    const remove = async (ids, clearing, button) => {
+    const remove = async (ids, button) => {
       const uniqueIds = [...new Set(ids.filter(Boolean))];
-      if (!uniqueIds.length || !await confirmDeletion(scope, uniqueIds, clearing)) return;
+      if (!uniqueIds.length || !await confirmDeletion(scope, uniqueIds)) return;
 
       button.disabled = true;
       try {
@@ -152,7 +150,7 @@ export function bindCeoDataDeletion({ root, store, signal }) {
           type: "DELETE_CEO_DATA_RECORDS",
           scope,
           ids: uniqueIds,
-          message: clearing ? "Section data cleared" : `${uniqueIds.length} record${uniqueIds.length === 1 ? "" : "s"} deleted`
+          message: `${uniqueIds.length} record${uniqueIds.length === 1 ? "" : "s"} deleted`
         });
       } catch (error) {
         showToast(error.message);
@@ -160,8 +158,7 @@ export function bindCeoDataDeletion({ root, store, signal }) {
       }
     };
 
-    deleteSelected?.addEventListener("click", () => remove(selectedIds(root, scope), false, deleteSelected), { signal });
-    clearSection?.addEventListener("click", () => remove(allIds(root, scope), true, clearSection), { signal });
+    deleteSelected?.addEventListener("click", () => remove(selectedIds(root, scope), deleteSelected), { signal });
     updateControls();
   });
 }

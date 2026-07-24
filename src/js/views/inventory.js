@@ -1755,9 +1755,9 @@ function renderStockHealthPage(state, permissions) {
             ${iconButton({ iconName: "dashboard", label: "Grid view", className: stockHealthView === "grid" ? "is-active" : "", data: { "stock-view": "grid" } })}
           </div>
           ${permissions.canManageProducts
-            ? textButton({
+              ? textButton({
                 iconName: "trash",
-                label: "Delete selected",
+                label: "Delete",
                 className: "warning js-delete-selected-stock",
                 disabled: true
               })
@@ -1823,7 +1823,7 @@ function renderStockDeletionModal(permissions) {
             <span class="stock-delete-confirmation-icon" aria-hidden="true">${icon("trash")}</span>
             <div>
               <span class="eyebrow">Permanent deletion</span>
-              <h2 id="stock-delete-confirmation-title">Delete selected stock?</h2>
+              <h2 id="stock-delete-confirmation-title">Delete stock?</h2>
             </div>
           </div>
           ${iconButton({ iconName: "x", label: "Close deletion confirmation", className: "js-close-stock-delete-confirmation" })}
@@ -2851,7 +2851,7 @@ export function bindInventory({ root, store, signal }) {
     if (deleteSelectedStockButton) {
       deleteSelectedStockButton.disabled = selectedCount === 0;
       const label = qs("span", deleteSelectedStockButton);
-      if (label) label.textContent = selectedCount ? `Delete selected (${selectedCount})` : "Delete selected";
+      if (label) label.textContent = selectedCount ? `Delete (${selectedCount})` : "Delete";
     }
 
     if (selectAllStock) {

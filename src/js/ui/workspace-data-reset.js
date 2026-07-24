@@ -1,7 +1,8 @@
 import { resetWorkspaceData } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { currentUserRole } from "../services/rbac.js";
-import { confirmActionDialog, requestTextDialog } from "./action-dialog.js";
+import { confirmActionDialog } from "./action-dialog.js";
+import { verifyCeoPassword } from "./ceo-password-verification.js";
 import { qsa } from "./dom.js";
 import { showToast } from "./toast.js";
 
@@ -33,15 +34,12 @@ const RESET_COPY = {
 };
 
 async function confirmFactoryReset() {
-  const confirmation = await requestTextDialog({
+  return confirmActionDialog({
     title: "Reset factory data",
     message: "This permanently clears stock, movements, customers, orders, finance, reports, adjustments, and activity. Staff accounts, sign-ins, messages, and factory settings remain.",
-    label: "Type RESET to confirm",
-    placeholder: "RESET",
-    confirmLabel: "Reset factory data"
+    confirmLabel: "Continue to password",
+    tone: "danger"
   });
-
-  return String(confirmation || "").trim().toUpperCase() === "RESET";
 }
 
 async function confirmScopedReset(scope) {
@@ -56,6 +54,14 @@ async function confirmScopedReset(scope) {
   });
 }
 
+async function verifyFactoryResetPassword(state) {
+  return verifyCeoPassword({
+    state,
+    title: "Verify CEO password",
+    message: "Enter the password for the currently signed-in CEO account to authorize the permanent factory data reset."
+  });
+}
+
 export function bindWorkspaceDataResetButtons({ root, store, signal }) {
   qsa("[data-reset-workspace-scope]", root).forEach((button) => {
     button.addEventListener("click", async () => {
@@ -66,6 +72,10 @@ export function bindWorkspaceDataResetButtons({ root, store, signal }) {
 
       button.disabled = true;
       try {
+        if (scope === "factory" && !await verifyFactoryResetPassword(store.getState())) {
+          button.disabled = false;
+          return;
+        }
         let resetResult = {};
         if (isBackendConfigured()) {
           resetResult = await resetWorkspaceData({ clientId: state.client.id, scope });

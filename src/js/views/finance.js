@@ -18,10 +18,10 @@ import { saveRepresentativeCreditLimit } from "../services/backend.js";
 import { dateIsWithinRange, normalizeDateRange } from "../services/filtering.js";
 import { downloadInvoice, getFinancialInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
+import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js";
 import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
-import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 
 const DEFAULT_FINANCE_TAB = "overview";
 const FINANCE_PAGE_SIZE = 10;
@@ -208,6 +208,12 @@ function renderCreditAccountList(state, accountType) {
   }
 
   return `
+    <div class="credit-account-list-header">
+      <span class="record-select-cell">${ceoSelectAllCheckbox(
+        accountType === "representative" ? "representative_credit_limits" : "customer_credit_limits"
+      )}</span>
+      <strong>${accountType === "representative" ? "Sales representative" : "Customer"}</strong>
+    </div>
     <div class="credit-account-list">
       ${matchingAccounts.map(({ limit, index }) => {
         const { usagePercent, status } = creditAccountStatus(limit);
@@ -847,14 +853,13 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
       <section class="panel accountant-invoices-panel">
         ${panelHeader("Invoices", "Download, print, and confirm customer payments")}
         ${canDelete ? ceoDeleteControls({
-          scope: "invoices",
-          clearLabel: "Clear invoices",
-          disabled: !getFinancialInvoiceRecords(state).length
+          scope: "invoices"
         }) : ""}
         ${table(
-          [...(canDelete ? [""] : []), "Invoice", "Customer", "Status", "Due", "Amount", "Actions"],
+          ["Invoice", "Customer", "Status", "Due", "Amount", "Actions"],
           renderInvoiceRows(state, currentUserPermissions(state)),
-          "No invoices available"
+          "No invoices available",
+          { selectionScope: canDelete ? "invoices" : "" }
         )}
         ${renderFinancePagination("invoices")}
       </section>
@@ -868,14 +873,13 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
       <section class="panel" data-export-table="true" data-export-title="Sales reports">
         ${panelHeader("Sales reports", "Read-only submitted sales activity")}
         ${canDelete ? ceoDeleteControls({
-          scope: "sales_reports",
-          clearLabel: "Clear sales reports",
-          disabled: !(state.salesReports || []).length
+          scope: "sales_reports"
         }) : ""}
         ${table(
-          [...(canDelete ? [""] : []), "Report", "Sales representative", "Date", "Sales", "Returns", "Status"],
+          ["Report", "Sales representative", "Date", "Sales", "Returns", "Status"],
           renderAccountantSalesReportRows(state),
-          "No sales reports available"
+          "No sales reports available",
+          { selectionScope: canDelete ? "sales_reports" : "" }
         )}
       </section>
     `;
@@ -893,14 +897,13 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
       <section class="panel" data-export-table="true" data-export-title="Revenue cost and profit">
         ${panelHeader("Revenue, cost, and profit", "Product-level financial summary")}
         ${canDelete ? ceoDeleteControls({
-          scope: "product_revenue",
-          clearLabel: "Clear revenue data",
-          disabled: !revenueLines.length
+          scope: "product_revenue"
         }) : ""}
         ${table(
-          [...(canDelete ? [""] : []), "Date", "Product", "Sales representative", "Customer", "Qty", "Payment", "Revenue", "Cost", "Profit", "Margin"],
+          ["Date", "Product", "Sales representative", "Customer", "Qty", "Payment", "Revenue", "Cost", "Profit", "Margin"],
           renderAccountantProductRows(state),
-          "No product financial records available"
+          "No product financial records available",
+          { selectionScope: canDelete ? "product_revenue" : "" }
         )}
       </section>
     `;
@@ -991,18 +994,14 @@ export function renderFinance({ state }) {
         <section class="panel credit-report-panel" data-credit-report-type="representative">
           ${panelHeader("Sales representative credit reports", "Select a sales representative to view their complete credit information")}
           ${ceoDeleteControls({
-            scope: "representative_credit_limits",
-            clearLabel: "Clear representative credit reports",
-            disabled: !creditAccounts(state).some(isRepresentativeCreditAccount)
+            scope: "representative_credit_limits"
           })}
           ${renderCreditAccountList(state, "representative")}
         </section>
         <section class="panel credit-report-panel" data-credit-report-type="customer">
           ${panelHeader("Customer credit terms", "Select a customer to view their complete credit information")}
           ${ceoDeleteControls({
-            scope: "customer_credit_limits",
-            clearLabel: "Clear customer credit terms",
-            disabled: !creditAccounts(state).some((limit) => !isRepresentativeCreditAccount(limit))
+            scope: "customer_credit_limits"
           })}
           ${renderCreditAccountList(state, "customer")}
         </section>
@@ -1014,28 +1013,26 @@ export function renderFinance({ state }) {
         <section class="panel">
           ${panelHeader("Sales representative credit terms history", "Every change stays visible and cannot be edited")}
           ${ceoDeleteControls({
-            scope: "representative_credit_history",
-            clearLabel: "Clear representative credit history",
-            disabled: !creditHistoryEntries(state, "representative").length
+            scope: "representative_credit_history"
           })}
           ${table(
-            ["", "Account", "Previous", "New", "Terms", "Reason", "Changed by"],
+            ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
             renderCreditHistoryRows(state, "representative"),
-            "No sales representative credit changes recorded"
+            "No sales representative credit changes recorded",
+            { selectionScope: "representative_credit_history" }
           )}
           ${renderFinancePagination("credit-history-representative")}
         </section>
         <section class="panel">
           ${panelHeader("Customer credit terms history", "Every change stays visible and cannot be edited")}
           ${ceoDeleteControls({
-            scope: "customer_credit_history",
-            clearLabel: "Clear customer credit history",
-            disabled: !creditHistoryEntries(state, "customer").length
+            scope: "customer_credit_history"
           })}
           ${table(
-            ["", "Account", "Previous", "New", "Terms", "Reason", "Changed by"],
+            ["Account", "Previous", "New", "Terms", "Reason", "Changed by"],
             renderCreditHistoryRows(state, "customer"),
-            "No customer credit changes recorded"
+            "No customer credit changes recorded",
+            { selectionScope: "customer_credit_history" }
           )}
           ${renderFinancePagination("credit-history-customer")}
         </section>

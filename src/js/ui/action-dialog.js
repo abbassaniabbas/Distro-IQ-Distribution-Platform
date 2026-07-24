@@ -3,7 +3,7 @@ import { icon } from "./icons.js";
 
 let closeActiveDialog = null;
 
-function dialogControl({ inputType, label, placeholder, initialValue, min, step, maxLength }) {
+function dialogControl({ inputType, label, placeholder, initialValue, min, step, maxLength, autoComplete }) {
   if (!inputType) return "";
   const common = `name="actionValue" placeholder="${escapeHtml(placeholder || "")}" required`;
 
@@ -19,7 +19,7 @@ function dialogControl({ inputType, label, placeholder, initialValue, min, step,
   return `
     <label class="field action-dialog-field">
       <span>${escapeHtml(label || "Value")}</span>
-      <input ${common} type="${escapeHtml(inputType)}" value="${escapeHtml(initialValue || "")}" ${min !== undefined ? `min="${escapeHtml(min)}"` : ""} ${step !== undefined ? `step="${escapeHtml(step)}"` : ""}>
+      <input ${common} type="${escapeHtml(inputType)}" value="${escapeHtml(initialValue || "")}" ${autoComplete ? `autocomplete="${escapeHtml(autoComplete)}"` : ""} ${min !== undefined ? `min="${escapeHtml(min)}"` : ""} ${step !== undefined ? `step="${escapeHtml(step)}"` : ""}>
     </label>
   `;
 }
@@ -34,6 +34,7 @@ function openActionDialog({
   min,
   step,
   maxLength = 500,
+  autoComplete = "",
   confirmLabel = "Confirm",
   cancelLabel = "Cancel",
   tone = "primary",
@@ -62,7 +63,7 @@ function openActionDialog({
         </header>
         <p class="action-dialog-message" id="${messageId}">${escapeHtml(message || "Please confirm that you want to continue.")}</p>
         <form class="action-dialog-form" novalidate>
-          ${dialogControl({ inputType, label, placeholder, initialValue, min, step, maxLength })}
+          ${dialogControl({ inputType, label, placeholder, initialValue, min, step, maxLength, autoComplete })}
           <span class="field-error action-dialog-error" role="alert" aria-live="polite"></span>
           <div class="action-dialog-actions">
             <button class="button subtle action-dialog-cancel" type="button"><span>${escapeHtml(cancelLabel)}</span></button>
@@ -168,6 +169,18 @@ export function requestNumberDialog(options) {
     step: "0.01",
     confirmLabel: "Continue",
     validationMessage: "Enter a valid quantity greater than zero",
+    ...options
+  });
+}
+
+export function requestPasswordDialog(options) {
+  return openActionDialog({
+    inputType: "password",
+    label: "CEO password",
+    placeholder: "Enter your current password",
+    autoComplete: "current-password",
+    confirmLabel: "Verify password",
+    validationMessage: "CEO password is required",
     ...options
   });
 }

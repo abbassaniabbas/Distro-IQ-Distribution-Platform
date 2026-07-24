@@ -69,7 +69,7 @@ export function textButton({ iconName, label, className = "", disabled = false, 
   `;
 }
 
-export function table(headers, rows, emptyText = "No records found") {
+export function table(headers, rows, emptyText = "No records found", { selectionScope = "" } = {}) {
   if (!rows.length) {
     return `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
   }
@@ -78,7 +78,14 @@ export function table(headers, rows, emptyText = "No records found") {
     <div class="table-wrap">
       <table class="data-table">
         <thead>
-          <tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr>
+          <tr>
+            ${selectionScope ? `
+              <th class="record-select-cell" data-export-ignore>
+                <input type="checkbox" data-ceo-select-all="${escapeHtml(selectionScope)}" aria-label="Select or deselect every row">
+              </th>
+            ` : ""}
+            ${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}
+          </tr>
         </thead>
         <tbody>${rows.join("")}</tbody>
       </table>

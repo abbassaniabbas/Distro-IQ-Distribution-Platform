@@ -18,6 +18,7 @@ import { INACTIVITY_TIMEOUT_MS, remainingInactivityMs, requiresInactivityLogout 
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { REQUIRED_FORM_ALERT_MESSAGE } from "../src/js/ui/form-validation.js";
+import { MODAL_SAFE_BACKGROUND_ACTIONS, hasOpenWorkspaceModal, shouldDeferRenderForModal } from "../src/js/ui/modal-render-guard.js";
 import { renderAuth, renderForgotPassword } from "../src/js/views/auth.js";
 import { renderBackendSetup } from "../src/js/views/backend-setup.js";
 import { renderActivityLog } from "../src/js/views/activity-log.js";
@@ -38,13 +39,25 @@ globalThis.window = { location: { hash: "#/dashboard" } };
 const responsiveLayoutCss = readFileSync(new URL("../src/css/layout.css", import.meta.url), "utf8");
 const responsiveComponentCss = readFileSync(new URL("../src/css/components.css", import.meta.url), "utf8");
 const responsiveViewCss = readFileSync(new URL("../src/css/views.css", import.meta.url), "utf8");
+const workspaceDataResetSource = readFileSync(new URL("../src/js/ui/workspace-data-reset.js", import.meta.url), "utf8");
+const actionDialogSource = readFileSync(new URL("../src/js/ui/action-dialog.js", import.meta.url), "utf8");
+const ceoPasswordVerificationSource = readFileSync(new URL("../src/js/ui/ceo-password-verification.js", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "utf8");
+const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
 assert.match(responsiveLayoutCss, /@media \(max-width: 640px\)[\s\S]*\.view-root,[\s\S]*padding: 14px 12px 24px/, "phone layouts must use compact page padding");
 assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-button[\s\S]*width: 44px;[\s\S]*height: 44px/, "phone and tablet controls must retain touch-friendly targets");
 assert.match(responsiveComponentCss, /\.table-wrap[\s\S]*-webkit-overflow-scrolling: touch/, "wide tables must scroll safely on touch devices");
 assert.match(responsiveViewCss, /@media \(max-width: 640px\)[\s\S]*max-height: calc\(100dvh - 20px\)/, "mobile modals must remain inside the visible viewport");
 assert.match(responsiveViewCss, /\.stock-health-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "Stock Health grid cards must keep a normal width and fill from the left");
-assert.match(responsiveViewCss, /#ceo-product-size-modal \.ceo-size-picture-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "CEO product pictures must retain the normal Stock Health grid-card width instead of expanding across the modal");
+assert.match(responsiveViewCss, /\.product-catalogue-size-modal \.ceo-size-picture-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "all portal product catalogues must share the normal CEO image-card width");
+assert.doesNotMatch(responsiveViewCss, /\.rep-product-size-modal \.ceo-size-picture\s*\{[\s\S]*min-height:/, "sales representative catalogue images must not override the shared CEO image proportions");
+assert.match(responsiveViewCss, /\.profile-settings-form\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/, "profile settings fields must stay aligned in one responsive column");
+assert.match(responsiveViewCss, /\.profile-settings-form \.field-error:empty\s*\{[\s\S]*display: none;/, "empty profile validation rows must not offset the profile fields");
+assert.match(responsiveViewCss, /\.settings-layout\s*\{[\s\S]*grid-template-columns: minmax\(0, 3fr\) minmax\(320px, 2fr\);/, "CEO settings must use the requested 60/40 Factory Settings and My Profile width split");
+assert.match(responsiveViewCss, /\.settings-top-panel > \.panel\s*\{[\s\S]*height: 100%;/, "Factory Settings and My Profile panels must have equal top-to-bottom length");
 assert.match(responsiveViewCss, /\.rep-request-quantity-fields:focus-within[\s\S]*box-shadow:[^;]+;/, "representative stock-request quantity controls must have a clear polished focus state");
+assert.match(backendSource, /export async function loadWorkspacePackagingState[\s\S]*packaging_change_requests/, "background configuration refresh must load packaging approval requests");
+assert.match(appSource, /loadWorkspacePackagingState\([\s\S]*SET_PACKAGING_WORKSPACE_STATE/, "active portals must receive packaging requests and approved settings without a new sign-in");
 const currentTestDate = new Date().toISOString().slice(0, 10);
 const browserStorage = new Map();
 globalThis.localStorage = {
@@ -188,6 +201,21 @@ globalThis.window.location.hash = "#/dashboard";
 assert.doesNotMatch(loginHtml, /value="manager"/, "the removed Manager role must not appear at login");
 assert.doesNotMatch(loginHtml, /<select name="role"/, "login role selection must not use a dropdown");
 assert.equal(REQUIRED_FORM_ALERT_MESSAGE, "Please complete the required fields");
+const openModalRoot = {
+  querySelector(selector) {
+    return selector.includes(".stock-modal-backdrop:not([hidden])") ? { id: "dashboard-dispatch-modal" } : null;
+  }
+};
+const closedModalRoot = { querySelector() { return null; } };
+assert.equal(hasOpenWorkspaceModal(openModalRoot), true, "the shared modal guard must detect an open dispatch or portal modal");
+assert.equal(shouldDeferRenderForModal({ type: "SET_OPERATIONAL_RECORDS" }, openModalRoot), true, "backend refreshes must not rebuild a portal while its modal is open");
+assert.equal(shouldDeferRenderForModal({ type: "SET_OPERATIONAL_RECORDS" }, closedModalRoot), false, "backend refreshes should render normally when no modal is open");
+assert.equal(shouldDeferRenderForModal({ type: "RECORD_STOCK_DISPATCH" }, openModalRoot), false, "a completed modal action must still render its saved result immediately");
+assert.deepEqual(
+  [...MODAL_SAFE_BACKGROUND_ACTIONS],
+  ["SET_OPERATIONAL_RECORDS", "SET_FEATURE_MODULES", "SET_PACKAGING_WORKSPACE_STATE", "HYDRATE_PRODUCT_IMAGES", "AUTO_UPDATE_DELAYED_ORDERS"],
+  "all routine workspace refresh actions must preserve open modals"
+);
 const notificationFixture = {
   client,
   user: { id: "user-manager", email: "musa@example.com" },
@@ -378,8 +406,11 @@ const managerSettings = renderSettings({ state: store.getState() });
 assert.match(managerSettings, /name="skuFormat"/);
 assert.match(managerSettings, /name="invoiceFormat"/);
 assert.match(managerSettings, /id="packaging-settings-form"/);
+assert.match(managerSettings, /id="profile-settings-form" class="form-grid profile-settings-form"/, "CEO profile fields must use the dedicated aligned layout");
 assert.ok(managerSettings.indexOf("Factory settings") < managerSettings.indexOf("Sales packaging"), "CEO Sales packaging settings must appear below Factory settings");
-assert.match(managerSettings, /class="settings-primary"[\s\S]*Factory settings[\s\S]*Sales packaging/);
+assert.match(managerSettings, /class="settings-primary settings-top-panel"[\s\S]*Factory settings/, "Factory Settings must occupy the 60% top panel");
+assert.match(managerSettings, /class="settings-side settings-top-panel"[\s\S]*My profile/, "My Profile must occupy the equal-height 40% top panel");
+assert.match(managerSettings, /class="settings-primary settings-followup-panel"[\s\S]*Sales packaging/, "CEO Sales Packaging must remain below Factory Settings");
 assert.equal((managerSettings.match(/id="packaging-settings-form"/g) || []).length, 1, "CEO Sales Packaging must render once");
 assert.match(managerSettings, /name="packagingTypes" value="carton"/);
 assert.match(managerSettings, /name="packagingTypes" value="carton" checked/, "CEO packaging settings must retain multiple selected package types");
@@ -390,6 +421,12 @@ assert.match(managerSettings, /data-packaging-selection-summary>Pieces · Carton
 assert.doesNotMatch(managerSettings, /name="packagingDefault-|Default pieces per/);
 assert.match(managerSettings, /Set the quantity inside each stock item/);
 assert.match(managerSettings, /data-reset-workspace-scope="factory"/, "CEO settings must include the factory data reset control");
+assert.match(managerSettings, /CEO password required/, "CEO settings must state that the password is required for a factory reset");
+assert.match(actionDialogSource, /export function requestPasswordDialog[\s\S]*inputType: "password"[\s\S]*autoComplete: "current-password"/, "destructive re-authentication must use a protected password input");
+assert.match(workspaceDataResetSource, /scope === "factory" && !await verifyFactoryResetPassword\(store\.getState\(\)\)/, "factory reset must stop unless the signed-in CEO password is verified");
+assert.match(ceoPasswordVerificationSource, /await signInWithPassword\(\{[\s\S]*email:[\s\S]*password[\s\S]*\}\);/, "CEO destructive actions must re-authenticate with the signed-in account");
+assert.match(workspaceDataResetSource, /verifyFactoryResetPassword\(store\.getState\(\)\)[\s\S]*await resetWorkspaceData/, "CEO password verification must finish before the backend factory reset starts");
+assert.doesNotMatch(workspaceDataResetSource, /Type RESET to confirm|placeholder: "RESET"/, "Factory Data Reset must not require typing RESET when CEO password verification is enabled");
 assert.doesNotMatch(managerSettings, /Delete records before today|delete-history-before-today/, "Settings must not include the section-data Delete control");
 const managerAccountsBeforePackagingSync = store.getState().accounts.length;
 store.dispatch({
@@ -403,6 +440,7 @@ store.dispatch({
 assert.deepEqual(store.getState().client.packagingTypes, ["piece", "carton", "pack", "tray"], "confirmed CEO packaging settings must update immediately");
 assert.equal(store.getState().accounts.length, managerAccountsBeforePackagingSync, "packaging confirmation must not clear unrelated workspace data");
 const settingsViewSource = readFileSync(new URL("../src/js/views/settings.js", import.meta.url), "utf8");
+assert.match(settingsViewSource, /deleteFactoryForm\?\.addEventListener\("submit"[\s\S]*await verifyCeoPassword\([\s\S]*await deleteWorkspace\(/, "Delete Factory must verify the CEO password before calling the backend deletion service");
 assert.match(settingsViewSource, /message: "Packaging settings saved successfully"/, "CEO packaging save must emit a success confirmation banner");
 assert.doesNotMatch(settingsViewSource, /const packagingDefaults =/, "packaging submit must not shadow the packagingDefaults helper before saving");
 assert.doesNotMatch(managerSettings, /name="timezone"/);
@@ -411,6 +449,8 @@ assert.match(managerSettings, /data-open-password-modal/);
 assert.match(managerSettings, /name="oldPassword"/);
 assert.match(managerSettings, /data-open-delete-factory/);
 assert.match(managerSettings, /permanently deletes the factory records and linked staff sign-ins/);
+assert.match(managerSettings, /CEO password verification is required/, "Delete Factory must clearly state its CEO password requirement");
+assert.doesNotMatch(managerSettings, /confirmCompanyName|Enter [^<]+ to confirm/, "Delete Factory must not require retyping the company name when CEO password verification is enabled");
 assert.match(managerSettings, /id="profile-staff-image"[^>]+type="file"/, "profile settings must accept an optional staff image");
 assert.match(managerSettings, /staff-image-preview staff-image-picker[^>]+aria-label="Choose profile picture"/, "profile picture selection must use the circular avatar surface");
 assert.match(managerSettings, /js-remove-profile-image[^>]+disabled/, "profile settings must provide a compact remove-photo control");
@@ -575,9 +615,7 @@ store.dispatch({
 });
 assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").stock, 25, "Supabase operational refresh must apply the shared stock quantity");
 assert.equal(store.getState().products.find((product) => product.id === "SKU-IMAGE-PERSIST").imageUrl, "data:image/png;base64,SHARED_PORTAL_IMAGE", "operational refresh must preserve the dedicated stock picture");
-const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "utf8");
 assert.match(appSource, /saveSharedProductImage\([\s\S]*imageUrl: image\.imageUrl/, "surviving browser stock images must be backed up to Supabase after sign-in");
-const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
 assert.match(backendSource, /select\("sku, image_url"\)[\s\S]*single\(\)/, "remote stock picture saves must be read back and confirmed");
 assert.match(backendSource, /purgeSharedProductImages[\s\S]*update\(\{ image_url: ""[\s\S]*\.delete\(\)/, "stock deletion must erase shared picture data before removing its compatibility row");
 assert.match(backendSource, /operationalActivityInitialized[\s\S]*activityLogs:[\s\S]*operationalActivityRows/, "initialized synchronized activity must remain authoritative over legacy activity rows");
@@ -781,6 +819,39 @@ assert.match(invoicePreview, /Plantain Chips/);
 assert.match(invoicePreview, /Sales receipt/);
 assert.doesNotMatch(invoicePreview, /Representative sell-through record only|factory revenue was already recognised/i);
 assert.doesNotMatch(invoicePreview, /iframe/);
+const factoryRepresentativeInvoice = {
+  ...cashInvoice,
+  id: "INV-FACTORY-REP",
+  orderId: "ORD-FACTORY-REP",
+  dispatchId: "DSP-FACTORY-REP",
+  customerName: "Amina Rep",
+  documentType: "invoice",
+  financialImpact: true
+};
+const factoryRepresentativeInvoiceState = {
+  ...state,
+  orders: [
+    ...(state.orders || []),
+    {
+      id: "ORD-FACTORY-REP",
+      source: "factory_dispatch",
+      dispatchId: "DSP-FACTORY-REP",
+      customerType: "Sales Representative",
+      customerName: "Amina Rep"
+    }
+  ]
+};
+assert.match(
+  buildInvoicePreviewContent(factoryRepresentativeInvoice, factoryRepresentativeInvoiceState),
+  /Bill to[\s\S]*Amina Rep[\s\S]*invoice-modal-origin-note">From factory</,
+  "factory stock invoices to sales representatives must show the origin note below Bill to"
+);
+assert.match(
+  buildInvoiceDocument(factoryRepresentativeInvoice, factoryRepresentativeInvoiceState),
+  /<h2>Bill to<\/h2>[\s\S]*Amina Rep[\s\S]*origin-note">From factory</,
+  "downloaded and printed representative stock invoices must retain the factory origin note"
+);
+assert.doesNotMatch(invoicePreview, /invoice-modal-origin-note">From factory</, "customer sales receipts must not show the factory-assignment note");
 const packagedInvoicePreview = buildInvoicePreviewContent({
   ...cashInvoice,
   items: [{ ...cashInvoice.items[0], quantity: 48, packagingType: "carton", packagingQuantity: 2 }]
@@ -864,6 +935,7 @@ assert.match(repDashboard, /rep-product-family-grid/, "representative catalogue 
 assert.match(repDashboard, /js-toggle-rep-product-types/, "representatives must be able to open product types");
 assert.match(repDashboard, /js-open-rep-product-sizes/, "representatives must be able to open product sizes");
 assert.match(repDashboard, /id="rep-product-size-modal"/, "product sizes must open in a catalogue modal");
+assert.match(repDashboard, /rep-product-size-modal product-catalogue-size-modal/, "representative product images must use the shared CEO catalogue frame");
 assert.match(repDashboard, /js-select-rep-product-size/, "each catalogue size must be selectable");
 assert.match(repDashboard, /name="salePackagingType"/, "quick sales must support configured packaging types");
 assert.match(repDashboard, /name="returnPackagingType"/, "customer returns must allow the representative to choose packaging");
@@ -1073,6 +1145,10 @@ assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELA
 assert.equal(store.getState().orders.find((order) => order.id === "ORD-AUTO-DELAY").delayHistory.length, 1);
 const delayedOrdersPage = renderOrders({ state: store.getState() });
 assert.match(delayedOrdersPage, /order-delay-attention-icon/);
+assert.match(delayedOrdersPage, /data-ceo-delete-selected="orders"/, "CEO Sales Orders must retain selected-row deletion");
+assert.match(delayedOrdersPage, /data-ceo-select-all="orders"[^>]+aria-label="Select or deselect every row"/, "Sales Orders must use one master checkbox above the row checkboxes");
+assert.doesNotMatch(delayedOrdersPage, /data-ceo-clear-section="orders"|Clear sales orders/, "Sales Orders must not show the redundant section-wide clear button");
+assert.doesNotMatch(delayedOrdersPage, /Delete selected|>Select all</, "Sales Orders deletion controls must use the simplified Delete label and checkbox-only master selection");
 assert.match(delayedOrdersPage, /Delivery attention/);
 assert.doesNotMatch(delayedOrdersPage, /Automatically detected/);
 assert.doesNotMatch(delayedOrdersPage, /Order status and credit checks for every snack order/);
@@ -1131,16 +1207,20 @@ assert.match(managerRecentOrders, /Activity log pages/);
 assert.match(managerRecentOrders, /Recent sales orders/);
 assert.match(managerRecentOrders, /js-download-recent-orders/);
 assert.match(managerRecentOrders, /js-print-recent-orders/);
-assert.match(managerRecentOrders, /data-ceo-clear-section="orders"/, "Recent sales orders must have their own scoped clear control");
+assert.match(managerRecentOrders, /<thead>[\s\S]*data-ceo-select-all="orders"[\s\S]*<th>Sales order<\/th>/, "Recent Sales Orders must place the master checkbox in the table-title row");
+assert.match(managerRecentOrders, /data-ceo-delete-selected="orders"/);
+assert.doesNotMatch(managerRecentOrders, /data-ceo-clear-section|Clear recent sales orders/, "Recent Sales Orders must not duplicate Delete with a Clear button");
 assert.doesNotMatch(managerRecentOrders, /data-reset-workspace-scope="activity"/, "Recent sales orders must not use the activity-log clear scope");
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const managerSubmittedReportsWithDeletion = renderActivityLog({ state: store.getState() });
-assert.match(managerSubmittedReportsWithDeletion, /data-ceo-clear-section="sales_reports"/);
-assert.match(managerSubmittedReportsWithDeletion, />Clear submitted sales reports</);
+assert.match(managerSubmittedReportsWithDeletion, /<thead>[\s\S]*data-ceo-select-all="sales_reports"[\s\S]*<th>Report<\/th>/);
+assert.match(managerSubmittedReportsWithDeletion, /data-ceo-delete-selected="sales_reports"/);
+assert.doesNotMatch(managerSubmittedReportsWithDeletion, /data-ceo-clear-section|Clear submitted sales reports/);
 globalThis.window.location.hash = "#/activity-log";
 const activityWithUserFilter = renderActivityLog({ state: store.getState() });
-assert.match(activityWithUserFilter, /data-ceo-clear-section="activity"/);
 assert.match(activityWithUserFilter, /data-ceo-delete-selected="activity"/);
+assert.match(activityWithUserFilter, /<thead>[\s\S]*data-ceo-select-all="activity"[\s\S]*<th>Timestamp<\/th>[\s\S]*<th>Action<\/th>/, "Activity Log must place the master checkbox immediately left of Timestamp");
+assert.doesNotMatch(activityWithUserFilter, /data-ceo-clear-section|Clear activity/);
 const userFilterMarkup = activityWithUserFilter.match(/<select id="activity-user-filter">([\s\S]*?)<\/select>/)?.[1] || "";
 assert.doesNotMatch(userFilterMarkup, /@/, "activity user filter must show names without email addresses");
 const conciseStockActivity = renderActivityLog({
@@ -1395,21 +1475,24 @@ const ceoFinanceInvoices = renderFinance({ state: store.getState() });
 assert.match(ceoFinanceInvoices, /Download, print, and confirm customer payments/);
 assert.match(ceoFinanceInvoices, /js-view-invoice/);
 assert.match(ceoFinanceInvoices, /js-download-invoice/);
-assert.match(ceoFinanceInvoices, /data-ceo-clear-section="invoices"/);
-assert.match(ceoFinanceInvoices, />Clear invoices</);
+assert.match(ceoFinanceInvoices, /data-ceo-delete-selected="invoices"/);
+assert.match(ceoFinanceInvoices, /<thead>[\s\S]*data-ceo-select-all="invoices"[\s\S]*<th>Invoice<\/th>/);
+assert.doesNotMatch(ceoFinanceInvoices, /data-ceo-clear-section|>Clear invoices</);
 assert.doesNotMatch(ceoFinanceInvoices, /data-reset-workspace-scope="finance"/, "the broad finance clear control must stay on Overview only");
 
 globalThis.window.location.hash = "#/finance?tab=sales-reports";
 const ceoFinanceSalesReports = renderFinance({ state: store.getState() });
-assert.match(ceoFinanceSalesReports, /data-ceo-clear-section="sales_reports"/);
-assert.match(ceoFinanceSalesReports, />Clear sales reports</);
+assert.match(ceoFinanceSalesReports, /data-ceo-delete-selected="sales_reports"/);
+assert.match(ceoFinanceSalesReports, /<thead>[\s\S]*data-ceo-select-all="sales_reports"[\s\S]*<th>Report<\/th>/);
+assert.doesNotMatch(ceoFinanceSalesReports, /data-ceo-clear-section|>Clear sales reports</);
 assert.doesNotMatch(ceoFinanceSalesReports, /data-reset-workspace-scope="finance"/);
 
 globalThis.window.location.hash = "#/finance?tab=product-revenue";
 const ceoProductRevenue = renderFinance({ state: store.getState() });
 assert.match(ceoProductRevenue, /Revenue, cost, and profit/);
-assert.match(ceoProductRevenue, /data-ceo-clear-section="product_revenue"/);
 assert.match(ceoProductRevenue, /data-ceo-delete-selected="product_revenue"/);
+assert.match(ceoProductRevenue, /<thead>[\s\S]*data-ceo-select-all="product_revenue"[\s\S]*<th>Date<\/th>/);
+assert.doesNotMatch(ceoProductRevenue, /data-ceo-clear-section|Clear revenue data/);
 assert.doesNotMatch(ceoProductRevenue, /data-reset-workspace-scope="finance"/);
 
 globalThis.window.location.hash = "#/finance?tab=credit-limits";
@@ -1424,8 +1507,11 @@ assert.doesNotMatch(financeLimits, /Credit exposure/);
 assert.equal((financeLimits.match(/js-open-credit-account/g) || []).length, 12);
 assert.match(financeLimits, /id="credit-account-modal"/);
 assert.match(financeLimits, /data-credit-account-detail/);
-assert.match(financeLimits, /data-ceo-clear-section="representative_credit_limits"/);
-assert.match(financeLimits, /data-ceo-clear-section="customer_credit_limits"/);
+assert.match(financeLimits, /credit-account-list-header[\s\S]*data-ceo-select-all="representative_credit_limits"[\s\S]*Sales representative/);
+assert.match(financeLimits, /credit-account-list-header[\s\S]*data-ceo-select-all="customer_credit_limits"[\s\S]*Customer/);
+assert.match(financeLimits, /data-ceo-delete-selected="representative_credit_limits"/);
+assert.match(financeLimits, /data-ceo-delete-selected="customer_credit_limits"/);
+assert.doesNotMatch(financeLimits, /data-ceo-clear-section|Clear representative credit reports|Clear customer credit terms/);
 assert.doesNotMatch(financeLimits, /data-reset-workspace-scope="finance"/);
 
 globalThis.window.location.hash = "#/finance?tab=credit-history";
@@ -1434,8 +1520,14 @@ assert.match(financeHistory, /Sales representative credit terms history/);
 assert.match(financeHistory, /Customer credit terms history/);
 assert.match(financeHistory, /credit-history-account/);
 assert.match(financeHistory, /Download CSV/);
-assert.match(financeHistory, /data-ceo-clear-section="representative_credit_history"/);
-assert.match(financeHistory, /data-ceo-clear-section="customer_credit_history"/);
+assert.doesNotMatch(financeHistory, /data-ceo-clear-section="representative_credit_history"/);
+assert.doesNotMatch(financeHistory, /data-ceo-clear-section="customer_credit_history"/);
+assert.match(financeHistory, /data-ceo-delete-selected="representative_credit_history"/);
+assert.match(financeHistory, /data-ceo-delete-selected="customer_credit_history"/);
+assert.equal((financeHistory.match(/aria-label="Select or deselect every row"/g) || []).length, 2, "each Credit History list must have one checkbox-only master selector");
+assert.match(financeHistory, /<thead>[\s\S]*data-ceo-select-all="representative_credit_history"[\s\S]*<th>Account<\/th>/);
+assert.match(financeHistory, /<thead>[\s\S]*data-ceo-select-all="customer_credit_history"[\s\S]*<th>Account<\/th>/);
+assert.doesNotMatch(financeHistory, /Delete selected|>Select all<|Clear representative credit history|Clear customer credit history/, "Credit History must use only simplified Delete controls");
 assert.equal((financeHistory.match(/data-finance-page-row="credit-history-representative"/g) || []).length, 12);
 
 const retiredAccountantStore = createStore();
@@ -1646,6 +1738,7 @@ assert.equal(store.getState().stockTransactions.find((transaction) => transactio
 const productSizeDashboard = renderDashboard({ state: store.getState() });
 assert.ok(productSizeDashboard.indexOf("Sales trend") < productSizeDashboard.indexOf(">Products<"), "CEO Sales trend must appear above Products");
 assert.match(productSizeDashboard, /id="ceo-product-size-modal"/);
+assert.match(productSizeDashboard, /ceo-product-size-modal product-catalogue-size-modal/, "CEO and Admin product catalogues must use the shared image frame");
 assert.match(productSizeDashboard, /js-open-product-size-modal/);
 assert.match(productSizeDashboard, /data-size-sku="SKU-CHIPS"/);
 assert.match(productSizeDashboard, /Available in factory/);
@@ -2183,9 +2276,15 @@ assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request
 
 authenticateMulti("multi-ceo-user");
 const ceoPackagingApproval = renderSettings({ state: multiDispatchStore.getState() });
-assert.match(ceoPackagingApproval, /Pending approval/);
+assert.match(ceoPackagingApproval, /Packaging changes awaiting CEO approval/);
 assert.match(ceoPackagingApproval, /js-approve-packaging-request/);
 assert.match(ceoPackagingApproval, /js-reject-packaging-request/);
+const ceoPackagingFormStart = ceoPackagingApproval.indexOf('id="packaging-settings-form"');
+const ceoPackagingFormEnd = ceoPackagingApproval.indexOf("</form>", ceoPackagingFormStart);
+assert.ok(
+  ceoPackagingApproval.indexOf("packaging-approval-queue") > ceoPackagingFormEnd,
+  "CEO packaging approval requests must appear at the bottom of the Sales Packaging section"
+);
 multiDispatchStore.dispatch({ type: "APPROVE_PACKAGING_SETTINGS_CHANGE", requestId: packagingRequest.id });
 assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === packagingRequest.id).status, "approved");
 assert.deepEqual(multiDispatchStore.getState().client.packagingTypes, ["piece", "carton", "tray"]);
@@ -2220,10 +2319,38 @@ multiDispatchStore.dispatch({ type: "REJECT_PACKAGING_SETTINGS_CHANGE", requestI
 assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === adminPackagingRequest.id).status, "pending", "Admin must not decline their own packaging request");
 
 authenticateMulti("multi-ceo-user");
-assert.match(renderSettings({ state: multiDispatchStore.getState() }), /Pending approval/);
-multiDispatchStore.dispatch({ type: "REJECT_PACKAGING_SETTINGS_CHANGE", requestId: adminPackagingRequest.id, note: "Use the approved factory packaging mix" });
-assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === adminPackagingRequest.id).status, "rejected", "Only CEO must be able to decline an Admin packaging request");
-assert.deepEqual(multiDispatchStore.getState().client.packagingTypes || ["piece"], packagingBeforeAdminRequest, "Declining a request must preserve the active packaging settings");
+const ceoAdminPackagingApproval = renderSettings({ state: multiDispatchStore.getState() });
+assert.match(ceoAdminPackagingApproval, /Packaging changes awaiting CEO approval/);
+assert.match(ceoAdminPackagingApproval, new RegExp(adminPackagingRequest.requestedBy), "the CEO queue must identify the Admin who requested the packaging change");
+assert.ok(
+  ceoAdminPackagingApproval.indexOf("packaging-approval-queue")
+    > ceoAdminPackagingApproval.indexOf("</form>", ceoAdminPackagingApproval.indexOf('id="packaging-settings-form"')),
+  "Admin packaging requests must appear at the bottom of the CEO Sales Packaging section"
+);
+multiDispatchStore.dispatch({ type: "APPROVE_PACKAGING_SETTINGS_CHANGE", requestId: adminPackagingRequest.id });
+assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === adminPackagingRequest.id).status, "approved", "the CEO must be able to approve an Admin packaging request");
+assert.deepEqual(multiDispatchStore.getState().client.packagingTypes, ["piece", "pack", "pouch", "jar"], "CEO approval must make the Admin packaging selection effective");
+assert.equal(multiDispatchStore.getState().client.packagingDefaults.jar, 18, "CEO approval must make the Admin packaging quantities effective");
+
+multiDispatchStore.dispatch({
+  type: "SET_PACKAGING_WORKSPACE_STATE",
+  packagingTypes: ["piece", "carton", "tray"],
+  packagingDefaults: { piece: 1, carton: 12, tray: 24 },
+  packagingChangeRequests: multiDispatchStore.getState().packagingChangeRequests
+});
+assert.deepEqual(multiDispatchStore.getState().client.packagingTypes, ["piece", "carton", "tray"], "approved packaging must propagate to an already-active portal");
+assert.equal(multiDispatchStore.getState().client.packagingDefaults.tray, 24);
+
+authenticateMulti("multi-admin-user");
+multiDispatchStore.dispatch({
+  type: "REQUEST_PACKAGING_SETTINGS_CHANGE",
+  packagingTypes: ["piece", "carton"],
+  packagingDefaults: { piece: 1, carton: 20 }
+});
+const rejectedAdminPackagingRequest = multiDispatchStore.getState().packagingChangeRequests.find((request) => request.status === "pending");
+authenticateMulti("multi-ceo-user");
+multiDispatchStore.dispatch({ type: "REJECT_PACKAGING_SETTINGS_CHANGE", requestId: rejectedAdminPackagingRequest.id, note: "Use the approved factory packaging mix" });
+assert.equal(multiDispatchStore.getState().packagingChangeRequests.find((request) => request.id === rejectedAdminPackagingRequest.id).status, "rejected", "Only CEO must be able to decline an Admin packaging request");
 
 let resetFixtureNumber = 0;
 function createWorkspaceResetFixture(role = "ceo") {

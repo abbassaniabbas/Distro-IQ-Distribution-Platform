@@ -26,12 +26,12 @@ import { isModuleEnabled } from "../services/features.js";
 import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
-import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
+import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog } from "../ui/action-dialog.js";
-import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260722e";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260724b";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -1367,7 +1367,7 @@ function renderCeoProductStock(state) {
       }).join("")}
     </div>
     <div id="ceo-product-size-modal" class="stock-modal-backdrop" hidden>
-      <section class="stock-modal ceo-product-size-modal" role="dialog" aria-modal="true" aria-labelledby="ceo-product-size-title">
+      <section class="stock-modal ceo-product-size-modal product-catalogue-size-modal" role="dialog" aria-modal="true" aria-labelledby="ceo-product-size-title">
         <header class="stock-modal-header">
           <div>
             <span class="eyebrow">Product stock</span>
@@ -2232,15 +2232,13 @@ export function renderManagerReportReview(state, { readOnly = false } = {}) {
         </div>`
       )}
       ${canDelete ? ceoDeleteControls({
-        scope: "sales_reports",
-        clearLabel: "Clear submitted sales reports",
-        disabled: !(state.salesReports || []).length
+        scope: "sales_reports"
       }) : ""}
       <div class="table-wrap" data-submitted-reports-export-table>
         <table class="data-table">
           <thead>
             <tr>
-              ${canDelete ? '<th class="record-select-cell" data-export-ignore></th>' : ""}
+              ${canDelete ? `<th class="record-select-cell" data-export-ignore>${ceoSelectAllCheckbox("sales_reports", !(state.salesReports || []).length)}</th>` : ""}
               <th>Report</th>
               <th>Status</th>
               <th>Sales</th>
@@ -2407,7 +2405,7 @@ function renderRepProductCatalogue(products) {
       }).join("")}
     </div>
     <div id="rep-product-size-modal" class="stock-modal-backdrop" hidden>
-      <section class="stock-modal ceo-product-size-modal rep-product-size-modal" role="dialog" aria-modal="true" aria-labelledby="rep-product-size-title">
+      <section class="stock-modal ceo-product-size-modal rep-product-size-modal product-catalogue-size-modal" role="dialog" aria-modal="true" aria-labelledby="rep-product-size-title">
         <header class="stock-modal-header">
           <div>
             <span class="eyebrow">Product catalogue</span>
@@ -3274,15 +3272,13 @@ export function renderManagerRecentSalesOrders(state) {
         </div>`
       )}
       ${canDelete ? ceoDeleteControls({
-        scope: "orders",
-        clearLabel: "Clear recent sales orders",
-        disabled: !recentOrders.length
+        scope: "orders"
       }) : ""}
       <div class="table-wrap" data-recent-orders-export-table>
         <table class="data-table">
           <thead>
             <tr>
-              ${canDelete ? '<th class="record-select-cell" data-export-ignore></th>' : ""}
+              ${canDelete ? `<th class="record-select-cell" data-export-ignore>${ceoSelectAllCheckbox("orders", !recentOrders.length)}</th>` : ""}
               <th>Sales order</th>
               <th>Region</th>
               <th>Status</th>

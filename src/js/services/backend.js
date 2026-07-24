@@ -790,6 +790,41 @@ export async function loadWorkspaceFeatureModules(clientId) {
   return (data || []).map(mapFeatureModule);
 }
 
+export async function loadWorkspacePackagingState(clientId, { includeRequests = false } = {}) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const [settingsResult, requestResult] = await Promise.all([
+    supabase
+      .from("clients")
+      .select("packaging_types, packaging_defaults")
+      .eq("id", clientId)
+      .single(),
+    includeRequests
+      ? supabase
+        .from("packaging_change_requests")
+        .select("id, client_id, requested_by_user_id, requested_by_name, packaging_types, packaging_defaults, status, review_note, reviewed_by_name, requested_at, reviewed_at")
+        .eq("client_id", clientId)
+        .order("requested_at", { ascending: false })
+      : Promise.resolve({ data: null, error: null })
+  ]);
+
+  if (settingsResult.error) throw new Error(settingsResult.error.message);
+  if (requestResult.error) throw new Error(requestResult.error.message);
+
+  return {
+    packagingTypes: Array.isArray(settingsResult.data?.packaging_types)
+      ? settingsResult.data.packaging_types
+      : ["piece"],
+    packagingDefaults: settingsResult.data?.packaging_defaults && typeof settingsResult.data.packaging_defaults === "object"
+      ? settingsResult.data.packaging_defaults
+      : { piece: 1 },
+    packagingChangeRequests: Array.isArray(requestResult.data)
+      ? requestResult.data.map(mapPackagingChangeRequest)
+      : null
+  };
+}
+
 export async function loadPlatformOverview() {
   throwIfBackendMissing();
 

@@ -130,6 +130,19 @@ function invoiceUnitPrice(item) {
   return Number(item?.unitPrice ?? item?.unitPriceAtSale ?? 0);
 }
 
+function isFactoryRepresentativeInvoice(invoice, state, sourceOrder) {
+  const isFactoryDispatch = Boolean(invoice.dispatchId || sourceOrder?.source === "factory_dispatch");
+  if (!isFactoryDispatch) return false;
+
+  const recipientType = String(invoice.customerType || sourceOrder?.customerType || "").toLowerCase();
+  if (recipientType.includes("representative")) return true;
+
+  return (state.stockAssignments || []).some((assignment) => (
+    (assignment.invoiceId && assignment.invoiceId === invoice.id) ||
+    (assignment.dispatchId && assignment.dispatchId === (invoice.dispatchId || sourceOrder?.dispatchId))
+  ));
+}
+
 export function buildInvoicePreviewContent(invoice, state) {
   const client = state.client || {};
   const companyName = client.documentBusinessName || client.companyName || "DistroIQ Company";
@@ -141,6 +154,7 @@ export function buildInvoicePreviewContent(invoice, state) {
   const documentLabel = isSalesReceipt ? "Sales receipt" : "Invoice";
   const sourceOrder = (state.orders || []).find((order) => order.id === invoice.orderId);
   const isFactoryDispatch = Boolean(invoice.dispatchId || sourceOrder?.source === "factory_dispatch");
+  const isFactoryRepresentativeDispatch = isFactoryRepresentativeInvoice(invoice, state, sourceOrder);
   const handlingLabel = isFactoryDispatch ? "Collected by" : "Sold by";
   const handlingName = isFactoryDispatch
     ? (invoice.collectedBy || invoice.customerName || "Customer")
@@ -167,6 +181,7 @@ export function buildInvoicePreviewContent(invoice, state) {
         <section>
           <span>Bill to</span>
           <strong>${escapeHtml(invoice.customerName || "Customer")}</strong>
+          ${isFactoryRepresentativeDispatch ? '<small class="invoice-modal-origin-note">From factory</small>' : ""}
           ${invoice.customerAddress ? `<p>${escapeHtml(invoice.customerAddress)}</p>` : ""}
           ${invoice.customerPhone ? `<p>${escapeHtml(invoice.customerPhone)}</p>` : ""}
         </section>
@@ -223,6 +238,7 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
   const documentLabel = isSalesReceipt ? "SALES RECEIPT" : "INVOICE";
   const sourceOrder = (state.orders || []).find((order) => order.id === invoice.orderId);
   const isFactoryDispatch = Boolean(invoice.dispatchId || sourceOrder?.source === "factory_dispatch");
+  const isFactoryRepresentativeDispatch = isFactoryRepresentativeInvoice(invoice, state, sourceOrder);
   const handlingLabel = isFactoryDispatch ? "Collected by" : "Sold by";
   const handlingName = isFactoryDispatch
     ? (invoice.collectedBy || invoice.customerName || "Customer")
@@ -255,6 +271,7 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
           .details section { display: grid; gap: 5px; }
           .details h2 { margin-bottom: 5px; color: #657487; font-size: 11px; text-transform: uppercase; }
           .details strong { font-size: 14px; }
+          .origin-note { font-size: 10px; font-weight: 700; }
           table { width: 100%; border-collapse: collapse; }
           th, td { padding: 11px 9px; border-bottom: 1px solid #dce6eb; text-align: left; font-size: 12px; }
           th { background: #f4f8f9; color: #657487; font-size: 10px; text-transform: uppercase; }
@@ -277,7 +294,7 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
             <div class="invoice-title"><h1>${documentLabel}</h1><p>${escapeHtml(invoice.id)}</p><span class="status">${escapeHtml(statusText(invoice.status))}</span></div>
           </header>
           <div class="details">
-            <section><h2>Customer</h2><strong>${escapeHtml(invoice.customerName || "Customer")}</strong>${invoice.customerAddress ? `<p class="muted">${escapeHtml(invoice.customerAddress)}</p>` : ""}${invoice.customerPhone ? `<p class="muted">${escapeHtml(invoice.customerPhone)}</p>` : ""}</section>
+            <section><h2>Bill to</h2><strong>${escapeHtml(invoice.customerName || "Customer")}</strong>${isFactoryRepresentativeDispatch ? '<p class="muted origin-note">From factory</p>' : ""}${invoice.customerAddress ? `<p class="muted">${escapeHtml(invoice.customerAddress)}</p>` : ""}${invoice.customerPhone ? `<p class="muted">${escapeHtml(invoice.customerPhone)}</p>` : ""}</section>
             <section><h2>Sale details</h2><strong>${handlingLabel} ${escapeHtml(handlingName)}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p>${isSalesReceipt ? "" : `<p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p>`}</section>
           </div>
           <table><thead><tr><th>Product</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map((item) => {

@@ -1,7 +1,7 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
-import { createStore } from "./state/store.js?v=20260722f";
+import { createStore } from "./state/store.js?v=20260722g";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
-import { loadWorkspace, loadWorkspaceFeatureModules, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260722c";
+import { loadWorkspace, loadWorkspaceFeatureModules, loadWorkspacePackagingState, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260722d";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
@@ -14,6 +14,7 @@ import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=2
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
+import { createModalRenderGuard } from "./ui/modal-render-guard.js";
 import {
   bindTopbarCommunications,
   getTopbarNotificationItems,
@@ -21,13 +22,13 @@ import {
   getUnreadMessageCount
 } from "./ui/topbar-communications.js?v=20260722";
 import { showToast } from "./ui/toast.js";
-import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260722";
+import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260724b";
 import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260722";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260722d";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260722f";
-import { renderInventory, bindInventory } from "./views/inventory.js?v=20260722e";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260724b";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260724b";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260724b";
 import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722d";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js";
@@ -37,12 +38,12 @@ import {
   renderOnboardingConfirmation,
   bindOnboardingConfirmation
 } from "./views/onboarding.js";
-import { renderOrders, bindOrders } from "./views/orders.js?v=20260722f";
+import { renderOrders, bindOrders } from "./views/orders.js?v=20260724b";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js";
 import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260722d";
 import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260722";
-import { renderSettings, bindSettings } from "./views/settings.js?v=20260722f";
+import { renderSettings, bindSettings } from "./views/settings.js?v=20260722g";
 import { renderTeam, bindTeam } from "./views/team.js?v=20260722";
 
 const routes = {
@@ -223,6 +224,7 @@ const PLATFORM_NAV_ITEMS = [
 ];
 let activeAuthFormFlows = 0;
 let activeViewAbortController = null;
+let modalRenderGuard = null;
 let featureModuleRefreshPending = false;
 let selectedSearchSuggestion = "";
 let preserveScrollOnNextHashChange = false;
@@ -506,6 +508,7 @@ function updateSearchSuggestions() {
 }
 
 function render() {
+  modalRenderGuard?.clear();
   const state = store.getState();
   const routeId = getCurrentRouteId(state);
   const view = routes[routeId];
@@ -585,6 +588,11 @@ searchSuggestions.addEventListener("click", (event) => {
 
 bindTopbarCommunications({ store, notificationsButton, messagesButton });
 
+modalRenderGuard = createModalRenderGuard({
+  root: document,
+  onRelease: render
+});
+
 document.addEventListener("click", (event) => {
   const link = event.target.closest?.("a[data-preserve-scroll]");
   if (!link || link.getAttribute("href") === window.location.hash) return;
@@ -609,7 +617,7 @@ signOutButton.addEventListener("click", async () => {
 
 store.subscribe((state, action) => {
   inactivitySession.handleStateChange(state);
-  render();
+  if (!modalRenderGuard.deferIfNeeded(action)) render();
   showToast(action?.message);
   operationalSync.handleStateChange(state, action);
 });
@@ -641,6 +649,25 @@ function featureModuleSignature(featureModules) {
     .join("|");
 }
 
+function packagingWorkspaceSignature({ packagingTypes, packagingDefaults, packagingChangeRequests }) {
+  const requestSignature = (packagingChangeRequests || [])
+    .map((request) => [
+      request.id,
+      request.status,
+      request.requestedAt,
+      request.reviewedAt,
+      (request.packagingTypes || []).join(","),
+      JSON.stringify(request.packagingDefaults || {})
+    ].join(":"))
+    .sort()
+    .join("|");
+  return [
+    (packagingTypes || []).join(","),
+    JSON.stringify(packagingDefaults || {}),
+    requestSignature
+  ].join("::");
+}
+
 async function refreshWorkspaceFeatureModules() {
   const state = store.getState();
 
@@ -656,13 +683,27 @@ async function refreshWorkspaceFeatureModules() {
 
   featureModuleRefreshPending = true;
   try {
-    const featureModules = await loadWorkspaceFeatureModules(state.client.id);
+    const includePackagingRequests = ["ceo", "admin", "store_keeper"].includes(currentUserRole(state));
+    const [featureModules, packagingState] = await Promise.all([
+      loadWorkspaceFeatureModules(state.client.id),
+      loadWorkspacePackagingState(state.client.id, { includeRequests: includePackagingRequests }).catch(() => null)
+    ]);
 
     if (featureModuleSignature(featureModules) !== featureModuleSignature(store.getState().featureModules)) {
       store.dispatch({ type: "SET_FEATURE_MODULES", featureModules });
     }
+    if (
+      packagingState
+      && packagingWorkspaceSignature(packagingState) !== packagingWorkspaceSignature({
+        packagingTypes: store.getState().client?.packagingTypes,
+        packagingDefaults: store.getState().client?.packagingDefaults,
+        packagingChangeRequests: includePackagingRequests ? store.getState().packagingChangeRequests : null
+      })
+    ) {
+      store.dispatch({ type: "SET_PACKAGING_WORKSPACE_STATE", ...packagingState });
+    }
   } catch {
-    // Keep the last known module configuration if a background check cannot complete.
+    // Keep the last known module and packaging approval configuration if a background check cannot complete.
   } finally {
     featureModuleRefreshPending = false;
   }
