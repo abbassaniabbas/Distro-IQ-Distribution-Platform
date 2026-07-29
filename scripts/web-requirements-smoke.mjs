@@ -44,6 +44,7 @@ const actionDialogSource = readFileSync(new URL("../src/js/ui/action-dialog.js",
 const ceoPasswordVerificationSource = readFileSync(new URL("../src/js/ui/ceo-password-verification.js", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "utf8");
 const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
+const messageManagementSql = readFileSync(new URL("../supabase/message-management.sql", import.meta.url), "utf8");
 assert.match(responsiveLayoutCss, /@media \(max-width: 640px\)[\s\S]*\.view-root,[\s\S]*padding: 14px 12px 24px/, "phone layouts must use compact page padding");
 assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-button[\s\S]*width: 44px;[\s\S]*height: 44px/, "phone and tablet controls must retain touch-friendly targets");
 assert.match(responsiveComponentCss, /\.table-wrap[\s\S]*-webkit-overflow-scrolling: touch/, "wide tables must scroll safely on touch devices");
@@ -58,6 +59,10 @@ assert.match(responsiveViewCss, /\.settings-top-panel > \.panel\s*\{[\s\S]*heigh
 assert.match(responsiveViewCss, /\.rep-request-quantity-fields:focus-within[\s\S]*box-shadow:[^;]+;/, "representative stock-request quantity controls must have a clear polished focus state");
 assert.match(backendSource, /export async function loadWorkspacePackagingState[\s\S]*packaging_change_requests/, "background configuration refresh must load packaging approval requests");
 assert.match(appSource, /loadWorkspacePackagingState\([\s\S]*SET_PACKAGING_WORKSPACE_STATE/, "active portals must receive packaging requests and approved settings without a new sign-in");
+assert.match(messageManagementSql, /workspace_message_deletions[\s\S]*membership_id/, "message deletion must be stored per staff member");
+assert.match(messageManagementSql, /delete_my_workspace_messages[\s\S]*p_unsend[\s\S]*messages\.from_membership_id = v_current_membership_id/, "only a message sender may unsend it for everyone");
+assert.match(messageManagementSql, /clear_my_workspace_conversation[\s\S]*p_peer_membership_id[\s\S]*on conflict \(message_id, membership_id\) do nothing/, "conversation clearing must remain scoped to the current staff member and selected conversation");
+assert.match(messageManagementSql, /get_my_workspace_messages[\s\S]*not exists[\s\S]*workspace_message_deletions/, "messages privately deleted by the current staff member must stay out of backend refreshes");
 const currentTestDate = new Date().toISOString().slice(0, 10);
 const browserStorage = new Map();
 globalThis.localStorage = {
@@ -213,7 +218,7 @@ assert.equal(shouldDeferRenderForModal({ type: "SET_OPERATIONAL_RECORDS" }, clos
 assert.equal(shouldDeferRenderForModal({ type: "RECORD_STOCK_DISPATCH" }, openModalRoot), false, "a completed modal action must still render its saved result immediately");
 assert.deepEqual(
   [...MODAL_SAFE_BACKGROUND_ACTIONS],
-  ["SET_OPERATIONAL_RECORDS", "SET_FEATURE_MODULES", "SET_PACKAGING_WORKSPACE_STATE", "HYDRATE_PRODUCT_IMAGES", "AUTO_UPDATE_DELAYED_ORDERS"],
+  ["SET_WORKSPACE", "SET_OPERATIONAL_RECORDS", "SET_FEATURE_MODULES", "SET_PACKAGING_WORKSPACE_STATE", "HYDRATE_PRODUCT_IMAGES", "AUTO_UPDATE_DELAYED_ORDERS"],
   "all routine workspace refresh actions must preserve open modals"
 );
 const notificationFixture = {
@@ -398,6 +403,105 @@ const broadcastMessagesHtml = renderMessages({
 });
 assert.equal((broadcastMessagesHtml.match(new RegExp(`<p>${broadcastBody}<\\/p>`, "g")) || []).length, 1, "sender must see one bubble for an all-staff broadcast");
 assert.match(broadcastMessagesHtml, /message-broadcast-label">To: All staff</);
+assert.equal((broadcastMessagesHtml.match(/data-message-actions-trigger/g) || []).length, 1, "a consolidated all-staff message must have one three-dot action menu");
+assert.match(broadcastMessagesHtml, /data-unsend-message/, "a sent all-staff message must support unsend");
+assert.match(broadcastMessagesHtml, /data-clear-message-conversation/, "every active conversation must provide Clear messages");
+
+const messageActionFixture = [
+  {
+    id: "MSG-SENT-REP",
+    clientId: client.id,
+    fromAccountId: "membership-manager",
+    fromUserId: "user-manager",
+    fromName: "Musa Manager",
+    fromEmail: "musa@example.com",
+    toAccountId: "membership-rep",
+    toUserId: "user-rep",
+    toName: "Amina Rep",
+    toEmail: "amina@example.com",
+    body: "Sent to Amina",
+    audience: "direct",
+    createdAt: "2026-07-17T09:01:00.000Z"
+  },
+  {
+    id: "MSG-RECEIVED-REP",
+    clientId: client.id,
+    fromAccountId: "membership-rep",
+    fromUserId: "user-rep",
+    fromName: "Amina Rep",
+    fromEmail: "amina@example.com",
+    toAccountId: "membership-manager",
+    toUserId: "user-manager",
+    toName: "Musa Manager",
+    toEmail: "musa@example.com",
+    body: "Received from Amina",
+    audience: "direct",
+    createdAt: "2026-07-17T09:02:00.000Z"
+  },
+  {
+    id: "MSG-SENT-STORE",
+    clientId: client.id,
+    fromAccountId: "membership-manager",
+    fromUserId: "user-manager",
+    fromName: "Musa Manager",
+    fromEmail: "musa@example.com",
+    toAccountId: "membership-store",
+    toUserId: "user-store",
+    toName: "Tola Store",
+    toEmail: "tola@example.com",
+    body: "Other conversation",
+    audience: "direct",
+    createdAt: "2026-07-17T09:03:00.000Z"
+  }
+];
+globalThis.window.location.hash = "#/messages?with=membership-rep";
+const directMessagesHtml = renderMessages({ state: { ...store.getState(), messages: messageActionFixture } });
+assert.equal((directMessagesHtml.match(/data-message-actions-trigger/g) || []).length, 2, "each message in the active conversation must have a three-dot menu");
+assert.equal((directMessagesHtml.match(/data-forward-message>/g) || []).length, 2, "both sent and received messages must support forwarding");
+assert.equal((directMessagesHtml.match(/data-delete-message>/g) || []).length, 2, "both sent and received messages must support private deletion");
+assert.equal((directMessagesHtml.match(/data-unsend-message>/g) || []).length, 1, "only the current user's sent message must show Unsend");
+assert.match(directMessagesHtml, /data-forward-message-modal[\s\S]*value="membership-store"/, "forwarding must allow another staff conversation to be selected");
+assert.match(directMessagesHtml, /data-clear-message-conversation[\s\S]*Clear messages/, "the active direct conversation must provide a clear action");
+
+function messageActionStore() {
+  const actionStore = createStore();
+  actionStore.dispatch({
+    type: "SET_AUTHENTICATED_WORKSPACE",
+    session: { user: { id: "user-manager" } },
+    user: { id: "user-manager", email: "musa@example.com" },
+    client,
+    accounts,
+    invites: [],
+    messages: structuredClone(messageActionFixture),
+    activityLogs: []
+  });
+  return actionStore;
+}
+
+const privateDeleteStore = messageActionStore();
+privateDeleteStore.dispatch({ type: "DELETE_MESSAGES_FOR_ME", messageIds: ["MSG-RECEIVED-REP"] });
+assert.deepEqual(
+  privateDeleteStore.getState().messages.map((message) => message.id),
+  ["MSG-SENT-REP", "MSG-SENT-STORE"],
+  "Delete must remove only the chosen message from the current user's view"
+);
+
+const unsendStore = messageActionStore();
+unsendStore.dispatch({ type: "UNSEND_MESSAGES", messageIds: ["MSG-SENT-REP", "MSG-RECEIVED-REP"] });
+assert.deepEqual(
+  unsendStore.getState().messages.map((message) => message.id),
+  ["MSG-RECEIVED-REP", "MSG-SENT-STORE"],
+  "Unsend must remove only messages owned by the current sender"
+);
+
+const clearConversationStore = messageActionStore();
+clearConversationStore.dispatch({ type: "CLEAR_MESSAGE_CONVERSATION", peerAccountId: "membership-rep" });
+assert.deepEqual(
+  clearConversationStore.getState().messages.map((message) => message.id),
+  ["MSG-SENT-STORE"],
+  "clearing one conversation must preserve messages in every other conversation"
+);
+
 globalThis.window.location.hash = "#/dashboard";
 assert.equal(currentUserPermissions(store.getState()).canAssignStock, true);
 assert.equal(currentUserPermissions(store.getState()).canReconcileStock, true);

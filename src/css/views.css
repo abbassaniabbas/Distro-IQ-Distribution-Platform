@@ -5277,6 +5277,21 @@
   background: #ffffff;
 }
 
+.message-chat-identity {
+  min-width: 0;
+}
+
+.message-clear-conversation {
+  min-height: 36px;
+  margin-left: auto;
+  padding: 7px 10px;
+}
+
+.message-clear-conversation svg {
+  width: 16px;
+  height: 16px;
+}
+
 .message-chat-header strong {
   font-size: 0.96rem;
 }
@@ -5308,6 +5323,16 @@
   justify-self: start;
 }
 
+.message-bubble-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.message-thread-bubble.is-sent .message-bubble-layout {
+  flex-direction: row-reverse;
+}
+
 .message-bubble-body {
   display: grid;
   justify-items: start;
@@ -5317,6 +5342,99 @@
   border-radius: var(--radius-sm);
   background: #ffffff;
   box-shadow: 0 1px 0 rgba(7, 26, 47, 0.03);
+}
+
+.message-actions {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.message-actions-trigger {
+  width: 30px;
+  height: 30px;
+  color: var(--muted);
+  opacity: 0.58;
+  transition: opacity 0.15s ease, background 0.15s ease;
+}
+
+.message-thread-bubble:hover .message-actions-trigger,
+.message-thread-bubble:focus-within .message-actions-trigger {
+  opacity: 1;
+}
+
+.message-actions-trigger[aria-expanded="true"] {
+  background: #ffffff;
+  opacity: 1;
+}
+
+.message-actions-trigger svg {
+  width: 17px;
+  height: 17px;
+}
+
+.message-actions-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  z-index: 15;
+  display: grid;
+  min-width: 138px;
+  overflow: hidden;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 12px 28px rgba(7, 26, 47, 0.16);
+}
+
+.message-actions-menu[hidden] {
+  display: none;
+}
+
+.message-actions-menu.opens-up {
+  top: auto;
+  bottom: calc(100% + 4px);
+}
+
+.message-thread-bubble.is-sent .message-actions-menu {
+  right: 0;
+}
+
+.message-thread-bubble.is-received .message-actions-menu {
+  left: 0;
+}
+
+.message-actions-menu button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.8rem;
+  font-weight: 800;
+  text-align: left;
+  cursor: pointer;
+}
+
+.message-actions-menu button:hover,
+.message-actions-menu button:focus-visible {
+  outline: none;
+  background: var(--surface-alt);
+}
+
+.message-actions-menu button[data-delete-message],
+.message-actions-menu button[data-unsend-message] {
+  color: var(--red);
+}
+
+.message-actions-menu svg {
+  width: 16px;
+  height: 16px;
 }
 
 .message-thread-bubble.is-sent .message-bubble-body {
@@ -5398,6 +5516,28 @@
 .message-composer .field-error {
   grid-area: status;
   min-height: 0;
+}
+
+.message-forward-modal {
+  width: min(520px, 100%);
+}
+
+.message-forward-modal .form-grid {
+  padding: 18px;
+}
+
+.message-forward-preview {
+  max-height: 150px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-alt);
+  color: var(--ink);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .client-id-box code {
@@ -6267,6 +6407,16 @@
 
   .message-thread-bubble {
     width: min(680px, 88%);
+  }
+
+  .message-clear-conversation {
+    width: 40px;
+    min-width: 40px;
+    padding-inline: 0;
+  }
+
+  .message-clear-conversation span {
+    display: none;
   }
 
   .retailer-list-main,

@@ -1,7 +1,7 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js";
-import { createStore } from "./state/store.js?v=20260722g";
+import { createStore } from "./state/store.js?v=20260729a";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
-import { loadWorkspace, loadWorkspaceFeatureModules, loadWorkspacePackagingState, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260722d";
+import { loadWorkspace, loadWorkspaceFeatureModules, loadWorkspacePackagingState, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260729a";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
 import { setCurrencySettings } from "./services/formatters.js";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js";
@@ -14,7 +14,7 @@ import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=2
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
-import { createModalRenderGuard } from "./ui/modal-render-guard.js";
+import { createModalRenderGuard } from "./ui/modal-render-guard.js?v=20260729a";
 import {
   bindTopbarCommunications,
   getTopbarNotificationItems,
@@ -31,7 +31,7 @@ import { renderFinance, bindFinance } from "./views/finance.js?v=20260724b";
 import { renderInventory, bindInventory } from "./views/inventory.js?v=20260724b";
 import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260722d";
 import { renderLoading, bindLoading } from "./views/loading.js";
-import { renderMessages, bindMessages } from "./views/messages.js";
+import { renderMessages, bindMessages } from "./views/messages.js?v=20260729a";
 import {
   renderOnboarding,
   bindOnboarding,

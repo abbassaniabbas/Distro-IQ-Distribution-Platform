@@ -559,6 +559,16 @@ function messageIsFromAccount(message, account) {
   );
 }
 
+function messageIsToAccount(message, account) {
+  const accountEmail = String(account?.email || "").trim().toLowerCase();
+
+  return (
+    (account?.id && message.toAccountId === account.id) ||
+    (account?.userId && message.toUserId === account.userId) ||
+    (accountEmail && String(message.toEmail || "").trim().toLowerCase() === accountEmail)
+  );
+}
+
 function productFieldValue(key, value) {
   if (key === "imageUrl") return value ? "picture set" : "no picture";
   if (key === "stockCategory") return categoryNameForStockCategory(value);
@@ -1687,6 +1697,60 @@ function reducer(currentState, action) {
         ...(state.messages || [])
       ];
 
+      return state;
+    }
+
+    case "DELETE_MESSAGES_FOR_ME": {
+      if (!state.client?.id) return state;
+
+      const ids = new Set((action.messageIds || []).map(String).filter(Boolean));
+      if (!ids.size) return state;
+
+      state.messages = (state.messages || []).filter((message) => !(
+        ids.has(String(message.id || "")) &&
+        (
+          messageBelongsToCurrentUser(state, message) ||
+          messageIsFromAccount(message, currentWorkspaceAccount(state))
+        )
+      ));
+      return state;
+    }
+
+    case "UNSEND_MESSAGES": {
+      if (!state.client?.id) return state;
+
+      const ids = new Set((action.messageIds || []).map(String).filter(Boolean));
+      const currentAccount = currentWorkspaceAccount(state);
+      if (!ids.size || !currentAccount) return state;
+
+      state.messages = (state.messages || []).filter((message) => !(
+        ids.has(String(message.id || "")) &&
+        messageIsFromAccount(message, currentAccount)
+      ));
+      return state;
+    }
+
+    case "CLEAR_MESSAGE_CONVERSATION": {
+      if (!state.client?.id) return state;
+
+      const currentAccount = currentWorkspaceAccount(state);
+      const allStaff = Boolean(action.allStaff);
+      const peerAccount = allStaff
+        ? null
+        : (state.accounts || []).find((account) => account.id === action.peerAccountId);
+
+      if (!currentAccount || (!allStaff && !peerAccount)) return state;
+
+      state.messages = (state.messages || []).filter((message) => {
+        if (message.clientId !== state.client.id) return true;
+        if (allStaff) {
+          return !(message.audience === "all_staff" && messageIsFromAccount(message, currentAccount));
+        }
+
+        const sentToPeer = messageIsFromAccount(message, currentAccount) && messageIsToAccount(message, peerAccount);
+        const receivedFromPeer = messageIsFromAccount(message, peerAccount) && messageIsToAccount(message, currentAccount);
+        return !sentToPeer && !receivedFromPeer;
+      });
       return state;
     }
 

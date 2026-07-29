@@ -1321,8 +1321,12 @@ export async function recordActivity(payload) {
 function workspaceMessageError(error) {
   const message = String(error?.message || "");
 
-  if (message.includes("workspace_message") || message.includes("get_my_workspace_messages")) {
-    return new Error("Messaging is not installed in Supabase yet. Run the updated supabase/schema.sql, then try again.");
+  if (
+    message.includes("workspace_message") ||
+    message.includes("workspace_conversation") ||
+    message.includes("get_my_workspace_messages")
+  ) {
+    return new Error("Message management is not installed in Supabase yet. Run supabase/message-management.sql, then try again.");
   }
 
   return error instanceof Error ? error : new Error("The message could not be sent.");
@@ -1354,4 +1358,35 @@ export async function markWorkspaceConversationRead({ clientId, peerAccountId })
   });
 
   if (error) throw workspaceMessageError(error);
+}
+
+export async function deleteWorkspaceMessages({ clientId, messageIds, unsend = false }) {
+  throwIfBackendMissing();
+
+  const ids = [...new Set((messageIds || []).map(String).filter(Boolean))];
+  if (!ids.length) throw new Error("Choose a message.");
+
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("delete_my_workspace_messages", {
+    p_client_id: clientId,
+    p_message_ids: ids,
+    p_unsend: Boolean(unsend)
+  });
+
+  if (error) throw workspaceMessageError(error);
+  return loadWorkspace();
+}
+
+export async function clearWorkspaceConversation({ clientId, peerAccountId, allStaff = false }) {
+  throwIfBackendMissing();
+
+  const supabase = await getSupabaseClient();
+  const { error } = await supabase.rpc("clear_my_workspace_conversation", {
+    p_client_id: clientId,
+    p_peer_membership_id: allStaff ? null : peerAccountId,
+    p_audience: allStaff ? "all_staff" : "direct"
+  });
+
+  if (error) throw workspaceMessageError(error);
+  return loadWorkspace();
 }
