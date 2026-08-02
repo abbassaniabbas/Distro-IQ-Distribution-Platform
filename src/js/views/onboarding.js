@@ -2,7 +2,7 @@ import {
   CURRENCY_OPTIONS,
   TIMEZONE_OPTIONS,
   validateClientForm
-} from "../services/tenant.js";
+} from "../services/tenant.js?v=20260801d";
 import {
   DEFAULT_BRAND_COLOR,
   LOGO_ACCEPT,

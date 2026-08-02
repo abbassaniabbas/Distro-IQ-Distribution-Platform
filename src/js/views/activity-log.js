@@ -2,11 +2,11 @@ import {
   actionTypeLabel,
   getScopedActivityLogs,
   recordTypeLabel
-} from "../services/activity.js?v=20260722";
+} from "../services/activity.js?v=20260801d";
 import { formatCurrency, formatNumber } from "../services/formatters.js";
 import { dateIsWithinRange } from "../services/filtering.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
-import { accountForUser, currentUserRole } from "../services/rbac.js";
+import { accountForUser, currentUserRole } from "../services/rbac.js?v=20260801d";
 import { isModuleEnabled } from "../services/features.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, table } from "../ui/components.js?v=20260724b";
@@ -15,7 +15,7 @@ import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
   renderManagerReportReview
-} from "./dashboard.js?v=20260724b";
+} from "./dashboard.js?v=20260802f";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
 
@@ -404,10 +404,13 @@ export function renderActivityLog({ state }) {
 
   const logs = getScopedActivityLogs(state);
   const isStoreKeeper = role === "store_keeper";
+  const isProductionManager = role === "production_manager";
   const isAccountant = role === "accountant";
-  const title = isStoreKeeper ? "Store activity log" : isAccountant ? "Finance activity log" : "Activity log";
+  const title = isStoreKeeper ? "Store activity log" : isProductionManager ? "Production activity log" : isAccountant ? "Finance activity log" : "Activity log";
   const subtitle = isStoreKeeper
     ? "Permanent searchable record of stock added, reduced, dispatched, returned, and reconciled"
+    : isProductionManager
+      ? "Read-only record of production batches and factory stock movements"
     : isAccountant
       ? "Permanent searchable record of sales, payments, credit balances, and submitted reports"
       : "Permanent searchable record of what changed, who changed it, and when";

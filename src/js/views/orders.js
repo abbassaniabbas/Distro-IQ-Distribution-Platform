@@ -4,7 +4,7 @@ import {
   getOrdersWithTotals
 } from "../services/calculations.js?v=20260722";
 import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js";
-import { currentUserPermissions, currentUserRole } from "../services/rbac.js";
+import { currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, table } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js";

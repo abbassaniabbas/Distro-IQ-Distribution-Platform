@@ -109,7 +109,7 @@ export function buildGlobalSearchIndex({ state, navigationItems, allowedRouteIds
       label: customer.name || customer.outletName || customer.id,
       context: "Customers",
       href: "#/retailers",
-      values: [customer.id, customer.name, customer.outletName, customer.contactName, customer.phone, customer.address, customer.state, customer.lga, customer.localGovernment, customer.location, customer.channel, customer.status, customer.rating]
+      values: [customer.id, customer.name, customer.outletName, customer.contactName, customer.phone, customer.address, customer.state, customer.lga, customer.localGovernment, customer.location, customer.channel, customer.status, customer.rating, customer.createdByName, customer.assignedRepName]
     }));
 
     (state.routes || []).forEach((route) => addRecord(index, {

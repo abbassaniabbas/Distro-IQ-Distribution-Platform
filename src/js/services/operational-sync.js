@@ -1,5 +1,5 @@
 import { loadOperationalWorkspace, syncOperationalWorkspace } from "./backend.js";
-import { currentUserRole } from "./rbac.js";
+import { currentUserRole } from "./rbac.js?v=20260801d";
 
 export const OPERATIONAL_COLLECTIONS = [
   "products",
@@ -7,12 +7,15 @@ export const OPERATIONAL_COLLECTIONS = [
   "stockAssignments",
   "stockTransactions",
   "productionBatches",
+  "productionPlans",
+  "productionIssues",
   "retailers",
   "orders",
   "invoices",
   "salesReports",
   "correctionRequests",
   "stockRequests",
+  "stockAdditionRequests",
   "purchaseOrders",
   "procurementOrders",
   "routes",
@@ -41,20 +44,28 @@ const ROLE_COLLECTIONS = {
   admin: new Set([
     "products", "stockAssignments", "stockTransactions", "retailers", "orders",
     "invoices", "salesReports", "correctionRequests", "stockRequests",
-    "purchaseOrders", "procurementOrders", "routes", "creditLimits",
+    "stockAdditionRequests", "purchaseOrders", "procurementOrders", "routes", "creditLimits",
     "creditLimitHistory", "activityLogs"
   ]),
   store_keeper: new Set([
     "products", "stockCategories", "stockAssignments", "stockTransactions",
-    "productionBatches", "orders", "invoices", "correctionRequests",
-    "stockRequests", "purchaseOrders", "procurementOrders", "routes", "activityLogs"
+    "productionBatches", "retailers", "orders", "invoices", "correctionRequests",
+    "stockRequests", "stockAdditionRequests", "purchaseOrders", "procurementOrders", "routes", "activityLogs"
   ]),
   sales_rep: new Set([
     "stockAssignments", "stockTransactions", "retailers", "orders", "invoices",
     "salesReports", "correctionRequests", "stockRequests", "routes",
     "creditLimits", "activityLogs"
+  ]),
+  production_manager: new Set([
+    "products", "stockTransactions", "productionBatches", "productionPlans", "retailers",
+    "productionIssues", "activityLogs"
   ])
 };
+
+export function operationalCollectionsForRole(role) {
+  return [...(ROLE_COLLECTIONS[String(role || "")] || new Set())];
+}
 
 const RETRY_DELAY_MS = 5000;
 
@@ -122,14 +133,15 @@ export function operationalChanges(previousSnapshot, nextSnapshot) {
   return { records, deleted, touchedCollections };
 }
 
-function collectionsFromRemote(workspace) {
+export function collectionsFromRemote(workspace, allowedCollections = OPERATIONAL_COLLECTIONS) {
+  const allowed = new Set(allowedCollections);
   const initialized = new Set(workspace.initializedCollections || []);
   const collections = {};
   initialized.forEach((collection) => {
-    if (OPERATIONAL_COLLECTIONS.includes(collection)) collections[collection] = [];
+    if (allowed.has(collection)) collections[collection] = [];
   });
   (workspace.records || []).forEach((record) => {
-    if (!OPERATIONAL_COLLECTIONS.includes(record.collection)) return;
+    if (!allowed.has(record.collection)) return;
     if (!collections[record.collection]) collections[record.collection] = [];
     collections[record.collection].push(record.data);
   });
@@ -165,7 +177,7 @@ export function createOperationalSync({ store }) {
   let refreshTimer = null;
 
   function allowedCollections(state) {
-    return [...(ROLE_COLLECTIONS[currentUserRole(state)] || new Set())];
+    return operationalCollectionsForRole(currentUserRole(state));
   }
 
   function persistQueue() {
@@ -215,8 +227,8 @@ export function createOperationalSync({ store }) {
     try {
       const workspace = await loadOperationalWorkspace(clientId);
       if (!(workspace.initializedCollections || []).length) return;
-      const remoteCollections = collectionsFromRemote(workspace);
       const currentState = store.getState();
+      const remoteCollections = collectionsFromRemote(workspace, allowedCollections(currentState));
       const initialized = Object.keys(remoteCollections);
       const currentSnapshot = operationalSnapshot(currentState, initialized);
       const remoteSnapshot = operationalSnapshot({ ...currentState, ...remoteCollections }, initialized);
@@ -245,11 +257,6 @@ export function createOperationalSync({ store }) {
     queue = readQueue(clientId, userId);
 
     const allowed = allowedCollections(state);
-    if (!allowed.length) {
-      connecting = false;
-      return;
-    }
-
     try {
       if (queue.length) {
         connected = true;
@@ -261,7 +268,7 @@ export function createOperationalSync({ store }) {
       if ((workspace.initializedCollections || []).length) {
         store.dispatch({
           type: "SET_OPERATIONAL_RECORDS",
-          collections: collectionsFromRemote(workspace)
+          collections: collectionsFromRemote(workspace, allowed)
         });
       } else if (currentUserRole(store.getState()) === "ceo") {
         const emptySnapshot = operationalSnapshot({}, allowed);

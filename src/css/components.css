@@ -203,6 +203,14 @@
   font-weight: 800;
 }
 
+.field:has(input[required]:not([type="hidden"]):not(:disabled), textarea[required]:not(:disabled)) > span:first-child::after,
+.auth-field:has(input[required]:not([type="hidden"]):not(:disabled), textarea[required]:not(:disabled)) > span:first-child::after,
+label:not(.field):has(input[required]:not([type="hidden"]):not(:disabled), textarea[required]:not(:disabled)) > span:first-child::after {
+  content: " *";
+  color: var(--coral);
+  font-weight: 950;
+}
+
 .field textarea {
   width: 100%;
   min-height: 118px;

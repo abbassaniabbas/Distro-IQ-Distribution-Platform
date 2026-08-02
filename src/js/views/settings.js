@@ -21,8 +21,8 @@ import {
   CURRENCY_OPTIONS,
   getScopedAccounts,
   validateClientForm
-} from "../services/tenant.js";
-import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js";
+} from "../services/tenant.js?v=20260801d";
+import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js?v=20260801d";
 import { enabledPackagingTypes, packagingDefaults, PACKAGING_OPTIONS } from "../services/packaging.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";

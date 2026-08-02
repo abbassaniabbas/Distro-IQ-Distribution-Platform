@@ -16,7 +16,7 @@ import {
   sendWorkspaceMessage
 } from "../services/backend.js?v=20260729a";
 import { isBackendConfigured } from "../services/supabase-client.js";
-import { roleLabel } from "../services/rbac.js";
+import { roleLabel } from "../services/rbac.js?v=20260801d";
 import { confirmActionDialog } from "../ui/action-dialog.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { icon } from "../ui/icons.js?v=20260729a";

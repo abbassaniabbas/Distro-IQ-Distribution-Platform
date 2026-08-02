@@ -1,5 +1,5 @@
 import { deleteCeoWorkspaceData } from "../services/backend.js";
-import { currentUserRole } from "../services/rbac.js";
+import { currentUserRole } from "../services/rbac.js?v=20260801d";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { confirmActionDialog } from "./action-dialog.js";
 import { escapeHtml, qs, qsa } from "./dom.js";

@@ -1,5 +1,5 @@
-import seedData from "../data/seed-data.js";
-import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260722";
+import seedData from "../data/seed-data.js?v=20260801d";
+import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260801d";
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
@@ -9,10 +9,10 @@ import {
   isRepresentativeSellThroughTransaction,
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260722";
-import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js";
+} from "../services/calculations.js?v=20260802f";
+import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260801d";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
-import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js";
+import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js?v=20260801d";
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../services/packaging.js";
 
 function clone(value) {
@@ -359,10 +359,13 @@ function ensureStateShape(value) {
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
     productionBatches: Array.isArray(state.productionBatches) ? state.productionBatches : [],
+    productionPlans: Array.isArray(state.productionPlans) ? state.productionPlans : [],
+    productionIssues: Array.isArray(state.productionIssues) ? state.productionIssues : [],
     offlineSalesQueue: Array.isArray(state.offlineSalesQueue) ? state.offlineSalesQueue : [],
     packagingChangeRequests: Array.isArray(state.packagingChangeRequests) ? state.packagingChangeRequests : [],
     correctionRequests: Array.isArray(state.correctionRequests) ? state.correctionRequests : [],
     stockRequests: Array.isArray(state.stockRequests) ? state.stockRequests : [],
+    stockAdditionRequests: Array.isArray(state.stockAdditionRequests) ? state.stockAdditionRequests : [],
     purchaseOrders: Array.isArray(state.purchaseOrders) ? state.purchaseOrders : [],
     procurementOrders: Array.isArray(state.procurementOrders) ? state.procurementOrders : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
@@ -724,6 +727,26 @@ function refreshAssignmentCompletion(state, assignment) {
       });
     }
 
+    const dispatchAssignments = (state.stockAssignments || []).filter((item) => (
+      assignment.dispatchId && item.dispatchId === assignment.dispatchId
+    ));
+    const dispatchReconciled = dispatchAssignments.length > 0 && dispatchAssignments.every((item) => assignmentOutstanding(item) <= 0);
+    const order = dispatchReconciled
+      ? (state.orders || []).find((item) => item.dispatchId === assignment.dispatchId)
+      : null;
+    if (order && order.status !== "delivered") {
+      order.status = "delivered";
+      order.deliveredAt = new Date().toISOString();
+      order.updatedAt = order.deliveredAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "completed",
+        recordType: "order",
+        recordLabel: order.id,
+        summary: `${order.id} automatically delivered after all representative stock was reconciled`
+      });
+    }
+
     return;
   }
 
@@ -1058,9 +1081,9 @@ function reducer(currentState, action) {
       if (!state.client?.id || !action.collections || typeof action.collections !== "object") return state;
       const supportedCollections = new Set([
         "products", "stockCategories", "stockAssignments", "stockTransactions",
-        "productionBatches", "retailers", "orders", "invoices", "salesReports",
+        "productionBatches", "productionPlans", "productionIssues", "retailers", "orders", "invoices", "salesReports",
         "correctionRequests", "stockRequests", "purchaseOrders", "procurementOrders",
-        "routes", "creditLimits", "creditLimitHistory", "activityLogs"
+        "stockAdditionRequests", "routes", "creditLimits", "creditLimitHistory", "activityLogs"
       ]);
       const nextState = { ...state };
 
@@ -1081,6 +1104,10 @@ function reducer(currentState, action) {
               imageRemoteSynced: remoteImageSynced
             };
           });
+          return;
+        }
+        if (collection === "stockCategories") {
+          nextState.stockCategories = mergeSeedRecords(records, seedData.stockCategories);
           return;
         }
         nextState[collection] = clone(records);
@@ -1315,10 +1342,13 @@ function reducer(currentState, action) {
         salesReports: [],
         creditLimitHistory: [],
         productionBatches: [],
+        productionPlans: [],
+        productionIssues: [],
         offlineSalesQueue: [],
         packagingChangeRequests: [],
         correctionRequests: [],
         stockRequests: [],
+        stockAdditionRequests: [],
         purchaseOrders: [],
         procurementOrders: [],
         retailers: [],
@@ -1387,16 +1417,19 @@ function reducer(currentState, action) {
       if (scope !== "factory") return state;
 
       state.products = [];
-      state.stockCategories = [];
+      state.stockCategories = clone(seedData.stockCategories);
       state.stockAssignments = [];
       state.stockTransactions = [];
       state.productionBatches = [];
+      state.productionPlans = [];
+      state.productionIssues = [];
       state.retailers = [];
       state.orders = [];
       state.invoices = [];
       state.salesReports = [];
       state.correctionRequests = [];
       state.stockRequests = [];
+      state.stockAdditionRequests = [];
       state.purchaseOrders = [];
       state.procurementOrders = [];
       state.routes = [];
@@ -1554,7 +1587,7 @@ function reducer(currentState, action) {
     }
 
     case "CREATE_ACCOUNT": {
-      if (!state.client?.id || !["sales_rep", "store_keeper", "admin"].includes(action.payload?.role)) return state;
+      if (!state.client?.id || !["sales_rep", "store_keeper", "production_manager", "admin"].includes(action.payload?.role)) return state;
       const { account, invite } = createAccountInvite({
         client: state.client,
         ...action.payload
@@ -1598,7 +1631,7 @@ function reducer(currentState, action) {
         !account ||
         account.userId === state.user?.id ||
         normalizeRole(account.role) === "ceo" ||
-        !["sales_rep", "store_keeper", "admin"].includes(nextRole)
+        !["sales_rep", "store_keeper", "production_manager", "admin"].includes(nextRole)
       ) return state;
 
       const previousRole = normalizeRole(account.role);
@@ -2080,6 +2113,332 @@ function reducer(currentState, action) {
         summary: recordedMaterials.length
           ? `${recordedBy} used ${recordedMaterials.length} stock material${recordedMaterials.length === 1 ? "" : "s"} to produce ${quantityProduced} ${finishedProduct.name} for ${purpose}`
           : `${recordedBy} produced ${quantityProduced} ${finishedProduct.name} for ${purpose}`
+      });
+      return state;
+    }
+
+    case "CREATE_PRODUCTION_PLAN": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const cadence = action.cadence === "weekly" ? "weekly" : "daily";
+      const startDate = dateOnly(action.startDate);
+      const endDate = dateOnly(action.endDate || action.startDate);
+      const lines = (Array.isArray(action.lines) ? action.lines : []).map((line) => {
+        const product = state.products.find((item) => item.id === line.productId);
+        return {
+          productId: String(line.productId || ""),
+          productName: String(product?.name || line.productName || ""),
+          quantity: Math.max(0, Number(line.quantity || 0))
+        };
+      }).filter((line) => line.productId && line.productName && line.quantity > 0);
+      const uniqueProductIds = new Set(lines.map((line) => line.productId));
+      const validProducts = lines.every((line) => state.products.some((product) => (
+        product.id === line.productId &&
+        product.status !== "inactive" &&
+        stockCategoryIdForProduct(product) === "finished_products"
+      )));
+      if (
+        !isValidISODate(startDate) || !isValidISODate(endDate) || endDate < startDate ||
+        !lines.length || uniqueProductIds.size !== lines.length || !validProducts
+      ) return state;
+
+      const plan = {
+        id: createId("PLAN"),
+        clientId: state.client?.id || "",
+        name: String(action.name || `${cadence === "weekly" ? "Weekly" : "Daily"} production plan`).trim().slice(0, 120),
+        cadence,
+        startDate,
+        endDate,
+        lines,
+        team: String(action.team || "Production Team").trim().slice(0, 120),
+        shift: String(action.shift || "Day shift").trim().slice(0, 80),
+        machine: String(action.machine || "Production line").trim().slice(0, 120),
+        notes: String(action.notes || "").trim().slice(0, 500),
+        status: "planned",
+        createdBy: currentActorName(state),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      state.productionPlans = [plan, ...(state.productionPlans || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "planned",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        summary: `${plan.createdBy} created ${plan.name} for ${lines.length} product${lines.length === 1 ? "" : "s"}`
+      });
+      return state;
+    }
+
+    case "RECORD_MANAGED_PRODUCTION_BATCH": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId && !["cancelled", "completed"].includes(item.status));
+      const finishedProduct = state.products.find((item) => item.id === action.finishedProductId);
+      const planLine = plan?.lines?.find((line) => line.productId === action.finishedProductId);
+      const reference = String(action.batchReference || "").trim().slice(0, 80);
+      const batchDate = dateOnly(action.batchDate);
+      const expiryDate = dateOnly(action.expiryDate);
+      const quantityProduced = Math.max(0, Number(action.quantityProduced || 0));
+      const quantityRejected = Math.max(0, Number(action.quantityRejected || 0));
+      const quantityDamaged = Math.max(0, Number(action.quantityDamaged || 0));
+      const quantityWasted = Math.max(0, Number(action.quantityWasted || 0));
+      const materials = (Array.isArray(action.materials) ? action.materials : []).map((material) => {
+        const product = state.products.find((item) => item.id === material.productId);
+        return {
+          product,
+          name: String(material.name || "").trim().slice(0, 120),
+          unit: String(material.unit || "").trim().slice(0, 40),
+          quantity: Math.max(0, Number(material.quantity || 0))
+        };
+      }).filter(({ product, name, quantity }) => product || name || quantity > 0);
+      const materialKeys = materials.map(({ product, name }) => product?.id || normalized(name)).filter(Boolean);
+      const validMaterials = materials.every(({ product, name, quantity }) => (
+        quantity > 0 && (
+          (product && product.status !== "inactive" && stockCategoryIdForProduct(product) === "raw_materials" && quantity <= Number(product.stock || 0)) ||
+          (!product && Boolean(name))
+        )
+      ));
+      if (
+        !plan || !planLine || !reference ||
+        (state.productionBatches || []).some((batch) => normalized(batch.reference) === normalized(reference)) ||
+        !isValidISODate(batchDate) || !isValidISODate(expiryDate) || expiryDate < batchDate ||
+        !finishedProduct || stockCategoryIdForProduct(finishedProduct) !== "finished_products" ||
+        quantityProduced <= 0 || !validMaterials || new Set(materialKeys).size !== materialKeys.length
+      ) return state;
+
+      const batchId = createId("BATCH");
+      const recordedBy = currentActorName(state);
+      const recordedMaterials = materials.map(({ product, name, unit, quantity }) => {
+        if (product) {
+          product.stock = Number(product.stock || 0) - quantity;
+          product.updatedAt = todayISO();
+        }
+        return {
+          productId: product?.id || "",
+          productName: product?.name || name,
+          quantity,
+          unit: product?.unit || unit || "unit",
+          unitCostAtUse: Number(product?.unitCost || 0),
+          inventoryLinked: Boolean(product)
+        };
+      });
+      const batch = {
+        id: batchId,
+        clientId: state.client?.id || "",
+        planId: plan.id,
+        reference,
+        batchDate,
+        expiryDate,
+        finishedProductId: finishedProduct.id,
+        finishedProductName: finishedProduct.name,
+        plannedQuantity: Number(planLine.quantity || 0),
+        quantityProduced,
+        quantityRejected,
+        quantityDamaged,
+        quantityWasted,
+        outputUnit: finishedProduct.unit || "unit",
+        materials: recordedMaterials,
+        team: String(action.team || plan.team || "Production Team").trim().slice(0, 120),
+        shift: String(action.shift || plan.shift || "Day shift").trim().slice(0, 80),
+        machine: String(action.machine || plan.machine || "Production line").trim().slice(0, 120),
+        notes: String(action.notes || "").trim().slice(0, 500),
+        qualityStatus: "pending",
+        qualityChecks: {},
+        qualityNotes: "",
+        status: "awaiting_qc",
+        recordedBy,
+        createdAt: new Date().toISOString(),
+        approvedAt: "",
+        transferredAt: ""
+      };
+      state.productionBatches = [batch, ...(state.productionBatches || [])];
+      plan.status = "in_progress";
+      plan.updatedAt = new Date().toISOString();
+      state.stockTransactions = [
+        ...recordedMaterials.map((material) => ({
+          id: createId("TXN"),
+          clientId: state.client?.id || "",
+          type: "production usage",
+          productId: material.productId,
+          productName: material.productName,
+          quantity: material.quantity,
+          unit: material.unit,
+          amount: 0,
+          partyType: "Production batch",
+          partyName: reference,
+          date: batchDate,
+          createdAt: new Date().toISOString(),
+          recordedBy,
+          movementDirection: "out",
+          batchId,
+          batchReference: reference,
+          finishedProductId: finishedProduct.id,
+          finishedProductName: finishedProduct.name,
+          purpose: "Production"
+        })),
+        ...(state.stockTransactions || [])
+      ];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "recorded",
+        recordType: "production_batch",
+        recordLabel: reference,
+        summary: `${recordedBy} recorded ${quantityProduced} ${finishedProduct.name}; QC approval pending`
+      });
+      return state;
+    }
+
+    case "RECORD_PRODUCTION_QC": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
+      const outcome = action.outcome === "passed" ? "passed" : action.outcome === "failed" ? "failed" : "";
+      const checks = action.checks && typeof action.checks === "object" ? {
+        appearance: Boolean(action.checks.appearance),
+        weight: Boolean(action.checks.weight),
+        packaging: Boolean(action.checks.packaging),
+        safety: Boolean(action.checks.safety)
+      } : {};
+      const notes = String(action.notes || "").trim().slice(0, 500);
+      if (
+        !batch || !["awaiting_qc", "qc_failed"].includes(batch.status) || !outcome ||
+        (outcome === "passed" && !Object.values(checks).every(Boolean)) ||
+        (outcome === "failed" && !notes)
+      ) return state;
+      batch.qualityStatus = outcome;
+      batch.qualityChecks = checks;
+      batch.qualityNotes = notes;
+      batch.qualityCheckedBy = currentActorName(state);
+      batch.qualityCheckedAt = new Date().toISOString();
+      batch.status = outcome === "passed" ? "qc_passed" : "qc_failed";
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: outcome === "passed" ? "passed" : "failed",
+        recordType: "production_qc",
+        recordLabel: batch.reference,
+        summary: `${batch.reference} quality control ${outcome}`
+      });
+      return state;
+    }
+
+    case "APPROVE_PRODUCTION_BATCH": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
+      if (!batch || batch.status !== "qc_passed" || batch.qualityStatus !== "passed") return state;
+      batch.status = "approved";
+      batch.approvedBy = currentActorName(state);
+      batch.approvedAt = new Date().toISOString();
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "production_batch",
+        recordLabel: batch.reference,
+        summary: `${batch.reference} approved for finished-goods transfer`
+      });
+      return state;
+    }
+
+    case "TRANSFER_PRODUCTION_BATCH": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
+      const product = state.products.find((item) => item.id === batch?.finishedProductId);
+      if (!batch || batch.status !== "approved" || !product || batch.transferredAt) return state;
+      const quantity = Math.max(0, Number(batch.quantityProduced || 0));
+      if (quantity <= 0) return state;
+      product.stock = Number(product.stock || 0) + quantity;
+      product.updatedAt = todayISO();
+      product.soldOutAt = "";
+      batch.status = "transferred";
+      batch.transferredQuantity = quantity;
+      batch.transferredBy = currentActorName(state);
+      batch.transferredAt = new Date().toISOString();
+      state.stockTransactions = [{
+        id: createId("TXN"),
+        clientId: state.client?.id || "",
+        type: "production output",
+        productId: product.id,
+        productName: product.name,
+        quantity,
+        unit: product.unit || "unit",
+        amount: 0,
+        partyType: "Production batch",
+        partyName: batch.reference,
+        date: todayISO(),
+        createdAt: new Date().toISOString(),
+        recordedBy: currentActorName(state),
+        movementDirection: "in",
+        batchId: batch.id,
+        batchReference: batch.reference,
+        purpose: "Approved finished-goods transfer"
+      }, ...(state.stockTransactions || [])];
+      const plan = (state.productionPlans || []).find((item) => item.id === batch.planId);
+      if (plan) {
+        const transferredBatches = (state.productionBatches || []).filter((item) => item.planId === plan.id && item.status === "transferred");
+        const completed = (plan.lines || []).every((line) => {
+          const transferredQuantity = transferredBatches
+            .filter((item) => item.finishedProductId === line.productId)
+            .reduce((total, item) => total + Number(item.transferredQuantity || item.quantityProduced || 0), 0);
+          return transferredQuantity >= Number(line.quantity || 0);
+        });
+        if (completed) plan.status = "completed";
+        plan.updatedAt = new Date().toISOString();
+      }
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "transferred",
+        recordType: "production_transfer",
+        recordLabel: batch.reference,
+        summary: `${quantity} ${product.name} transferred into finished-goods stock from ${batch.reference}`
+      });
+      return state;
+    }
+
+    case "REPORT_PRODUCTION_ISSUE": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const issueType = ["machine_downtime", "material_shortage", "delay", "quality", "other"].includes(action.issueType)
+        ? action.issueType : "other";
+      const description = String(action.description || "").trim();
+      const downtimeMinutes = Math.max(0, Number(action.downtimeMinutes || 0));
+      if (!description || (issueType === "machine_downtime" && downtimeMinutes <= 0)) return state;
+      const issue = {
+        id: createId("ISSUE"),
+        clientId: state.client?.id || "",
+        planId: String(action.planId || ""),
+        issueType,
+        severity: ["low", "medium", "high", "critical"].includes(action.severity) ? action.severity : "medium",
+        machine: String(action.machine || "").trim().slice(0, 120),
+        description: description.slice(0, 500),
+        downtimeMinutes,
+        status: "open",
+        reportedBy: currentActorName(state),
+        reportedAt: new Date().toISOString(),
+        resolvedAt: "",
+        resolution: ""
+      };
+      state.productionIssues = [issue, ...(state.productionIssues || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "reported",
+        recordType: "production_issue",
+        recordLabel: issue.id,
+        summary: `${textLabel(issueType)} reported${issue.machine ? ` for ${issue.machine}` : ""}`
+      });
+      return state;
+    }
+
+    case "RESOLVE_PRODUCTION_ISSUE": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const issue = (state.productionIssues || []).find((item) => item.id === action.issueId && item.status === "open");
+      const resolution = String(action.resolution || "").trim();
+      if (!issue || !resolution) return state;
+      issue.status = "resolved";
+      issue.resolution = resolution.slice(0, 500);
+      issue.resolvedBy = currentActorName(state);
+      issue.resolvedAt = new Date().toISOString();
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "resolved",
+        recordType: "production_issue",
+        recordLabel: issue.id,
+        summary: `${textLabel(issue.issueType)} resolved`
       });
       return state;
     }
@@ -2640,6 +2999,15 @@ function reducer(currentState, action) {
         reportDate: action.reportDate || todayISO(),
         tripLabel: action.tripLabel || "Today",
         salesAmount: Number(action.salesAmount || 0),
+        grossSales: Number(action.grossSales ?? action.salesAmount ?? 0),
+        netSales: Number(action.netSales ?? (
+          Number(action.grossSales ?? action.salesAmount ?? 0) -
+          Number(action.returnAmount || 0) -
+          Number(action.discountAmount || 0) -
+          Number(action.otherDeductions || 0)
+        )),
+        discountAmount: Number(action.discountAmount || 0),
+        otherDeductions: Number(action.otherDeductions || 0),
         cashAmount: 0,
         creditAmount: 0,
         returnAmount: Number(action.returnAmount || 0),
@@ -2684,6 +3052,7 @@ function reducer(currentState, action) {
     }
 
     case "UPSERT_PRODUCT": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const productId = String(action.productId || "").trim();
       const existingProduct = state.products.find((item) => item.id === productId);
       const previousProduct = existingProduct ? { ...existingProduct } : null;
@@ -3110,7 +3479,7 @@ function reducer(currentState, action) {
       const isWalkInDispatch = normalizedRecipientType.includes("walk-in") || normalizedRecipientType.includes("walk in");
       const isRepresentativeDispatch = normalizedRecipientType.includes("representative");
       const paymentType = isInternalDispatch ? "none" : isWalkInDispatch ? "cash" : normalized(action.paymentType || "cash");
-      const destination = String(action.destination || recipientType).trim();
+      const destination = String(action.destination || "").trim();
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
       const dispatchDate = dateOnly(action.dispatchDate) || todayISO();
@@ -3165,8 +3534,7 @@ function reducer(currentState, action) {
         (!isInternalDispatch && !isValidISODate(expectedDeliveryAt)) ||
         (!isInternalDispatch && expectedDeliveryAt < dispatchDate) ||
         (!isInternalDispatch && !["cash", "credit"].includes(paymentType)) ||
-        !recipientName ||
-        !destination
+        !recipientName
       ) {
         return state;
       }
@@ -3298,12 +3666,12 @@ function reducer(currentState, action) {
       const calculatedQuantity = quantityInPieces(product, requestedPackagingQuantity, requestedPackagingType, state.client);
       const previousQuantity = Number(transaction?.quantity || 0);
       const previousAmount = Number(transaction?.amount || 0);
-      const reason = String(action.reason || "").trim();
+      const reason = String(action.reason || "CEO adjustment").trim();
       const transactionType = normalized(transaction?.type);
       const isDispatch = transaction?.movementDirection === "out" && ["supply", "internal movement"].includes(transactionType);
       const delta = nextQuantity - previousQuantity;
 
-      if (!transaction || !product || !isDispatch || !reason || !Number.isFinite(nextQuantity) || nextQuantity <= 0 || calculatedQuantity !== nextQuantity || delta === 0) return state;
+      if (!transaction || !product || !isDispatch || !Number.isFinite(nextQuantity) || nextQuantity <= 0 || calculatedQuantity !== nextQuantity || delta === 0) return state;
 
       const assignment = (state.stockAssignments || []).find((item) => (
         item.transactionId === transaction.id || (
@@ -3835,6 +4203,7 @@ function reducer(currentState, action) {
     }
 
     case "RESTOCK_PRODUCT": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const product = state.products.find((item) => item.id === action.productId);
       const quantity = Math.max(0, Number(action.quantity || 0));
       if (product && quantity > 0) {
@@ -3872,6 +4241,116 @@ function reducer(currentState, action) {
           summary: `${product.name} restocked by ${quantity}`
         });
       }
+      return state;
+    }
+
+    case "SUBMIT_STOCK_ADDITION_REQUEST": {
+      if (currentUserRole(state) !== "store_keeper") return state;
+      const kind = action.kind === "restock" ? "restock" : "new_product";
+      const quantity = Math.max(0, Number(action.quantity ?? action.product?.stock ?? 0));
+      const requestedProduct = action.product && typeof action.product === "object" ? clone(action.product) : null;
+      const productId = String(action.productId || requestedProduct?.id || "").trim();
+      const existingProduct = state.products.find((item) => item.id === productId);
+      if (!productId || (kind === "restock" && (!existingProduct || quantity <= 0))) return state;
+      if (kind === "new_product" && (!requestedProduct?.name || existingProduct)) return state;
+      const hasPendingDuplicate = (state.stockAdditionRequests || []).some((request) => (
+        request.status === "pending" && request.kind === kind && request.productId === productId
+      ));
+      if (hasPendingDuplicate) return state;
+
+      const request = {
+        id: createId("SAR"),
+        clientId: state.client?.id,
+        kind,
+        productId,
+        productName: String(existingProduct?.name || requestedProduct?.name || productId),
+        quantity,
+        product: kind === "new_product" ? requestedProduct : null,
+        requestedByUserId: String(state.user?.id || ""),
+        requestedBy: currentActorName(state),
+        requestedAt: new Date().toISOString(),
+        status: "pending",
+        reviewNote: "",
+        reviewedAt: "",
+        reviewedBy: ""
+      };
+      state.stockAdditionRequests = [request, ...(state.stockAdditionRequests || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "requested",
+        recordType: "stock_addition",
+        recordLabel: request.id,
+        summary: `${request.requestedBy} requested ${kind === "restock" ? `a stock increase for ${request.productName}` : `new stock ${request.productName}`}`
+      });
+      return state;
+    }
+
+    case "APPROVE_STOCK_ADDITION_REQUEST": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
+      const request = (state.stockAdditionRequests || []).find((item) => item.id === action.requestId);
+      if (!request || request.status !== "pending") return state;
+
+      if (request.kind === "new_product") {
+        if (!request.product || state.products.some((item) => item.id === request.productId)) return state;
+        state.products = [{ ...clone(request.product), updatedAt: todayISO() }, ...state.products];
+      } else {
+        const product = state.products.find((item) => item.id === request.productId);
+        const quantity = Math.max(0, Number(request.quantity || 0));
+        if (!product || quantity <= 0) return state;
+        product.stock = Number(product.stock || 0) + quantity;
+        product.updatedAt = todayISO();
+        product.soldOutAt = "";
+        state.stockTransactions = [{
+          id: createId("TXN"),
+          type: "internal movement",
+          productId: product.id,
+          productName: product.name,
+          quantity,
+          amount: 0,
+          unitPrice: Number(product.unitPrice || 0),
+          unitCost: Number(product.unitCost || 0),
+          paymentType: "none",
+          partyType: "Factory",
+          partyName: "Approved stock replenishment",
+          recipientName: "Factory stock",
+          dispatchDestination: product.warehouse || "Factory",
+          staffResponsible: request.requestedBy,
+          date: todayISO(),
+          recordedBy: currentActorName(state),
+          movementDirection: "in",
+          creditImpact: 0
+        }, ...(state.stockTransactions || [])];
+      }
+
+      request.status = "approved";
+      request.reviewNote = String(action.note || "Approved").trim().slice(0, 500);
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "stock_addition",
+        recordLabel: request.id,
+        summary: `${request.productName} stock addition approved by ${request.reviewedBy}`
+      });
+      return state;
+    }
+
+    case "REJECT_STOCK_ADDITION_REQUEST": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
+      const request = (state.stockAdditionRequests || []).find((item) => item.id === action.requestId);
+      if (!request || request.status !== "pending") return state;
+      request.status = "rejected";
+      request.reviewNote = String(action.note || "Rejected").trim().slice(0, 500);
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "rejected",
+        recordType: "stock_addition",
+        recordLabel: request.id,
+        summary: `${request.productName} stock addition rejected by ${request.reviewedBy}`
+      });
       return state;
     }
 
@@ -3942,9 +4421,13 @@ function reducer(currentState, action) {
       if (!state.client?.id) return state;
       const retailerId = String(action.retailerId || "").trim();
       const existingRetailer = state.retailers.find((item) => item.id === retailerId);
+      const actorRole = currentUserRole(state);
+      if (!["ceo", "sales_rep"].includes(actorRole) || (existingRetailer && actorRole === "sales_rep")) return state;
       const previousName = existingRetailer?.name;
       const nextName = String(action.name || existingRetailer?.name || "New customer").trim();
       const stateName = String(action.stateName ?? action.region ?? existingRetailer?.stateName ?? existingRetailer?.region ?? "").trim();
+      const actorName = currentActorLabel(state);
+      const changedAt = new Date().toISOString();
       const retailer = {
         id: retailerId || createId("RTL"),
         name: nextName,
@@ -3958,12 +4441,17 @@ function reducer(currentState, action) {
         contactPhone: String(action.contactPhone ?? existingRetailer?.contactPhone ?? "").trim(),
         assignedRepUserId: String(action.assignedRepUserId ?? existingRetailer?.assignedRepUserId ?? "").trim(),
         assignedRepName: String(action.assignedRepName ?? existingRetailer?.assignedRepName ?? "").trim(),
+        createdByUserId: String(existingRetailer?.createdByUserId || action.createdByUserId || state.user?.id || "").trim(),
+        createdByName: String(existingRetailer?.createdByName || action.createdByName || existingRetailer?.assignedRepName || actorName).trim(),
+        createdAt: existingRetailer?.createdAt || action.createdAt || changedAt,
+        updatedByUserId: String(state.user?.id || "").trim(),
+        updatedByName: actorName,
         fillRate: Math.max(0, Math.min(100, Number(action.fillRate ?? existingRetailer?.fillRate ?? 0))),
         outstanding: Math.max(0, Number(action.outstanding ?? existingRetailer?.outstanding ?? 0)),
         lastOrder: existingRetailer?.lastOrder || todayISO(),
         lastContact: existingRetailer?.lastContact || todayISO(),
         status: String(action.status || existingRetailer?.status || "active"),
-        updatedAt: todayISO()
+        updatedAt: changedAt
       };
 
       if (existingRetailer) {
@@ -3977,8 +4465,7 @@ function reducer(currentState, action) {
       const discountPercent = boundedPercent(action.discountPercent || 0);
       const paymentPeriodDays = normalizedPaymentPeriod(action.paymentPeriodDays || 14);
       const latePenaltyPercent = boundedPercent(action.latePenaltyPercent || 0);
-      const changedBy = currentActorLabel(state);
-      const changedAt = new Date().toISOString();
+      const changedBy = actorName;
       let creditLimit = state.creditLimits.find((item) => (
         String(item.partyName || "").trim().toLowerCase() === String(previousName || nextName).trim().toLowerCase()
       ));
@@ -4035,7 +4522,9 @@ function reducer(currentState, action) {
         actionType: existingRetailer ? "updated" : "created",
         recordType: "retailer",
         recordLabel: retailer.name,
-        summary: `${existingRetailer ? "Updated" : "Added"} customer profile`
+        summary: existingRetailer
+          ? `Updated customer profile for ${retailer.name}`
+          : `${actorName} added ${retailer.name} to the shared customer directory`
       });
 
       return state;

@@ -12,6 +12,11 @@ export const ROLE_OPTIONS = [
     description: "Raw materials, finished products, equipment, stock movement, and dispatch"
   },
   {
+    value: "production_manager",
+    label: "Production Line Manager",
+    description: "Production plans, work assignments, batches, quality control, finished-goods transfer, issues, and reports"
+  },
+  {
     value: "admin",
     label: "Admin",
     description: "Sales documentation, representative stock requests, and Purchase Order coordination"
@@ -78,12 +83,43 @@ const ROLE_PERMISSIONS = {
     canCoordinateStockRequests: false,
     canFulfillPurchaseOrders: false
   },
+  production_manager: {
+    nav: ["dashboard", "production", "inventory", "activity-log", "settings"],
+    canViewCompanyWide: true,
+    canLogSalesReturns: false,
+    canManageProducts: false,
+    canAddStock: false,
+    canAssignStock: false,
+    canReconcileStock: false,
+    canSetCreditLimits: false,
+    canAddCustomers: false,
+    canManageCustomers: false,
+    canReviewReports: false,
+    canManageStockMovements: false,
+    canDispatchStock: false,
+    canViewFinancialReports: false,
+    canExportReports: false,
+    canManageUsers: false,
+    canConfigureFactory: false,
+    canAuditRecords: false,
+    canRequestStock: false,
+    canCoordinateStockRequests: false,
+    canFulfillPurchaseOrders: false,
+    canPlanProduction: true,
+    canRecordProduction: true,
+    canAssignProductionWork: true,
+    canPerformProductionQC: true,
+    canApproveProductionBatch: true,
+    canTransferFinishedGoods: true,
+    canReportProductionIssues: true,
+    canViewProductionReports: true
+  },
   admin: {
     nav: ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
-    canAddStock: false,
+    canAddStock: true,
     canAssignStock: false,
     canReconcileStock: false,
     canSetCreditLimits: false,
@@ -204,7 +240,6 @@ export function scopeStateForCurrentRole(state) {
     const repName = String(order.repName || "").trim().toLowerCase();
     return order.repUserId === userId || (actorName && repName === actorName);
   });
-  const customerIds = new Set(orders.map((order) => order.retailerId));
   const activeProductIds = new Set((state.products || [])
     .filter((product) => product.status !== "inactive")
     .map((product) => product.id));
@@ -218,10 +253,9 @@ export function scopeStateForCurrentRole(state) {
     ...orders.flatMap((order) => (order.items || []).map((item) => item.productId)),
     ...assignedProductIds
   ]);
-  const retailers = (state.retailers || []).filter((retailer) => {
-    const assignedRepUserId = String(retailer.assignedRepUserId || "");
-    return customerIds.has(retailer.id) || assignedRepUserId === userId || !assignedRepUserId;
-  });
+  // Customers belong to the company workspace, not to the representative who
+  // first added them. Representative sales and records remain private below.
+  const retailers = [...(state.retailers || [])];
   const visibleCustomerNames = new Set(retailers.map((retailer) => String(retailer.name || "").trim().toLowerCase()).filter(Boolean));
 
   return {

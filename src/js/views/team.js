@@ -2,13 +2,13 @@ import {
   ROLE_OPTIONS,
   getScopedAccounts,
   validateAccountForm
-} from "../services/tenant.js";
+} from "../services/tenant.js?v=20260801d";
 import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus, setMembershipRole } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";
 import { formatDate } from "../services/formatters.js";
-import { actionTypeLabel, getScopedActivityLogs, recordTypeLabel } from "../services/activity.js?v=20260722";
-import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js";
+import { actionTypeLabel, getScopedActivityLogs, recordTypeLabel } from "../services/activity.js?v=20260801d";
+import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -617,7 +617,7 @@ export function bindTeam({ root, store, signal }) {
       const role = String(roleSelect?.value || "");
       const account = getScopedAccounts(state).find((item) => item.id === accountId);
       const message = qs("[data-team-account-message]", accountModal);
-      if (!account || !["sales_rep", "store_keeper", "admin"].includes(role)) return;
+      if (!account || !["sales_rep", "store_keeper", "production_manager", "admin"].includes(role)) return;
       if (normalizeRole(account.role) === role) {
         if (message) message.textContent = "Choose a different role before updating.";
         return;

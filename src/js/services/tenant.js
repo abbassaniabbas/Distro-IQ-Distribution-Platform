@@ -1,7 +1,7 @@
 import { DEFAULT_BRAND_COLOR, isValidHexColor, normalizeBrandColor } from "./branding.js";
-import { ROLE_OPTIONS } from "./rbac.js";
+import { ROLE_OPTIONS } from "./rbac.js?v=20260801d";
 
-export { ROLE_OPTIONS } from "./rbac.js";
+export { ROLE_OPTIONS } from "./rbac.js?v=20260801d";
 
 const DEFAULT_CURRENCY = "NGN";
 const DEFAULT_TIMEZONE = "Africa/Lagos";
@@ -189,7 +189,7 @@ export function validateAccountForm(values, existingAccounts) {
     errors.email = "This email is already invited for this company.";
   }
 
-  if (!values.role || !["sales_rep", "store_keeper", "admin"].includes(values.role)) {
+  if (!values.role || !["sales_rep", "store_keeper", "production_manager", "admin"].includes(values.role)) {
     errors.role = "Choose a staff role.";
   }
 

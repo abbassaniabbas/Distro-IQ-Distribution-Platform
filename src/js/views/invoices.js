@@ -1,7 +1,7 @@
 import { downloadInvoice, getFinancialInvoiceRecords, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722d";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
 import { printTabularReport } from "../services/report-export.js";
-import { currentUserRole } from "../services/rbac.js";
+import { currentUserRole } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table } from "../ui/components.js";
 

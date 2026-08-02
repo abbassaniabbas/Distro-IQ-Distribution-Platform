@@ -1,5 +1,5 @@
 import { formatDate, formatDateTime, formatNumber, statusText } from "../services/formatters.js";
-import { currentUserRole } from "../services/rbac.js";
+import { currentUserRole } from "../services/rbac.js?v=20260801d";
 import { openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";

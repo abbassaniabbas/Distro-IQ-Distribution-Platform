@@ -173,6 +173,54 @@ function marginPercent(revenue, profit) {
   return revenue ? (Number(profit || 0) / Number(revenue || 0)) * 100 : 0;
 }
 
+function nonNegativeAmount(value) {
+  return Math.max(0, Number(value || 0));
+}
+
+function deductionAmount(record, grossSales, amountKeys, percentKeys = []) {
+  const explicitKey = amountKeys.find((key) => Number.isFinite(Number(record?.[key])) && Number(record?.[key]) > 0);
+  if (explicitKey) return nonNegativeAmount(record[explicitKey]);
+
+  const percentKey = percentKeys.find((key) => Number.isFinite(Number(record?.[key])) && Number(record?.[key]) > 0);
+  return percentKey ? grossSales * Math.min(100, nonNegativeAmount(record[percentKey])) / 100 : 0;
+}
+
+function saleDeductions(record, grossSales) {
+  const discounts = deductionAmount(record, grossSales, ["discountAmount", "discount"], ["discountPercent"]);
+  const otherDeductions = deductionAmount(
+    record,
+    grossSales,
+    ["otherDeductions", "otherDeductionAmount", "allowanceAmount"]
+  );
+
+  return { discounts, otherDeductions };
+}
+
+export function summarizeSalesLines(lines = []) {
+  return (lines || []).reduce((summary, line) => {
+    const revenue = Number(line.netSales ?? line.revenue ?? 0);
+    const returns = nonNegativeAmount(line.returnAmount);
+    const discounts = nonNegativeAmount(line.discountAmount);
+    const otherDeductions = nonNegativeAmount(line.otherDeductions);
+    const grossSales = Number.isFinite(Number(line.grossSales))
+      ? nonNegativeAmount(line.grossSales)
+      : Math.max(0, revenue) + discounts + otherDeductions;
+
+    summary.grossSales += grossSales;
+    summary.returns += returns;
+    summary.discounts += discounts;
+    summary.otherDeductions += otherDeductions;
+    summary.netSales += revenue;
+    return summary;
+  }, {
+    grossSales: 0,
+    returns: 0,
+    discounts: 0,
+    otherDeductions: 0,
+    netSales: 0
+  });
+}
+
 function getOrderRouteMap(routes = []) {
   const routeMap = new Map();
 
@@ -200,7 +248,9 @@ export function getFinancialSalesLines(state) {
         if (item.financeRevenueDeleted) return null;
         const product = productMap.get(item.productId);
         const quantity = Number(item.quantity || 0);
-        const revenue = Number(item.lineAmount ?? (quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0)));
+        const grossSales = nonNegativeAmount(item.grossAmount ?? item.lineAmount ?? (quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0)));
+        const { discounts, otherDeductions } = saleDeductions(item, grossSales);
+        const revenue = Number(item.netAmount ?? (grossSales - discounts - otherDeductions));
         const cost = quantity * Number(item.unitCost ?? item.unitCostAtSale ?? product?.unitCost ?? 0);
         const profit = revenue - cost;
 
@@ -214,6 +264,10 @@ export function getFinancialSalesLines(state) {
           repName: route?.driver || order.repName || "Unassigned",
           customerName: retailer?.name || order.customerName || "Unknown customer",
           quantity,
+          grossSales,
+          discountAmount: discounts,
+          otherDeductions,
+          netSales: revenue,
           revenue,
           cost,
           profit,
@@ -242,7 +296,11 @@ export function getFinancialSalesLines(state) {
       const quantity = Number(transaction.quantity || 0);
       const signedQuantity = isReturn ? -quantity : quantity;
       const grossAmount = Number(transaction.amount || quantity * Number(product?.unitPrice || 0));
-      const revenue = isReturn ? -grossAmount : grossAmount;
+      const grossSales = isReturn ? 0 : nonNegativeAmount(transaction.grossAmount ?? grossAmount);
+      const { discounts, otherDeductions } = isReturn ? { discounts: 0, otherDeductions: 0 } : saleDeductions(transaction, grossSales);
+      const revenue = isReturn
+        ? -nonNegativeAmount(grossAmount)
+        : Number(transaction.netAmount ?? (grossSales - discounts - otherDeductions));
       const cost = signedQuantity * Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? 0);
       const profit = revenue - cost;
       const paymentType = transaction.paymentType || (isReturn ? "return" : "cash");
@@ -267,15 +325,19 @@ export function getFinancialSalesLines(state) {
         repName: transaction.recordedBy || "Sales Representative",
         customerName: transaction.partyName || "Customer",
         quantity: signedQuantity,
+        grossSales,
+        discountAmount: discounts,
+        otherDeductions,
+        netSales: revenue,
         revenue,
         cost,
         profit,
         margin: marginPercent(revenue, profit),
         status: isReturn ? "returned" : "sold",
         paymentType,
-        cashAmount: !isReturn && !isCredit ? grossAmount : 0,
-        creditAmount: !isReturn && isCredit ? grossAmount : 0,
-        returnAmount: isReturn ? grossAmount : 0
+        cashAmount: !isReturn && !isCredit ? revenue : 0,
+        creditAmount: !isReturn && isCredit ? revenue : 0,
+        returnAmount: isReturn ? nonNegativeAmount(grossAmount) : 0
       };
     });
 

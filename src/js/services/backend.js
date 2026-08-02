@@ -1,4 +1,4 @@
-import { CURRENCY_OPTIONS } from "./tenant.js";
+import { CURRENCY_OPTIONS } from "./tenant.js?v=20260801d";
 import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
 import { classifyAppFailure } from "./error-classification.js";
 
@@ -1153,6 +1153,9 @@ export async function inviteAccount({ client, name, email, phoneNumber, role, st
   }
 
   if (data?.error) {
+    if (role === "production_manager" && /choose a valid role/i.test(String(data.error))) {
+      throw new Error("Backend update required: deploy the latest invite-user function before creating a Production Line Manager.");
+    }
     throw new Error(friendlyEdgeFunctionMessage(data.error, undefined, { serviceLabel: "staff invitation service" }));
   }
 

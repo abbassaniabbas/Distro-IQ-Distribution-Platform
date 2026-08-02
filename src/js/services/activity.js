@@ -1,5 +1,5 @@
-import { createId } from "./tenant.js";
-import { currentUserRole } from "./rbac.js";
+import { createId } from "./tenant.js?v=20260801d";
+import { currentUserRole } from "./rbac.js?v=20260801d";
 import { formatCurrency, formatNumber } from "./formatters.js";
 import { isRepresentativeSellThroughTransaction } from "./calculations.js?v=20260722";
 
@@ -29,7 +29,15 @@ export const ACTION_LABELS = {
   issued: "Issued",
   received: "Received",
   cancelled: "Cancelled",
-  requested: "Requested"
+  requested: "Requested",
+  used: "Used",
+  planned: "Planned",
+  recorded: "Recorded",
+  passed: "Passed",
+  failed: "Failed",
+  transferred: "Transferred",
+  reported: "Reported",
+  resolved: "Resolved"
 };
 
 export const RECORD_LABELS = {
@@ -48,7 +56,13 @@ export const RECORD_LABELS = {
   purchase_order: "Purchase Order",
   procurement_order: "Procurement Order",
   record_correction: "Record Correction",
-  customer_return: "Customer Return"
+  customer_return: "Customer Return",
+  stock_addition: "Stock Addition",
+  production_batch: "Production Batch",
+  production_plan: "Production Plan",
+  production_qc: "Quality Control",
+  production_transfer: "Finished-goods Transfer",
+  production_issue: "Production Issue"
 };
 
 export function actionTypeLabel(actionType) {
@@ -174,6 +188,9 @@ function stockMovementActivityLogs(state, existingLogs) {
         actorName: transaction.staffResponsible || transaction.recordedBy || "Store Keeper",
         actorEmail: "",
         summary: transactionSummary(transaction, productName),
+        stockMovementType: String(transaction.type || "").toLowerCase(),
+        batchId: String(transaction.batchId || ""),
+        productId: String(transaction.productId || ""),
         createdAt: transactionCreatedAt(transaction)
       };
 
@@ -229,6 +246,22 @@ function financialTransactionActivityLogs(state) {
     });
 }
 
+export function isProductionActivityEntry(entry, state) {
+  if (!entry) return false;
+  if (["production_plan", "production_batch", "production_qc", "production_transfer", "production_issue"].includes(entry.recordType)) return true;
+
+  if (entry.recordType === "stock_movement") {
+    const movementType = String(entry.stockMovementType || "").trim().toLowerCase();
+    return Boolean(entry.batchId) || ["production usage", "production output"].includes(movementType);
+  }
+
+  if (entry.recordType !== "inventory") return false;
+  const productId = String(entry.productId || entry.recordLabel || "");
+  const product = (state.products || []).find((item) => String(item.id || "") === productId);
+  const stockCategory = String(product?.stockCategory || "").trim().toLowerCase();
+  return ["raw_materials", "finished_products"].includes(stockCategory);
+}
+
 export function getScopedActivityLogs(state) {
   if (!state.client?.id) return [];
 
@@ -250,6 +283,12 @@ export function getScopedActivityLogs(state) {
   if (role === "store_keeper") {
     return logs
       .filter((entry) => ["inventory", "stock_movement", "route"].includes(entry.recordType))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  if (role === "production_manager") {
+    return logs
+      .filter((entry) => isProductionActivityEntry(entry, state))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 

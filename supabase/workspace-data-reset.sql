@@ -18,9 +18,9 @@ declare
   v_count integer := 0;
   v_marker_id text := 'ACTIVITY-RESET-' || floor(extract(epoch from clock_timestamp()) * 1000)::bigint::text;
   v_collections text[] := array[
-    'products', 'stockCategories', 'stockAssignments', 'stockTransactions',
-    'productionBatches', 'retailers', 'orders', 'invoices', 'salesReports',
-    'correctionRequests', 'stockRequests', 'purchaseOrders', 'procurementOrders',
+    'products', 'stockAssignments', 'stockTransactions',
+    'productionBatches', 'productionPlans', 'productionIssues', 'retailers', 'orders', 'invoices', 'salesReports',
+    'correctionRequests', 'stockRequests', 'stockAdditionRequests', 'purchaseOrders', 'procurementOrders',
     'routes', 'creditLimits', 'creditLimitHistory', 'activityLogs'
   ];
 begin

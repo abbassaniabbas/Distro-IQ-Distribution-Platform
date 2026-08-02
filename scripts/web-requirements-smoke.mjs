@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { calculateMetrics, effectiveOrderStatus, getCustomerOrderCompletion, getFinancialSalesLines, getOrdersWithTotals, getReturnableCustomerChoices, hasOrdersRequiringAutomaticDelay } from "../src/js/services/calculations.js";
+import { calculateMetrics, effectiveOrderStatus, getCustomerOrderCompletion, getFinancialSalesLines, getOrdersWithTotals, getReturnableCustomerChoices, hasOrdersRequiringAutomaticDelay, summarizeSalesLines } from "../src/js/services/calculations.js";
 import { getNigeriaLgas, NIGERIA_STATES_AND_LGAS, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../src/js/data/nigeria-locations.js";
 import { buildInvoiceDocument, buildInvoicePreviewContent, buildInvoiceQuickViewMarkup, getFinancialInvoiceRecords, getInvoiceRecords } from "../src/js/services/invoices.js";
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../src/js/services/packaging.js";
@@ -11,7 +11,7 @@ import { nextFormattedId } from "../src/js/services/tenant.js";
 import { classifyAppFailure } from "../src/js/services/error-classification.js";
 import { friendlyEdgeFunctionMessage } from "../src/js/services/backend.js";
 import { getScopedActivityLogs } from "../src/js/services/activity.js";
-import { OPERATIONAL_COLLECTIONS, operationalChanges, operationalSnapshot } from "../src/js/services/operational-sync.js";
+import { OPERATIONAL_COLLECTIONS, collectionsFromRemote, operationalChanges, operationalCollectionsForRole, operationalSnapshot } from "../src/js/services/operational-sync.js";
 import { dateIsWithinRange, normalizeDateRange } from "../src/js/services/filtering.js";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "../src/js/services/global-search.js";
 import { INACTIVITY_TIMEOUT_MS, remainingInactivityMs, requiresInactivityLogout } from "../src/js/services/inactivity-session.js";
@@ -23,13 +23,14 @@ import { renderAuth, renderForgotPassword } from "../src/js/views/auth.js";
 import { renderBackendSetup } from "../src/js/views/backend-setup.js";
 import { renderActivityLog } from "../src/js/views/activity-log.js";
 import { renderAdjustments } from "../src/js/views/adjustments.js";
-import { renderDashboard } from "../src/js/views/dashboard.js";
+import { ceoActualSalesRevenue, renderDashboard } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
-import { renderInventory } from "../src/js/views/inventory.js";
+import { renderInventory, renderRecordCorrectionModal } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
 import { renderMessages } from "../src/js/views/messages.js";
 import { renderOrders } from "../src/js/views/orders.js";
 import { renderPasswordReset } from "../src/js/views/password-reset.js";
+import { renderProduction } from "../src/js/views/production.js";
 import { renderCustomerDetails, renderRetailers } from "../src/js/views/retailers.js";
 import { renderSettings } from "../src/js/views/settings.js";
 import { buildLoginDetailsEmail } from "../src/js/views/team.js";
@@ -48,6 +49,7 @@ const messageManagementSql = readFileSync(new URL("../supabase/message-managemen
 assert.match(responsiveLayoutCss, /@media \(max-width: 640px\)[\s\S]*\.view-root,[\s\S]*padding: 14px 12px 24px/, "phone layouts must use compact page padding");
 assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-button[\s\S]*width: 44px;[\s\S]*height: 44px/, "phone and tablet controls must retain touch-friendly targets");
 assert.match(responsiveComponentCss, /\.table-wrap[\s\S]*-webkit-overflow-scrolling: touch/, "wide tables must scroll safely on touch devices");
+assert.match(responsiveComponentCss, /:has\(input\[required\][\s\S]*content: " \*";/, "required textboxes must display a visible asterisk beside their labels");
 assert.match(responsiveViewCss, /@media \(max-width: 640px\)[\s\S]*max-height: calc\(100dvh - 20px\)/, "mobile modals must remain inside the visible viewport");
 assert.match(responsiveViewCss, /\.stock-health-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "Stock Health grid cards must keep a normal width and fill from the left");
 assert.match(responsiveViewCss, /\.product-catalogue-size-modal \.ceo-size-picture-grid\s*\{[\s\S]*grid-template-columns: repeat\(auto-fill, minmax\(230px, 280px\)\);[\s\S]*justify-content: start;/, "all portal product catalogues must share the normal CEO image-card width");
@@ -57,7 +59,9 @@ assert.match(responsiveViewCss, /\.profile-settings-form \.field-error:empty\s*\
 assert.match(responsiveViewCss, /\.settings-layout\s*\{[\s\S]*grid-template-columns: minmax\(0, 3fr\) minmax\(320px, 2fr\);/, "CEO settings must use the requested 60/40 Factory Settings and My Profile width split");
 assert.match(responsiveViewCss, /\.settings-top-panel > \.panel\s*\{[\s\S]*height: 100%;/, "Factory Settings and My Profile panels must have equal top-to-bottom length");
 assert.match(responsiveViewCss, /\.rep-request-quantity-fields:focus-within[\s\S]*box-shadow:[^;]+;/, "representative stock-request quantity controls must have a clear polished focus state");
+assert.match(responsiveViewCss, /\.rep-stock-quantity-row\s*\{[\s\S]*display: flex;[\s\S]*justify-content: flex-start;[\s\S]*gap: 8px;/, "assigned package stock must sit immediately beside the remaining piece count");
 assert.match(backendSource, /export async function loadWorkspacePackagingState[\s\S]*packaging_change_requests/, "background configuration refresh must load packaging approval requests");
+assert.match(backendSource, /role === "production_manager"[\s\S]*choose a valid role[\s\S]*deploy the latest invite-user function/, "a stale invitation function must report the required backend update instead of rejecting the selected role as invalid");
 assert.match(appSource, /loadWorkspacePackagingState\([\s\S]*SET_PACKAGING_WORKSPACE_STATE/, "active portals must receive packaging requests and approved settings without a new sign-in");
 assert.match(messageManagementSql, /workspace_message_deletions[\s\S]*membership_id/, "message deletion must be stored per staff member");
 assert.match(messageManagementSql, /delete_my_workspace_messages[\s\S]*p_unsend[\s\S]*messages\.from_membership_id = v_current_membership_id/, "only a message sender may unsend it for everyone");
@@ -77,6 +81,7 @@ assert.equal(dateIsWithinRange("2026-07-20", "2026-07-10", "2026-07-20"), true, 
 assert.equal(requiresInactivityLogout("ceo"), true);
 assert.equal(requiresInactivityLogout("admin"), true);
 assert.equal(requiresInactivityLogout("store_keeper"), true);
+assert.equal(requiresInactivityLogout("production_manager"), true);
 assert.equal(requiresInactivityLogout("sales_rep"), false, "sales representatives must keep their offline field sessions");
 assert.equal(remainingInactivityMs(1_000, 1_000), INACTIVITY_TIMEOUT_MS);
 
@@ -103,8 +108,54 @@ const accounts = [
   { id: "membership-manager", clientId: client.id, userId: "user-manager", name: "Musa Manager", email: "musa@example.com", role: "manager", status: "active" },
   { id: "membership-ceo", clientId: client.id, userId: "user-ceo", name: "Chioma CEO", email: "chioma@example.com", role: "ceo", status: "active" },
   { id: "membership-store", clientId: client.id, userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" },
+  { id: "membership-production", clientId: client.id, userId: "user-production", name: "Bello Production", email: "bello@example.com", role: "production_manager", status: "active" },
   { id: "membership-admin", clientId: client.id, userId: "user-admin", name: "Ada Admin", email: "ada@example.com", role: "admin", status: "active" }
 ];
+
+const sharedCustomerStore = createStore();
+const secondRepresentative = { id: "membership-rep-two", clientId: client.id, userId: "user-rep-two", name: "Binta Rep", email: "binta@example.com", role: "sales_rep", status: "active" };
+const sharedCustomerAccounts = [...accounts, secondRepresentative];
+function authenticateSharedCustomerUser(account) {
+  sharedCustomerStore.dispatch({
+    type: "SET_AUTHENTICATED_WORKSPACE",
+    session: { user: { id: account.userId } },
+    user: { id: account.userId, email: account.email, user_metadata: { full_name: account.name } },
+    client,
+    accounts: sharedCustomerAccounts,
+    invites: [],
+    featureModules: [],
+    messages: [],
+    activityLogs: sharedCustomerStore.getState().activityLogs
+  });
+}
+authenticateSharedCustomerUser(accounts[0]);
+sharedCustomerStore.dispatch({
+  type: "UPSERT_RETAILER",
+  name: "Shared Corner Shop",
+  stateName: "Kaduna",
+  lga: "Chikun",
+  address: "Central Market",
+  channel: "Kiosk",
+  assignedRepUserId: accounts[0].userId,
+  assignedRepName: accounts[0].name
+});
+const sharedCustomer = sharedCustomerStore.getState().retailers.find((customer) => customer.name === "Shared Corner Shop");
+assert.ok(sharedCustomer, "a Sales Representative must be able to save a company customer");
+assert.equal(sharedCustomer.createdByUserId, accounts[0].userId);
+assert.equal(sharedCustomer.createdByName, "Amina Rep", "the customer record must retain who originally added it");
+assert.ok(sharedCustomer.createdAt, "the customer record must retain when it was added");
+const sharedCustomerSyncRecord = operationalSnapshot(sharedCustomerStore.getState(), ["retailers"]).get("retailers").get(sharedCustomer.id).data;
+assert.equal(sharedCustomerSyncRecord.createdByName, "Amina Rep", "creator attribution must be persisted with the backend customer record");
+authenticateSharedCustomerUser(secondRepresentative);
+const secondRepCustomerState = scopeStateForCurrentRole(sharedCustomerStore.getState());
+assert.ok(secondRepCustomerState.retailers.some((customer) => customer.id === sharedCustomer.id), "customers added by one rep must be visible to every other rep");
+const secondRepDashboard = renderDashboard({ state: secondRepCustomerState });
+assert.match(secondRepDashboard, new RegExp(`<option value="${sharedCustomer.id}">Shared Corner Shop<\\/option>`), "another rep must be able to select the saved customer for a sale without retyping it");
+const sharedCustomerDirectory = renderRetailers({ state: secondRepCustomerState });
+assert.match(sharedCustomerDirectory, /Shared Corner Shop[\s\S]*Added by Amina Rep/, "the shared customer directory must show who added the customer");
+const sharedCustomerDetails = renderCustomerDetails(sharedCustomer, secondRepCustomerState, currentUserPermissions(secondRepCustomerState));
+assert.match(sharedCustomerDetails, /Added by[\s\S]*Amina Rep/, "customer details must identify the original creator");
+
 const store = createStore();
 
 assert.equal(
@@ -121,9 +172,88 @@ assert.equal(packagingUnitPrice(packagePriceFixture, "carton", client), 1800);
 assert.equal(effectivePiecePrice(packagePriceFixture, "carton", client), 180);
 assert.equal(packagingLineAmount(packagePriceFixture, 2, "carton", client), 3600);
 
+const representativeCustodySalesFixture = {
+  products: [{ id: "SKU-CUSTODY", name: "Custody Chips", unitPrice: 1000, unitCost: 500, stockCategory: "finished_products" }],
+  stockAssignments: [{ id: "ASN-CUSTODY", productId: "SKU-CUSTODY", repName: "Amina Rep", assigned: 480, sold: 30, returned: 100, transactionId: "TXN-CUSTODY-ISSUED" }],
+  stockTransactions: [
+    { id: "TXN-CUSTODY-ISSUED", type: "supply", productId: "SKU-CUSTODY", quantity: 480, packagingType: "carton", packagingQuantity: 20, amount: 48000, partyType: "Sales Representative", partyName: "Amina Rep" },
+    { id: "TXN-CUSTODY-SALE", type: "sale", productId: "SKU-CUSTODY", quantity: 30, amount: 30000, partyType: "Customer", partyName: "Retail customer", financialImpact: false, accountingTreatment: "sell_through_only", assignmentId: "ASN-CUSTODY" },
+    { id: "TXN-CUSTODY-RETURNED", type: "return to factory", productId: "SKU-CUSTODY", quantity: 100, amount: 0, partyType: "Sales Representative", partyName: "Amina Rep", assignmentId: "ASN-CUSTODY" }
+  ],
+  orders: [
+    { id: "ORD-CUSTODY-DISPATCH", source: "factory_dispatch", customerType: "Sales Representative", customerName: "Amina Rep", transactionId: "TXN-CUSTODY-ISSUED", items: [{ productId: "SKU-CUSTODY", quantity: 480, packagingType: "carton", packagingQuantity: 20, packagingUnitPrice: 2400, unitPrice: 100, lineAmount: 48000 }] },
+    { id: "ORD-ACTUAL-SALE", source: "quick_sale", status: "delivered", customerName: "Retail customer", transactionId: "TXN-CUSTODY-SALE", financialImpact: false, accountingTreatment: "sell_through_only", items: [{ productId: "SKU-CUSTODY", quantity: 30, unitPrice: 1000, lineAmount: 30000, transactionId: "TXN-CUSTODY-SALE" }] }
+  ],
+  invoices: [],
+  routes: [],
+  retailers: []
+};
+assert.equal(calculateMetrics(representativeCustodySalesFixture).orderRevenue, 48000, "the finance ledger calculation must remain unchanged for the existing representative dispatch invoice");
+assert.equal(getFinancialSalesLines(representativeCustodySalesFixture).reduce((total, line) => total + line.revenue, 0), 48000, "the Finance section must retain its existing representative dispatch accounting record");
+assert.equal(ceoActualSalesRevenue(representativeCustodySalesFixture), 30000, "the CEO Sales card must show the actual ₦30,000 customer sale instead of the ₦48,000 representative stock dispatch");
+
+const grossNetFinanceFixture = {
+  products: [{ id: "SKU-GROSS-NET", name: "Gross Net Chips", unitPrice: 500, unitCost: 200 }],
+  retailers: [],
+  routes: [],
+  invoices: [],
+  stockAssignments: [],
+  orders: [{
+    id: "ORD-GROSS-NET",
+    source: "factory_dispatch",
+    customerName: "Gross Net Customer",
+    paymentType: "cash",
+    createdAt: currentTestDate,
+    items: [{
+      productId: "SKU-GROSS-NET",
+      quantity: 2,
+      grossAmount: 1000,
+      discountAmount: 100,
+      otherDeductions: 50,
+      netAmount: 850,
+      unitCost: 200
+    }]
+  }],
+  stockTransactions: [{
+    id: "TXN-GROSS-NET-RETURN",
+    type: "return",
+    productId: "SKU-GROSS-NET",
+    quantity: 1,
+    amount: 200,
+    unitCost: 200,
+    partyName: "Gross Net Customer",
+    recordedBy: "Factory",
+    date: currentTestDate
+  }]
+};
+const grossNetFinanceTotals = summarizeSalesLines(getFinancialSalesLines(grossNetFinanceFixture));
+assert.deepEqual(grossNetFinanceTotals, {
+  grossSales: 1000,
+  returns: 200,
+  discounts: 100,
+  otherDeductions: 50,
+  netSales: 650
+}, "finance must calculate net sales as gross sales less returns, discounts, and other deductions");
+const grossNetFinanceView = renderFinance({
+  state: {
+    ...createStore().getState(),
+    ...grossNetFinanceFixture,
+    session: { user: { id: "user-ceo" } },
+    user: { id: "user-ceo", email: "chioma@example.com" },
+    client,
+    accounts
+  }
+});
+assert.match(grossNetFinanceView, /Gross sales[\s\S]*₦1,000/, "Finance overview must show gross sales before deductions");
+assert.match(grossNetFinanceView, /Returns[\s\S]*₦200/, "Finance overview must show customer returns separately");
+assert.match(grossNetFinanceView, /Discounts[\s\S]*₦100/, "Finance overview must show discounts separately");
+assert.match(grossNetFinanceView, /Other deductions[\s\S]*₦50/, "Finance overview must show other deductions separately");
+assert.match(grossNetFinanceView, /Net sales[\s\S]*₦650/, "Finance overview must show final net sales");
+
 const loginHtml = renderAuth({ routeId: "login" });
-assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 4, "login must show the four supported role cards");
+assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 5, "login must show the five supported role cards");
 assert.match(loginHtml, /value="admin"/, "Admin must be available as a distinct sign-in role");
+assert.match(loginHtml, /value="production_manager"/, "Production Line Manager must be available as a distinct sign-in role");
 assert.match(loginHtml, /href="#\/forgot-password"/);
 const forgotPasswordHtml = renderForgotPassword();
 assert.match(forgotPasswordHtml, /id="forgot-password-form"/);
@@ -160,11 +290,24 @@ assert.deepEqual(
   OPERATIONAL_COLLECTIONS,
   [
     "products", "stockCategories", "stockAssignments", "stockTransactions",
-    "productionBatches", "retailers", "orders", "invoices", "salesReports",
-    "correctionRequests", "stockRequests", "purchaseOrders", "procurementOrders",
+    "productionBatches", "productionPlans", "productionIssues", "retailers", "orders", "invoices", "salesReports",
+    "correctionRequests", "stockRequests", "stockAdditionRequests", "purchaseOrders", "procurementOrders",
     "routes", "creditLimits", "creditLimitHistory", "activityLogs"
   ],
   "every operational collection must be included in Supabase synchronization"
+);
+assert.deepEqual(
+  collectionsFromRemote({
+    initializedCollections: ["products", "productionPlans", "orders", "salesReports"],
+    records: [
+      { collection: "products", data: { id: "PROD-VISIBLE" } },
+      { collection: "productionPlans", data: { id: "PLAN-VISIBLE" } },
+      { collection: "orders", data: { id: "ORDER-HIDDEN" } },
+      { collection: "salesReports", data: { id: "REPORT-HIDDEN" } }
+    ]
+  }, ["products", "productionPlans"]),
+  { products: [{ id: "PROD-VISIBLE" }], productionPlans: [{ id: "PLAN-VISIBLE" }] },
+  "remote workspace hydration must exclude collections that the current role cannot access"
 );
 const previousOperationalSnapshot = operationalSnapshot({
   products: [{ id: "SYNC-PRODUCT", stock: 10, imageUrl: "data:image/png;base64,LOCAL" }],
@@ -185,6 +328,14 @@ const operationalMigrationSql = readFileSync(new URL("../supabase/operational-pe
 assert.match(operationalMigrationSql, /unique \(client_id, operation_id\)/, "operation retries must be idempotent");
 assert.match(operationalMigrationSql, /workspace_operation_events/, "every synchronized action must have an append-only event record");
 assert.match(operationalMigrationSql, /public\.is_client_member\(client_id\)/, "operational records must remain tenant isolated");
+assert.match(operationalMigrationSql, /UPSERT_PRODUCT', 'RESTOCK_PRODUCT'[\s\S]*v_role = 'store_keeper'[\s\S]*require Admin or CEO approval/, "backend sync must reject direct Store Keeper stock additions");
+assert.match(operationalMigrationSql, /APPROVE_STOCK_ADDITION_REQUEST', 'REJECT_STOCK_ADDITION_REQUEST'[\s\S]*v_role not in \('ceo', 'admin'\)/, "only Admin or CEO may review stock addition requests in backend sync");
+assert.match(operationalMigrationSql, /stockAdditionRequests'[\s\S]*status'[\s\S]*approved/, "backend stock approval must include the approved request record");
+for (const role of ["ceo", "admin", "store_keeper", "sales_rep", "production_manager"]) {
+  assert.ok(operationalCollectionsForRole(role).includes("retailers"), `${role} must load the shared company customer directory`);
+}
+assert.match(operationalMigrationSql, /when 'store_keeper' then array\[[\s\S]*?'productionBatches', 'retailers', 'orders'/, "Store Keepers must receive shared customers for dispatch choices");
+assert.match(operationalMigrationSql, /when 'production_manager' then array\[[\s\S]*?'productionPlans', 'retailers'/, "the shared customer collection must be available across every company portal");
 const workspaceResetSql = readFileSync(new URL("../supabase/workspace-data-reset.sql", import.meta.url), "utf8");
 assert.match(workspaceResetSql, /security definer/, "workspace resets must run through a protected server function");
 assert.match(workspaceResetSql, /v_role <> 'ceo'/, "only the active CEO may reset workspace data");
@@ -233,6 +384,39 @@ const notificationFixture = {
 assert.equal(getTopbarNotificationItems(notificationFixture).length, 1);
 assert.equal(getTopbarNotificationItems({ ...notificationFixture, dismissedNotificationIds: ["activity-notice-1"] }).length, 0);
 assert.equal(getTopbarNotificationItems({ ...notificationFixture, notificationClearedAt: "2026-07-13T10:00:00.000Z" }).length, 0);
+const productionActivityFixture = {
+  client,
+  user: { id: "user-production", email: "bello@example.com" },
+  accounts,
+  notificationReadAt: "",
+  notificationClearedAt: "",
+  dismissedNotificationIds: [],
+  products: [
+    { id: "RAW-PROD", name: "Production Oil", stockCategory: "raw_materials" },
+    { id: "EQP-PROD", name: "Packaging Machine", stockCategory: "equipment" }
+  ],
+  activityLogs: [
+    { id: "production-batch-notice", clientId: client.id, actorUserId: "user-store", actorName: "Tola Store", actorEmail: "tola@example.com", actionType: "used", recordType: "production_batch", recordLabel: "BATCH-001", summary: "Produced factory stock", createdAt: "2026-07-13T12:00:00.000Z" },
+    { id: "raw-stock-notice", clientId: client.id, actorUserId: "user-admin", actorName: "Ada Admin", actorEmail: "ada@example.com", actionType: "updated", recordType: "inventory", recordLabel: "RAW-PROD", summary: "Raw material stock updated", createdAt: "2026-07-13T11:00:00.000Z" },
+    { id: "equipment-notice", clientId: client.id, actorUserId: "user-admin", actorName: "Ada Admin", actorEmail: "ada@example.com", actionType: "updated", recordType: "inventory", recordLabel: "EQP-PROD", summary: "Equipment updated", createdAt: "2026-07-13T10:00:00.000Z" },
+    { id: "sales-report-notice", clientId: client.id, actorUserId: "user-rep", actorName: "Amina Rep", actorEmail: "amina@example.com", actionType: "submitted", recordType: "report", recordLabel: "REPORT-1", summary: "Sales report submitted", createdAt: "2026-07-13T09:00:00.000Z" }
+  ],
+  stockTransactions: [
+    { id: "TXN-PRODUCTION", type: "production usage", productId: "RAW-PROD", productName: "Production Oil", quantity: 2, movementDirection: "out", batchId: "BATCH-001", recordedBy: "Tola Store", createdAt: "2026-07-13T08:00:00.000Z" },
+    { id: "TXN-DISPATCH", type: "supply", productId: "RAW-PROD", productName: "Production Oil", quantity: 1, movementDirection: "out", recordedBy: "Tola Store", createdAt: "2026-07-13T07:00:00.000Z" }
+  ]
+};
+const productionScopedActivity = getScopedActivityLogs(productionActivityFixture);
+assert.equal(productionScopedActivity.some((entry) => entry.id === "production-batch-notice"), true, "Production Line Manager activity must include production batches");
+assert.equal(productionScopedActivity.some((entry) => entry.id === "raw-stock-notice"), true, "Production Line Manager activity must include relevant raw-material updates");
+assert.equal(productionScopedActivity.some((entry) => entry.id === "equipment-notice"), false, "Production Line Manager activity must exclude equipment administration");
+assert.equal(productionScopedActivity.some((entry) => entry.id === "sales-report-notice"), false, "Production Line Manager activity must exclude sales reports");
+assert.equal(productionScopedActivity.some((entry) => entry.id === "TXN-ACT-TXN-PRODUCTION"), true, "Production Line Manager activity must include raw-material production usage");
+assert.equal(productionScopedActivity.some((entry) => entry.id === "TXN-ACT-TXN-DISPATCH"), false, "Production Line Manager activity must exclude dispatch movements");
+const productionNotifications = getTopbarNotificationItems(productionActivityFixture);
+assert.equal(productionNotifications.some((item) => item.body.includes("Sales report")), false, "Production Line Manager notifications must exclude sales activity");
+assert.equal(productionNotifications.some((item) => item.body.includes("Equipment")), false, "Production Line Manager notifications must exclude equipment administration");
+assert.equal(productionNotifications.some((item) => item.body.includes("Produced factory stock")), true, "Production Line Manager notifications must include production output");
 
 function authenticate(userId) {
   const account = accounts.find((item) => item.userId === userId);
@@ -1034,6 +1218,8 @@ assert.equal(store.getState().stockTransactions.filter((item) => item.type === "
 const repDashboard = renderDashboard({ state: scopeStateForCurrentRole(state) });
 assert.match(repDashboard, /Walk-in customer/, "walk-in sale must appear in the current daily report");
 assert.match(repDashboard, /Plantain Chips/);
+assert.match(repDashboard, /Gross sales[\s\S]*₦1,000/, "the representative's existing Sales figure must be labelled Gross sales");
+assert.match(repDashboard, /Net sales[\s\S]*₦500/, "representative net sales must subtract the accepted customer return");
 assert.match(repDashboard, /rep-factory-return-form/, "representatives must be able to return stock in hand to the factory");
 assert.match(repDashboard, /rep-product-family-grid/, "representative catalogue must group products into families");
 assert.match(repDashboard, /js-toggle-rep-product-types/, "representatives must be able to open product types");
@@ -1202,6 +1388,8 @@ const defaultExpectedDeliveryDate = defaultDispatchForm.match(/name="expectedDel
 assert.ok(defaultDispatchDate, "factory dispatch must have a default dispatch date");
 assert.equal(defaultExpectedDeliveryDate, defaultDispatchDate, "expected delivery must initially match the dispatch date");
 assert.match(defaultDispatchForm, /name="dispatchPackagingType"/, "factory dispatch must accept configured packaging types");
+assert.match(defaultDispatchForm, /Destination \/ drop-off point \(optional\)/, "factory dispatch must identify the destination as optional");
+assert.doesNotMatch(defaultDispatchForm, /name="destination"[^>]*required/, "factory dispatch must not require a destination");
 assert.match(storeKeeperInventory, /field stock-health-type-filter/);
 
 assert.equal(effectiveOrderStatus({ status: "in_transit", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delayed");
@@ -1397,6 +1585,13 @@ assert.match(packagedStockJourney, /stock-journey-package-quantity[^>]*>10 carto
 
 authenticate("user-ceo");
 const ceoDashboard = renderDashboard({ state: store.getState() });
+const custodySalesDashboard = renderDashboard({ state: { ...store.getState(), ...representativeCustodySalesFixture } });
+assert.match(custodySalesDashboard, /<span class="eyebrow">Sales<\/span>[\s\S]*?<div class="metric-value">₦30,000<\/div>[\s\S]*?Actual customer sales/, "the rendered CEO Sales card must show actual customer sell-through revenue");
+store.dispatch({ type: "SET_OPERATIONAL_RECORDS", collections: { stockCategories: [] } });
+assert.deepEqual(store.getState().stockCategories.map((category) => category.id), ["raw_materials", "finished_products", "equipment"], "empty remote stock-category data must restore the built-in category choices");
+const inventoryWithEmptyCategoryInput = renderInventory({ state: { ...store.getState(), stockCategories: [] } });
+assert.match(inventoryWithEmptyCategoryInput, /Stock category[\s\S]*Raw Materials[\s\S]*Finished Products[\s\S]*Equipment/, "Add stock must always show the three stock-category choices");
+assert.doesNotMatch(inventoryWithEmptyCategoryInput, /Choose whether this item is a finished product, a production raw material, or equipment/, "Add stock must not show the removed stock-category comment");
 assert.match(ceoDashboard, /Last 7 days/);
 assert.equal((ceoDashboard.match(/class="ceo-chart-column"/g) || []).length, 7, "CEO sales trend must remain seven days");
 assert.doesNotMatch(ceoDashboard, /Submitted sales reports/, "submitted reports must be moved out of the CEO dashboard");
@@ -1436,6 +1631,8 @@ const separatedStockSplit = renderDashboard({
 assert.match(separatedStockSplit, /data-stock-split="representatives"[\s\S]*?<span class="strong">20<\/span>/, "representative-held stock must remain in the representative stock split");
 assert.match(separatedStockSplit, /Sales rep/, "the stock split must use the shorter sales-rep label");
 assert.match(separatedStockSplit, /data-stock-split="supermarkets"[\s\S]*?<span class="strong">7<\/span>/, "representative dispatches must not be added to supermarket stock");
+assert.match(separatedStockSplit, /factory stock available/i, "CEO Stock must be labelled as factory-only stock");
+assert.match(separatedStockSplit, /(?:metric-value|ceo-metric-secondary)">80 pieces<\/div>/, "CEO Stock must show only the 80 pieces remaining at the factory after dispatch");
 assert.match(separatedStockSplit, /ceo-stock-split-total[\s\S]*Total stock produced[\s\S]*progress-track[\s\S]*<span class="strong">107<\/span>/, "total produced stock must use the same line-and-value treatment as the other stock splits");
 assert.match(separatedStockSplit, /id="ceo-stock-split-modal"[\s\S]*data-stock-split-family="Split Test Chips"/, "the stock split modal must list product-level splits");
 assert.match(separatedStockSplit, /data-stock-split-size-view="Split Test Chips"[\s\S]*Split Test Chips[\s\S]*Standard/, "each product must drill down to size-level stock splits");
@@ -1470,6 +1667,206 @@ assert.match(storeKeeperDashboard, /name="dispatchQuantity"/);
 assert.match(storeKeeperDashboard, /data-dispatch-item-template/);
 assert.match(storeKeeperDashboard, /js-add-dispatch-item/);
 assert.doesNotMatch(storeKeeperDashboard, /href="#\/inventory\?tab=dispatch"/);
+
+store.dispatch({
+  type: "UPSERT_PRODUCT",
+  productId: "SKU-BYPASS-BLOCKED",
+  sku: "SKU-BYPASS-BLOCKED",
+  name: "Bypass attempt",
+  stockCategory: "finished_products",
+  stock: 5,
+  status: "active"
+});
+assert.equal(store.getState().products.some((product) => product.id === "SKU-BYPASS-BLOCKED"), false, "Store Keepers must not add live stock directly");
+store.dispatch({
+  type: "SUBMIT_STOCK_ADDITION_REQUEST",
+  kind: "new_product",
+  productId: "SKU-APPROVAL-1",
+  quantity: 12,
+  product: {
+    id: "SKU-APPROVAL-1",
+    name: "Approval Chips",
+    productFamily: "Approval Chips",
+    productType: "Original",
+    size: "50g",
+    sizeValue: "50",
+    sizeUnit: "g",
+    category: "Finished Products",
+    stockCategory: "finished_products",
+    unit: "g",
+    warehouse: "Finished Products Store",
+    region: "Factory",
+    stock: 12,
+    reorderPoint: 3,
+    dailyVelocity: 0,
+    unitCost: 100,
+    unitPrice: 150,
+    status: "active"
+  }
+});
+const pendingStockAddition = store.getState().stockAdditionRequests.find((request) => request.productId === "SKU-APPROVAL-1");
+assert.equal(pendingStockAddition?.status, "pending", "Store Keeper stock additions must become pending requests");
+assert.equal(store.getState().products.some((product) => product.id === "SKU-APPROVAL-1"), false, "pending stock must not appear in live inventory");
+
+authenticate("user-production");
+const productionManagerDashboard = renderDashboard({ state: store.getState() });
+assert.match(productionManagerDashboard, /Production Line Manager portal/);
+assert.match(productionManagerDashboard, /Recent production batches/);
+assert.match(productionManagerDashboard, /Manage production/);
+assert.doesNotMatch(productionManagerDashboard, /js-open-dashboard-dispatch|Add stock|Staff accounts|finance/i, "the Production Line Manager portal must remain limited to production work");
+assert.deepEqual(currentUserPermissions(store.getState()).nav, ["dashboard", "production", "inventory", "activity-log", "settings"]);
+assert.equal(currentUserPermissions(store.getState()).canPlanProduction, true);
+assert.equal(currentUserPermissions(store.getState()).canRecordProduction, true);
+assert.equal(currentUserPermissions(store.getState()).canAssignProductionWork, true);
+assert.equal(currentUserPermissions(store.getState()).canPerformProductionQC, true);
+assert.equal(currentUserPermissions(store.getState()).canApproveProductionBatch, true);
+assert.equal(currentUserPermissions(store.getState()).canTransferFinishedGoods, true);
+assert.equal(currentUserPermissions(store.getState()).canReportProductionIssues, true);
+assert.equal(currentUserPermissions(store.getState()).canViewProductionReports, true);
+globalThis.window.location.hash = "#/inventory?tab=movement-history";
+const productionManagerInventory = renderInventory({ state: store.getState() });
+assert.equal((productionManagerInventory.match(/class="subtab-link/g) || []).length, 1, "Production Line Managers must only receive Stock Health in inventory");
+assert.doesNotMatch(productionManagerInventory, /js-open-stock-modal|js-restock-product|Factory dispatch/);
+
+const productionWorkflowStore = createStore();
+productionWorkflowStore.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: "user-production" } },
+  user: { id: "user-production", email: "bello@example.com", user_metadata: { full_name: "Bello Production" } },
+  client,
+  accounts,
+  invites: [],
+  featureModules: [],
+  messages: [],
+  activityLogs: []
+});
+productionWorkflowStore.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: {
+    products: [
+      { id: "PROD-FIN", name: "Production Chips", stockCategory: "finished_products", category: "Finished Products", stock: 10, reorderPoint: 5, unit: "pieces", unitCost: 50, unitPrice: 100, status: "active" },
+      { id: "PROD-RAW", name: "Production Potatoes", stockCategory: "raw_materials", category: "Raw Materials", stock: 100, reorderPoint: 20, unit: "kg", unitCost: 10, unitPrice: 0, status: "active" }
+    ],
+    productionPlans: [],
+    productionBatches: [],
+    productionIssues: [],
+    stockTransactions: [],
+    activityLogs: []
+  }
+});
+globalThis.window.location.hash = "#/production?tab=plans";
+const productionPlanPage = renderProduction({ state: productionWorkflowStore.getState() });
+assert.match(productionPlanPage, /Create production plan/);
+assert.match(productionPlanPage, /Daily[\s\S]*Weekly/);
+assert.match(productionPlanPage, /Products and target quantities/);
+assert.match(productionPlanPage, /Team[\s\S]*Shift[\s\S]*Machine or production line/);
+assert.match(productionPlanPage, /Raw materials issued for this batch/);
+assert.match(productionPlanPage, /Raw materials issued for this batch[\s\S]*optional/);
+assert.match(productionPlanPage, /name="materialName"[\s\S]*Fresh ginger/);
+assert.match(productionPlanPage, /Quality control \(QC\)[\s\S]*appearance, measurement, packaging, and safety standards/);
+assert.match(productionPlanPage, /Rejected quantity[\s\S]*Damaged quantity[\s\S]*Wasted quantity/);
+assert.match(productionPlanPage, /Confirm batch quality/);
+assert.match(productionPlanPage, /Report production issue/);
+
+productionWorkflowStore.dispatch({
+  type: "CREATE_PRODUCTION_PLAN",
+  name: "Daily chips plan",
+  cadence: "daily",
+  startDate: "2026-08-01",
+  endDate: "2026-08-01",
+  lines: [{ productId: "PROD-FIN", quantity: 80 }],
+  team: "Team A",
+  shift: "Morning",
+  machine: "Line 1"
+});
+const productionPlan = productionWorkflowStore.getState().productionPlans[0];
+assert.equal(productionPlan?.lines[0]?.quantity, 80, "production plans must record product targets");
+assert.equal(productionPlan?.team, "Team A", "production plans must assign work to teams");
+assert.equal(productionPlan?.shift, "Morning", "production plans must assign shifts");
+assert.equal(productionPlan?.machine, "Line 1", "production plans must assign machines");
+
+productionWorkflowStore.dispatch({
+  type: "RECORD_MANAGED_PRODUCTION_BATCH",
+  planId: productionPlan.id,
+  finishedProductId: "PROD-FIN",
+  batchReference: "BATCH-MANAGED-001",
+  batchDate: "2026-08-01",
+  expiryDate: "2026-12-01",
+  quantityProduced: 75,
+  quantityRejected: 2,
+  quantityDamaged: 1,
+  quantityWasted: 2,
+  materials: [{ productId: "PROD-RAW", quantity: 20 }]
+});
+const managedBatch = productionWorkflowStore.getState().productionBatches[0];
+assert.equal(managedBatch?.status, "awaiting_qc", "new production output must wait for quality control");
+assert.equal(managedBatch?.expiryDate, "2026-12-01", "production batches must record expiry dates");
+assert.equal(managedBatch?.quantityRejected, 2);
+assert.equal(managedBatch?.quantityDamaged, 1);
+assert.equal(managedBatch?.quantityWasted, 2);
+assert.equal(productionWorkflowStore.getState().products.find((product) => product.id === "PROD-RAW")?.stock, 80, "raw materials issued must leave stock immediately");
+assert.equal(productionWorkflowStore.getState().products.find((product) => product.id === "PROD-FIN")?.stock, 10, "finished stock must not increase before QC, approval, and transfer");
+
+productionWorkflowStore.dispatch({ type: "RECORD_PRODUCTION_QC", batchId: managedBatch.id, outcome: "passed", checks: { appearance: true, weight: true, packaging: true, safety: true } });
+assert.equal(productionWorkflowStore.getState().productionBatches.find((batch) => batch.id === managedBatch.id)?.status, "qc_passed", "a batch with every QC check confirmed can pass quality control");
+productionWorkflowStore.dispatch({ type: "APPROVE_PRODUCTION_BATCH", batchId: managedBatch.id });
+assert.equal(productionWorkflowStore.getState().productionBatches.find((batch) => batch.id === managedBatch.id)?.status, "approved", "passed batches can be approved by the Production Line Manager");
+productionWorkflowStore.dispatch({ type: "TRANSFER_PRODUCTION_BATCH", batchId: managedBatch.id });
+assert.equal(productionWorkflowStore.getState().productionBatches.find((batch) => batch.id === managedBatch.id)?.status, "transferred", "approved batches can be transferred to finished goods");
+assert.equal(productionWorkflowStore.getState().products.find((product) => product.id === "PROD-FIN")?.stock, 85, "warehouse stock must increase only after transfer");
+assert.equal(productionWorkflowStore.getState().productionPlans[0]?.status, "in_progress", "a short production plan must remain in progress until its full target is transferred");
+assert.equal(productionWorkflowStore.getState().stockTransactions.some((transaction) => transaction.type === "production output" && transaction.batchId === managedBatch.id), true, "finished-goods transfers must create a stock audit transaction");
+
+productionWorkflowStore.dispatch({ type: "REPORT_PRODUCTION_ISSUE", issueType: "machine_downtime", severity: "high", planId: productionPlan.id, machine: "Line 1", downtimeMinutes: 45, description: "Drive belt replacement" });
+const productionIssue = productionWorkflowStore.getState().productionIssues[0];
+assert.equal(productionIssue?.downtimeMinutes, 45, "production issues must record machine downtime");
+productionWorkflowStore.dispatch({ type: "RESOLVE_PRODUCTION_ISSUE", issueId: productionIssue.id, resolution: "Drive belt replaced" });
+assert.equal(productionWorkflowStore.getState().productionIssues.find((issue) => issue.id === productionIssue.id)?.status, "resolved", "production issues must support resolution records");
+
+globalThis.window.location.hash = "#/production?tab=reports";
+const productionReportPage = renderProduction({ state: productionWorkflowStore.getState() });
+assert.match(productionReportPage, /Production efficiency, wastage, and output/);
+assert.match(productionReportPage, /Planned[\s\S]*Actual[\s\S]*Variance[\s\S]*Plan efficiency[\s\S]*Losses[\s\S]*Yield/);
+assert.match(productionReportPage, /Daily chips plan[\s\S]*Production Chips[\s\S]*80[\s\S]*75/);
+assert.equal(getScopedActivityLogs(productionWorkflowStore.getState()).some((entry) => entry.recordType === "production_transfer"), true, "Production Line Manager activity must include finished-goods transfers");
+
+productionWorkflowStore.dispatch({
+  type: "RECORD_MANAGED_PRODUCTION_BATCH",
+  planId: productionPlan.id,
+  finishedProductId: "PROD-FIN",
+  batchReference: "BATCH-NO-MATERIALS",
+  batchDate: "2026-08-01",
+  expiryDate: "2026-12-01",
+  quantityProduced: 1,
+  materials: []
+});
+assert.equal(productionWorkflowStore.getState().productionBatches.find((batch) => batch.reference === "BATCH-NO-MATERIALS")?.materials.length, 0, "raw-material entry must be optional when recording a batch");
+
+productionWorkflowStore.dispatch({
+  type: "RECORD_MANAGED_PRODUCTION_BATCH",
+  planId: productionPlan.id,
+  finishedProductId: "PROD-FIN",
+  batchReference: "BATCH-CUSTOM-MATERIAL",
+  batchDate: "2026-08-01",
+  expiryDate: "2026-12-01",
+  quantityProduced: 1,
+  materials: [{ name: "Fresh ginger", quantity: 3, unit: "kg" }]
+});
+const customMaterialBatch = productionWorkflowStore.getState().productionBatches.find((batch) => batch.reference === "BATCH-CUSTOM-MATERIAL");
+assert.equal(customMaterialBatch?.materials[0]?.productName, "Fresh ginger", "unsaved raw-material names must be recorded on production batches");
+assert.equal(customMaterialBatch?.materials[0]?.inventoryLinked, false, "typed materials must not pretend to be saved inventory records");
+assert.equal(productionWorkflowStore.getState().products.find((product) => product.id === "PROD-RAW")?.stock, 80, "typed materials must not alter saved inventory stock");
+
+authenticate("user-admin");
+assert.equal(currentUserPermissions(store.getState()).canAddStock, true, "Admin must be allowed to add and restock live stock");
+globalThis.window.location.hash = "#/inventory?tab=stock-health";
+const adminStockApprovalQueue = renderInventory({ state: store.getState() });
+assert.match(adminStockApprovalQueue, /Stock additions awaiting approval/);
+assert.match(adminStockApprovalQueue, /SKU-APPROVAL-1[\s\S]*js-approve-stock-addition/);
+store.dispatch({ type: "APPROVE_STOCK_ADDITION_REQUEST", requestId: pendingStockAddition.id });
+assert.equal(store.getState().products.find((product) => product.id === "SKU-APPROVAL-1")?.stock, 12, "Admin approval must publish the requested stock to live inventory");
+assert.equal(store.getState().stockAdditionRequests.find((request) => request.id === pendingStockAddition.id)?.status, "approved");
+
 authenticate("user-manager");
 const ceoCustomersPage = renderRetailers({ state: store.getState() });
 assert.match(ceoCustomersPage, /Add Customer/);
@@ -1566,10 +1963,14 @@ assert.match(financeOverview, /Product revenue/);
 assert.match(financeOverview, /Credit limits/);
 assert.match(financeOverview, /Credit history/);
 assert.match(financeOverview, /Cash in/);
+assert.match(financeOverview, /Gross sales/);
+assert.match(financeOverview, /Net sales/);
+assert.match(financeOverview, /Discounts/);
+assert.match(financeOverview, /Other deductions/);
 assert.match(financeOverview, /Gross profit/);
 assert.match(financeOverview, /Stock loss/);
 assert.match(financeOverview, /finance-compact-summary/);
-assert.equal((financeOverview.match(/finance-compact-summary-card/g) || []).length, 6);
+assert.equal((financeOverview.match(/finance-compact-summary-card/g) || []).length, 9);
 assert.ok(financeOverview.indexOf("Cash in") < financeOverview.indexOf("Credit aging"), "compact finance summary must appear above Credit aging");
 assert.doesNotMatch(financeOverview, /Customer returns reducing sales|Written-off stock at cost value/);
 assert.match(financeOverview, /Credit aging[\s\S]*₦1,500/, "open credit orders must feed the credit-aging view");
@@ -1603,6 +2004,8 @@ globalThis.window.location.hash = "#/finance?tab=credit-limits";
 const financeLimits = renderFinance({ state: store.getState() });
 assert.match(financeLimits, /Sales representative credit reports/);
 assert.match(financeLimits, /Customer credit terms/);
+assert.match(financeLimits, /id="rep-credit-limit-form"[\s\S]*name="limit" type="number" min="1" step="1"/, "typed representative credit limits must be accepted without using spinner buttons");
+assert.doesNotMatch(financeLimits, /name="limit" type="number" min="1" step="1000"/, "credit-limit inputs must not use the invalid min-one thousand-step combination");
 const representativeCreditReports = financeLimits.match(/data-credit-report-type="representative"[\s\S]*?<\/section>/)?.[0] || "";
 const customerCreditReports = financeLimits.match(/data-credit-report-type="customer"[\s\S]*?<\/section>/)?.[0] || "";
 assert.equal((representativeCreditReports.match(/js-open-credit-account/g) || []).length, 1, "sales representative credit reports must be listed separately");
@@ -1831,6 +2234,10 @@ if (Number.isFinite(correctionAssignmentBefore)) {
   assert.equal(store.getState().stockAssignments.find((item) => item.transactionId === correctionDispatch.id).assigned, correctionAssignmentBefore - 1);
 }
 const correctionRequestCountBeforeCeoAdjustment = store.getState().correctionRequests.length;
+const ceoAdjustmentModal = renderRecordCorrectionModal("Save adjustment");
+assert.match(ceoAdjustmentModal, /Reason for adjustment \(optional\)/);
+assert.doesNotMatch(ceoAdjustmentModal, /name="reason"[^>]*required/, "CEO adjustment reasons must be optional");
+assert.match(renderRecordCorrectionModal(), /name="reason"[^>]*required/, "controlled staff correction requests must still require a reason");
 store.dispatch({
   type: "DIRECT_RECORD_CORRECTION",
   transactionId: correctionDispatch.id,
@@ -1839,6 +2246,19 @@ store.dispatch({
 });
 assert.equal(store.getState().correctionRequests.length, correctionRequestCountBeforeCeoAdjustment, "CEO direct adjustments must not create approval requests");
 assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionDispatch.id).quantity, Number(correctionDispatch.quantity));
+store.dispatch({
+  type: "DIRECT_RECORD_CORRECTION",
+  transactionId: correctionDispatch.id,
+  requestedQuantity: Number(correctionDispatch.quantity) - 1
+});
+assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionDispatch.id).quantity, Number(correctionDispatch.quantity) - 1, "CEO direct adjustments must save without a reason");
+assert.equal(store.getState().stockTransactions.find((transaction) => transaction.id === correctionDispatch.id).correctionReason, "CEO adjustment");
+store.dispatch({
+  type: "DIRECT_RECORD_CORRECTION",
+  transactionId: correctionDispatch.id,
+  requestedQuantity: Number(correctionDispatch.quantity),
+  reason: "Restore correction fixture"
+});
 const productSizeDashboard = renderDashboard({ state: store.getState() });
 assert.ok(productSizeDashboard.indexOf("Sales trend") < productSizeDashboard.indexOf(">Products<"), "CEO Sales trend must appear above Products");
 assert.match(productSizeDashboard, /id="ceo-product-size-modal"/);
@@ -1984,7 +2404,6 @@ multiDispatchStore.dispatch({
   ],
   recipientType: "Sales Representative",
   recipientName: "Multi Rep",
-  destination: "Van 12",
   paymentType: "credit",
   dispatchDate: "2026-07-15",
   expectedDeliveryAt: "2026-07-16",
@@ -1993,6 +2412,7 @@ multiDispatchStore.dispatch({
 const multiDispatchState = multiDispatchStore.getState();
 assert.equal(multiDispatchState.products.find((product) => product.id === "MULTI-A").stock, 17);
 assert.equal(multiDispatchState.products.find((product) => product.id === "MULTI-B").stock, 13);
+assert.equal(multiDispatchState.stockTransactions.find((transaction) => transaction.dispatchId)?.dispatchDestination, "", "factory dispatches must save successfully without a destination");
 assert.equal(multiDispatchState.stockAssignments.length, 2, "each selected product must create a representative assignment");
 assert.equal(multiDispatchState.stockTransactions.filter((transaction) => transaction.dispatchId).length, 2, "one dispatch transaction must be recorded per product");
 assert.equal(multiDispatchState.orders[0].items.length, 2, "factory dispatch order must contain every selected product");
@@ -2141,6 +2561,18 @@ const pricedFactoryRevenueBeforeSellThrough = getFinancialSalesLines(pricedState
 const pricedFactoryInvoiceCountBeforeSellThrough = getFinancialInvoiceRecords(pricedState).length;
 
 authenticatePricedPackaging("priced-rep-user");
+const pricedRepDashboard = renderDashboard({
+  state: {
+    ...pricedPackagingStore.getState(),
+    stockAssignments: pricedPackagingStore.getState().stockAssignments.map((assignment) => ({
+      ...assignment,
+      assignedAt: new Date().toISOString()
+    }))
+  }
+});
+assert.match(pricedRepDashboard, /rep-assigned-piece-stock[^>]*>10<\/strong>[\s\S]*rep-assigned-package-stock[^>]*>1 carton<\/strong>/, "assigned stock must show a carton alongside its exact piece count");
+assert.match(pricedRepDashboard, /rep-assigned-piece-stock[^>]*>2<\/strong>[\s\S]*rep-assigned-package-stock[^>]*>0 cartons \+ 2 pieces<\/strong>/, "loose assigned stock must show its package and piece breakdown");
+assert.match(pricedRepDashboard, /rep-stock-quantity-row[\s\S]*rep-stock-count[\s\S]*rep-stock-package-summary/, "pieces and package quantities must render together in one horizontal stock row");
 pricedPackagingStore.dispatch({
   type: "LOG_REP_SALE",
   items: [
@@ -2157,6 +2589,7 @@ assert.equal(pricedState.invoices[0].amount, 2200, "mixed quick-sale invoice mus
 assert.equal(pricedState.invoices[0].items.length, 2);
 assert.equal(pricedState.invoices[0].documentType, "sales_receipt");
 assert.equal(pricedState.stockAssignments.reduce((total, assignment) => total + assignment.sold, 0), 12, "mixed sale must consume exactly twelve assigned pieces");
+assert.equal(pricedState.orders.find((order) => order.source === "factory_dispatch")?.status, "delivered", "selling every assigned item must automatically deliver the representative dispatch order for CEO and Admin");
 const pricedSaleLines = getFinancialSalesLines(pricedState).filter((line) => line.source === "Rep quick sale" && line.customerName === "Walk-in customer");
 assert.equal(pricedSaleLines.length, 0, "representative sell-through lines must be absent from factory finance reports");
 assert.equal(getFinancialSalesLines(pricedState).reduce((total, line) => total + Number(line.revenue || 0), 0), pricedFactoryRevenueBeforeSellThrough, "selling dispatched stock onward must not double factory revenue");
@@ -2549,11 +2982,12 @@ const preservedResetAccounts = factoryResetStore.getState().accounts;
 const preservedResetMessages = factoryResetStore.getState().messages;
 factoryResetStore.dispatch({ type: "RESET_WORKSPACE_DATA_SCOPE", scope: "factory" });
 [
-  "products", "stockCategories", "stockAssignments", "stockTransactions", "productionBatches",
+  "products", "stockAssignments", "stockTransactions", "productionBatches",
   "retailers", "orders", "invoices", "salesReports", "correctionRequests", "stockRequests",
   "purchaseOrders", "procurementOrders", "routes", "creditLimits", "creditLimitHistory",
   "activityLogs", "packagingChangeRequests", "offlineSalesQueue"
 ].forEach((collection) => assert.equal(factoryResetStore.getState()[collection].length, 0, `factory reset must clear ${collection}`));
+assert.deepEqual(factoryResetStore.getState().stockCategories.map((category) => category.id), ["raw_materials", "finished_products", "equipment"], "factory reset must preserve the built-in stock categories needed to add new stock");
 assert.deepEqual(factoryResetStore.getState().client, preservedResetClient, "factory reset must preserve company settings");
 assert.deepEqual(factoryResetStore.getState().accounts, preservedResetAccounts, "factory reset must preserve staff accounts");
 assert.deepEqual(factoryResetStore.getState().messages, preservedResetMessages, "factory reset must preserve staff messages");

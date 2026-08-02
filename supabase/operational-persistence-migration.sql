@@ -122,28 +122,67 @@ begin
     raise exception 'Operational changes must be JSON arrays';
   end if;
 
+  if upper(trim(p_action_type)) in ('UPSERT_PRODUCT', 'RESTOCK_PRODUCT')
+    and v_role = 'store_keeper' then
+    raise exception 'Store Keeper stock additions require Admin or CEO approval';
+  end if;
+
+  if upper(trim(p_action_type)) = 'SUBMIT_STOCK_ADDITION_REQUEST'
+    and v_role <> 'store_keeper' then
+    raise exception 'Only a Store Keeper can submit a stock addition request';
+  end if;
+
+  if upper(trim(p_action_type)) in ('APPROVE_STOCK_ADDITION_REQUEST', 'REJECT_STOCK_ADDITION_REQUEST')
+    and v_role not in ('ceo', 'admin') then
+    raise exception 'Only an Admin or CEO can review a stock addition request';
+  end if;
+
+  if upper(trim(p_action_type)) = 'APPROVE_STOCK_ADDITION_REQUEST'
+    and not exists (
+      select 1
+      from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as request_item(value)
+      where request_item.value ->> 'collection' = 'stockAdditionRequests'
+        and request_item.value -> 'data' ->> 'status' = 'approved'
+    ) then
+    raise exception 'An approved stock request record is required';
+  end if;
+
+  if v_role = 'production_manager'
+    and upper(trim(p_action_type)) not in (
+      'CREATE_PRODUCTION_PLAN', 'RECORD_MANAGED_PRODUCTION_BATCH',
+      'RECORD_PRODUCTION_QC', 'APPROVE_PRODUCTION_BATCH',
+      'TRANSFER_PRODUCTION_BATCH', 'REPORT_PRODUCTION_ISSUE',
+      'RESOLVE_PRODUCTION_ISSUE'
+    ) then
+    raise exception 'Production Line Manager access is limited to production workflows';
+  end if;
+
   v_allowed_collections := case v_role
     when 'ceo' then array[
       'products', 'stockCategories', 'stockAssignments', 'stockTransactions',
-      'productionBatches', 'retailers', 'orders', 'invoices', 'salesReports',
-      'correctionRequests', 'stockRequests', 'purchaseOrders', 'procurementOrders',
+      'productionBatches', 'productionPlans', 'productionIssues', 'retailers', 'orders', 'invoices', 'salesReports',
+      'correctionRequests', 'stockRequests', 'stockAdditionRequests', 'purchaseOrders', 'procurementOrders',
       'routes', 'creditLimits', 'creditLimitHistory', 'activityLogs'
     ]
     when 'admin' then array[
       'products', 'stockAssignments', 'stockTransactions', 'retailers', 'orders',
       'invoices', 'salesReports', 'correctionRequests', 'stockRequests',
-      'purchaseOrders', 'procurementOrders', 'routes', 'creditLimits',
+      'stockAdditionRequests', 'purchaseOrders', 'procurementOrders', 'routes', 'creditLimits',
       'creditLimitHistory', 'activityLogs'
     ]
     when 'store_keeper' then array[
       'products', 'stockCategories', 'stockAssignments', 'stockTransactions',
-      'productionBatches', 'orders', 'invoices', 'correctionRequests',
-      'stockRequests', 'purchaseOrders', 'procurementOrders', 'routes', 'activityLogs'
+      'productionBatches', 'retailers', 'orders', 'invoices', 'correctionRequests',
+      'stockRequests', 'stockAdditionRequests', 'purchaseOrders', 'procurementOrders', 'routes', 'activityLogs'
     ]
     when 'sales_rep' then array[
       'stockAssignments', 'stockTransactions', 'retailers', 'orders', 'invoices',
       'salesReports', 'correctionRequests', 'stockRequests', 'routes',
       'creditLimits', 'activityLogs'
+    ]
+    when 'production_manager' then array[
+      'products', 'stockTransactions', 'productionBatches', 'productionPlans', 'retailers',
+      'productionIssues', 'activityLogs'
     ]
     else array[]::text[]
   end;

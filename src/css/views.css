@@ -1449,12 +1449,12 @@
 
 .rep-hero-stats {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(100px, 1fr));
   gap: 10px;
 }
 
 .rep-hero-stats.is-credit-disabled {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(100px, 1fr));
 }
 
 .rep-hero-stats div,
@@ -1755,6 +1755,14 @@
   margin-top: auto;
 }
 
+.rep-stock-quantity-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .rep-stock-count {
   display: flex;
   align-items: baseline;
@@ -1769,6 +1777,27 @@
 .rep-stock-count span {
   color: var(--muted);
   font-weight: 850;
+}
+
+.rep-stock-package-summary {
+  display: grid;
+  gap: 4px;
+  min-width: 96px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: var(--surface-muted);
+}
+
+.rep-stock-package-summary > span,
+.rep-stock-package-summary small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+}
+
+.rep-stock-package-summary strong {
+  font-size: 0.9rem;
+  line-height: 1.35;
 }
 
 .rep-catalogue-grid {
@@ -5986,7 +6015,7 @@
 
 .finance-compact-summary {
   display: grid;
-  grid-template-columns: repeat(6, minmax(110px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: 8px;
 }
 
@@ -6011,6 +6040,89 @@
   color: var(--navy);
   font-size: 1rem;
   line-height: 1.1;
+}
+
+.product-finance-records .table-wrap {
+  max-width: 100%;
+  overflow: visible;
+}
+
+.product-finance-records .data-table {
+  display: block;
+  min-width: 0;
+}
+
+.product-finance-records .data-table thead,
+.product-finance-records .data-table tbody {
+  display: block;
+}
+
+.product-finance-records .data-table thead tr {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+}
+
+.product-finance-records .data-table thead th {
+  display: none;
+}
+
+.product-finance-records .data-table thead .record-select-cell {
+  display: block;
+  padding: 0 2px 8px;
+  border: 0;
+}
+
+.product-finance-records .data-table tbody {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 12px;
+}
+
+.product-finance-records .data-table tbody tr {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  min-width: 0;
+  padding: 16px;
+  padding-right: 52px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: #ffffff;
+}
+
+.product-finance-records .data-table tbody td {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 0;
+  border: 0;
+  overflow-wrap: anywhere;
+}
+
+.product-finance-records .data-table tbody td::before {
+  content: attr(data-label);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 850;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.product-finance-records .data-table tbody .record-select-cell {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: block;
+}
+
+.product-finance-records .data-table tbody .record-select-cell::before {
+  content: none;
+}
+
+.product-finance-records .data-table tbody td[colspan] {
+  grid-column: 1 / -1;
 }
 
 .credit-account-list {
@@ -7156,6 +7268,90 @@
   border-radius: var(--radius-sm);
   background: var(--mint-soft);
   color: var(--navy);
+}
+
+.production-command-strip {
+  align-items: center;
+  gap: 20px;
+}
+
+.production-command-strip p {
+  margin: 6px 0 0;
+  color: var(--muted);
+}
+
+.production-command-strip .row-actions {
+  justify-content: flex-end;
+}
+
+.production-product-summary {
+  min-width: 220px;
+  max-width: 380px;
+  line-height: 1.55;
+}
+
+.production-workflow-modal {
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+}
+
+.production-line-fieldset {
+  margin: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.production-line-fieldset legend {
+  padding: 0 8px;
+  font-weight: 800;
+}
+
+.production-form-line {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.55fr) 44px;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 12px;
+}
+
+[data-production-material-line] {
+  grid-template-columns: minmax(170px, 1fr) minmax(170px, 1fr) minmax(120px, 0.5fr) minmax(110px, 0.45fr) 44px;
+}
+
+.production-qc-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+
+.production-qc-checks label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .production-command-strip,
+  .production-command-strip .row-actions {
+    align-items: stretch;
+  }
+
+  .production-command-strip .row-actions,
+  .production-form-line,
+  [data-production-material-line],
+  .production-qc-checks {
+    grid-template-columns: 1fr;
+  }
+
+  .production-form-line {
+    display: grid;
+  }
 }
 
 .product-packaging-conversions .field {

@@ -1,6 +1,6 @@
 import { resetWorkspaceData } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
-import { currentUserRole } from "../services/rbac.js";
+import { currentUserRole } from "../services/rbac.js?v=20260801d";
 import { confirmActionDialog } from "./action-dialog.js";
 import { verifyCeoPassword } from "./ceo-password-verification.js";
 import { qsa } from "./dom.js";

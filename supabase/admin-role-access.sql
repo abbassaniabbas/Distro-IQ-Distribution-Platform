@@ -5,11 +5,11 @@ alter table public.invites drop constraint if exists invites_role_check;
 
 alter table public.memberships
 add constraint memberships_role_check
-check (role in ('sales_rep', 'store_keeper', 'admin', 'accountant', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'production_manager', 'admin', 'accountant', 'ceo'));
 
 alter table public.invites
 add constraint invites_role_check
-check (role in ('sales_rep', 'store_keeper', 'admin', 'accountant', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'production_manager', 'admin', 'accountant', 'ceo'));
 
 create or replace function public.set_membership_role(
   p_client_id uuid,
@@ -33,7 +33,7 @@ begin
     raise exception 'CEO access required';
   end if;
 
-  if v_role not in ('sales_rep', 'store_keeper', 'admin') then
+  if v_role not in ('sales_rep', 'store_keeper', 'production_manager', 'admin') then
     raise exception 'Choose a valid staff role';
   end if;
 
@@ -61,5 +61,26 @@ $$;
 
 grant execute on function public.set_membership_role(uuid, uuid, text) to authenticated;
 revoke all on function public.set_membership_role(uuid, uuid, text) from public, anon;
+
+-- Admin and CEO add live stock. Store Keepers submit operational approval
+-- requests instead of writing directly to the shared stock-products table.
+drop policy if exists "stock_products_write_by_stock_roles" on public.stock_products;
+create policy "stock_products_write_by_stock_roles"
+on public.stock_products
+for all
+to authenticated
+using (public.has_client_role(client_id, array['ceo', 'admin']))
+with check (
+  public.has_client_role(client_id, array['ceo', 'admin'])
+  and (
+    category_id is null
+    or exists (
+      select 1
+      from public.stock_categories linked_category
+      where linked_category.id = stock_products.category_id
+        and linked_category.client_id = stock_products.client_id
+    )
+  )
+);
 
 commit;
