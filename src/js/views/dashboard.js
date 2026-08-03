@@ -19,7 +19,7 @@ import {
   isRepresentativeSellThroughTransaction,
   getStockHealth,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260802f";
+} from "../services/calculations.js?v=20260802h";
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260801d";
 import { isModuleEnabled } from "../services/features.js";
@@ -119,8 +119,7 @@ function buildRepAssignments(state, repName = "") {
     ));
 }
 
-function todaysRepTransactions(state, repName) {
-  const date = todayISO();
+function repTransactions(state, repName) {
   const repKey = normalized(repName);
 
   return (state.stockTransactions || [])
@@ -128,11 +127,17 @@ function todaysRepTransactions(state, repName) {
       const type = normalized(transaction.type);
       return (
         (!repKey || normalized(transaction.recordedBy) === repKey) &&
-        transaction.date === date &&
         (type === "sale" || type === "return" || type === "return to factory")
       );
     })
     .sort((a, b) => String(b.id).localeCompare(String(a.id)));
+}
+
+function todaysRepTransactions(state, repName) {
+  const date = todayISO();
+  return repTransactions(state, repName).filter((transaction) => (
+    dateOnly(transaction.date || transaction.createdAt) === date
+  ));
 }
 
 function repDaySummary(transactions) {
@@ -161,6 +166,9 @@ function repDaySummary(transactions) {
       summary.returnAmount += amount;
       summary.netSales -= amount;
       summary.unitsReturned += quantity;
+      if (transaction.returnDisposition === "to_store") {
+        summary.unitsReturnedToFactory += quantity;
+      }
     }
 
     if (type === "return to factory") {
@@ -2989,6 +2997,7 @@ function renderSalesRepDashboard(state) {
     : assignments;
   const transactions = todaysRepTransactions(state, repName);
   const summary = repDaySummary(transactions);
+  const totalSalesSummary = repDaySummary(repTransactions(state, repName));
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], repName);
   const factoryCreditOwed = Number(creditLimit?.balance || 0);
   const creditUsage = creditLimit?.limit ? (factoryCreditOwed / Number(creditLimit.limit || 0)) * 100 : 0;
@@ -3006,7 +3015,7 @@ function renderSalesRepDashboard(state) {
       ${renderRepOfflineStatus(state)}
       <section class="rep-hero">
         <div>
-          <span class="eyebrow">Today</span>
+          <span class="eyebrow">Sales representative</span>
           <h2>${escapeHtml(repName)}</h2>
         </div>
         <div class="rep-hero-stats${creditControlEnabled ? "" : " is-credit-disabled"}">
@@ -3016,11 +3025,11 @@ function renderSalesRepDashboard(state) {
           </div>
           <div>
             <span>Gross sales</span>
-            <strong>${formatCurrency(summary.grossSales)}</strong>
+            <strong>${formatCurrency(totalSalesSummary.grossSales)}</strong>
           </div>
           <div>
             <span>Net sales</span>
-            <strong>${formatCurrency(summary.netSales)}</strong>
+            <strong>${formatCurrency(totalSalesSummary.netSales)}</strong>
           </div>
           ${creditControlEnabled ? `
             <div class="${creditUsage >= 85 ? "is-warning" : ""}">

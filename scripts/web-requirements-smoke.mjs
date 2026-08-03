@@ -45,6 +45,7 @@ const actionDialogSource = readFileSync(new URL("../src/js/ui/action-dialog.js",
 const ceoPasswordVerificationSource = readFileSync(new URL("../src/js/ui/ceo-password-verification.js", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "utf8");
 const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
+const financeSource = readFileSync(new URL("../src/js/views/finance.js", import.meta.url), "utf8");
 const messageManagementSql = readFileSync(new URL("../supabase/message-management.sql", import.meta.url), "utf8");
 assert.match(responsiveLayoutCss, /@media \(max-width: 640px\)[\s\S]*\.view-root,[\s\S]*padding: 14px 12px 24px/, "phone layouts must use compact page padding");
 assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-button[\s\S]*width: 44px;[\s\S]*height: 44px/, "phone and tablet controls must retain touch-friendly targets");
@@ -60,6 +61,12 @@ assert.match(responsiveViewCss, /\.settings-layout\s*\{[\s\S]*grid-template-colu
 assert.match(responsiveViewCss, /\.settings-top-panel > \.panel\s*\{[\s\S]*height: 100%;/, "Factory Settings and My Profile panels must have equal top-to-bottom length");
 assert.match(responsiveViewCss, /\.rep-request-quantity-fields:focus-within[\s\S]*box-shadow:[^;]+;/, "representative stock-request quantity controls must have a clear polished focus state");
 assert.match(responsiveViewCss, /\.rep-stock-quantity-row\s*\{[\s\S]*display: flex;[\s\S]*justify-content: flex-start;[\s\S]*gap: 8px;/, "assigned package stock must sit immediately beside the remaining piece count");
+assert.match(responsiveViewCss, /\.product-finance-records \.table-wrap\s*\{[\s\S]*overflow: visible;/, "Product Revenue must not require horizontal scrolling");
+assert.match(responsiveViewCss, /\.product-finance-records \.data-table tbody\s*\{[\s\S]*grid-template-columns: minmax\(0, 1fr\);/, "Product Revenue records must render as a page-width list");
+assert.match(responsiveViewCss, /tr:has\(\.product-finance-expander:not\(\[open\]\)\) \[data-product-finance-detail\][\s\S]*display: none;/, "Product Revenue lists must reveal secondary financial information only when expanded");
+assert.match(responsiveViewCss, /\.product-finance-records \.data-table tbody \.record-select-cell\s*\{[\s\S]*left: 14px;/, "Product Revenue selection boxes must remain at the far left");
+assert.doesNotMatch(responsiveViewCss, /content: "(?:View|Hide) details"/, "Product Revenue must not show View details or Hide details comments");
+assert.match(financeSource, /\[data-product-finance-row\][\s\S]*row\.addEventListener\("click"[\s\S]*toggle\(\)/, "clicking anywhere on a Product Revenue summary must expand or collapse it");
 assert.match(backendSource, /export async function loadWorkspacePackagingState[\s\S]*packaging_change_requests/, "background configuration refresh must load packaging approval requests");
 assert.match(backendSource, /role === "production_manager"[\s\S]*choose a valid role[\s\S]*deploy the latest invite-user function/, "a stale invitation function must report the required backend update instead of rejecting the selected role as invalid");
 assert.match(appSource, /loadWorkspacePackagingState\([\s\S]*SET_PACKAGING_WORKSPACE_STATE/, "active portals must receive packaging requests and approved settings without a new sign-in");
@@ -189,7 +196,7 @@ const representativeCustodySalesFixture = {
   retailers: []
 };
 assert.equal(calculateMetrics(representativeCustodySalesFixture).orderRevenue, 48000, "the finance ledger calculation must remain unchanged for the existing representative dispatch invoice");
-assert.equal(getFinancialSalesLines(representativeCustodySalesFixture).reduce((total, line) => total + line.revenue, 0), 48000, "the Finance section must retain its existing representative dispatch accounting record");
+assert.equal(getFinancialSalesLines(representativeCustodySalesFixture).reduce((total, line) => total + line.revenue, 0), 30000, "Product Revenue must use the actual customer sale rather than representative stock custody value");
 assert.equal(ceoActualSalesRevenue(representativeCustodySalesFixture), 30000, "the CEO Sales card must show the actual ₦30,000 customer sale instead of the ₦48,000 representative stock dispatch");
 
 const grossNetFinanceFixture = {
@@ -1075,7 +1082,7 @@ assert.equal(cashInvoice.repName, "Amina Rep");
 assert.equal(cashInvoice.items[0].productName, "Plantain Chips");
 assert.equal(cashInvoice.financialImpact, false, "representative sell-through receipts must not affect factory finances");
 assert.equal(cashInvoice.documentType, "sales_receipt");
-assert.equal(getFinancialSalesLines(state).reduce((total, line) => total + Number(line.revenue || 0), 0), financialRevenueBeforeRepSale, "representative sell-through must not add factory revenue");
+assert.equal(getFinancialSalesLines(state).reduce((total, line) => total + Number(line.revenue || 0), 0), financialRevenueBeforeRepSale + sale.amount, "Product Revenue must increase from the representative's actual customer sale");
 assert.equal(getFinancialInvoiceRecords(state).length, financialInvoicesBeforeRepSale, "representative receipts must not enter the factory invoice ledger");
 assert.equal(getOrdersWithTotals(state).length, financialOrdersBeforeRepSale, "representative sell-through must not create another factory sales order");
 assert.equal(calculateMetrics(state).receivables, receivablesBeforeRepSale, "representative sell-through must not change factory receivables");
@@ -1090,7 +1097,7 @@ const legacyInvoice = legacySellThroughState.invoices.find((item) => item.id ===
 });
 assert.equal(getFinancialInvoiceRecords(legacySellThroughState).some((invoice) => invoice.id === cashInvoice.id), false, "historical assignment-linked representative receipts must remain outside factory finance");
 assert.equal(getOrdersWithTotals(legacySellThroughState).some((order) => order.id === cashInvoice.orderId), false, "historical representative sell-through orders must remain outside factory order totals");
-assert.equal(getFinancialSalesLines(legacySellThroughState).some((line) => line.recordId === cashInvoice.orderId || line.id === sale.id), false, "historical representative sell-through must not be counted as factory revenue");
+assert.equal(getFinancialSalesLines(legacySellThroughState).some((line) => line.recordId === cashInvoice.orderId || line.id === sale.id), true, "historical assignment-linked customer sales must remain visible in Product Revenue");
 const invoiceDocument = buildInvoiceDocument(cashInvoice, state);
 assert.match(invoiceDocument, /DistroIQ Sales, Stock &amp; Distribution/);
 assert.match(invoiceDocument, /Test Factory/);
@@ -1148,6 +1155,16 @@ assert.match(packagedInvoicePreview, /2 cartons/);
 assert.match(packagedInvoicePreview, /48 pieces/);
 const representativeInvoices = renderInvoices({ state: scopeStateForCurrentRole(state) });
 assert.match(representativeInvoices, /My invoices/);
+assert.match(
+  representativeInvoices,
+  /Total sales<\/span>[\s\S]*?metric-value">₦1,000<[\s\S]*?Customer sales receipts only/,
+  "representative Total sales must include customer receipts without adding assigned-stock dispatch invoices"
+);
+assert.doesNotMatch(
+  representativeInvoices,
+  /Total sales<\/span>[\s\S]*?metric-value">₦11,000</,
+  "assigned stock dispatched from the factory must not inflate representative Total sales"
+);
 assert.match(representativeInvoices, /js-download-invoice/);
 assert.match(representativeInvoices, /js-print-invoice/);
 assert.match(representativeInvoices, /js-print-invoice-list/);
@@ -1220,6 +1237,54 @@ assert.match(repDashboard, /Walk-in customer/, "walk-in sale must appear in the 
 assert.match(repDashboard, /Plantain Chips/);
 assert.match(repDashboard, /Gross sales[\s\S]*₦1,000/, "the representative's existing Sales figure must be labelled Gross sales");
 assert.match(repDashboard, /Net sales[\s\S]*₦500/, "representative net sales must subtract the accepted customer return");
+assert.match(repDashboard, /Back to factory[\s\S]*1/, "customer returns sent to store stock must count as units returned to the factory in the Day Report");
+const historicalRepSalesDashboard = renderDashboard({
+  state: {
+    ...scopeStateForCurrentRole(state),
+    stockTransactions: [
+      {
+        id: "TXN-TODAY-REP-SALE",
+        type: "sale",
+        productId: "SKU-CHIPS",
+        quantity: 2,
+        grossAmount: 1000,
+        netAmount: 1000,
+        amount: 1000,
+        recordedBy: "Amina Rep",
+        partyName: "Today's customer",
+        date: currentTestDate
+      },
+      {
+        id: "TXN-TODAY-REP-RETURN",
+        type: "return",
+        productId: "SKU-CHIPS",
+        quantity: 1,
+        amount: 500,
+        recordedBy: "Amina Rep",
+        partyName: "Today's customer",
+        date: currentTestDate
+      },
+      {
+        id: "TXN-HISTORICAL-REP-SALE",
+        type: "sale",
+        productId: "SKU-CHIPS",
+        quantity: 2,
+        grossAmount: 2000,
+        netAmount: 1800,
+        amount: 2000,
+        recordedBy: "Amina Rep",
+        partyName: "Historical customer",
+        date: "2026-01-02"
+      }
+    ]
+  }
+});
+const historicalRepHero = historicalRepSalesDashboard.match(/<section class="rep-hero">[\s\S]*?<\/section>/)?.[0] || "";
+const historicalRepDayReport = historicalRepSalesDashboard.match(/<section class="panel rep-report-panel">[\s\S]*?<\/section>/)?.[0] || "";
+assert.match(historicalRepHero, /Gross sales[\s\S]*₦3,000/, "sales representative dashboard gross sales must include historical sales");
+assert.match(historicalRepHero, /Net sales[\s\S]*₦2,300/, "sales representative dashboard net sales must include historical sales and all returns");
+assert.match(historicalRepDayReport, /Gross sales[\s\S]*₦1,000/, "Day Report gross sales must remain limited to today's activity");
+assert.match(historicalRepDayReport, /Net sales[\s\S]*₦500/, "Day Report net sales must remain limited to today's activity");
 assert.match(repDashboard, /rep-factory-return-form/, "representatives must be able to return stock in hand to the factory");
 assert.match(repDashboard, /rep-product-family-grid/, "representative catalogue must group products into families");
 assert.match(repDashboard, /js-toggle-rep-product-types/, "representatives must be able to open product types");
@@ -1988,6 +2053,17 @@ assert.doesNotMatch(ceoFinanceInvoices, /data-reset-workspace-scope="finance"/, 
 globalThis.window.location.hash = "#/finance?tab=sales-reports";
 const ceoFinanceSalesReports = renderFinance({ state: store.getState() });
 assert.match(ceoFinanceSalesReports, /data-ceo-delete-selected="sales_reports"/);
+const updateNeededFinanceReports = renderFinance({
+  state: {
+    ...store.getState(),
+    salesReports: [{ id: "RPT-UPDATE-NEEDED", repName: "Amina Rep", reportDate: currentTestDate, salesAmount: 1000, transactionIds: ["TXN-REPORTED"], status: "submitted" }],
+    stockTransactions: [
+      { id: "TXN-REPORTED", type: "sale", recordedBy: "Amina Rep", date: currentTestDate, amount: 1000 },
+      { id: "TXN-AFTER-REPORT", type: "sale", recordedBy: "Amina Rep", date: currentTestDate, amount: 500 }
+    ]
+  }
+});
+assert.match(updateNeededFinanceReports, /Update needed[\s\S]*New activity was saved after submission/, "Finance must flag a submitted report when newer representative activity is not included yet");
 assert.match(ceoFinanceSalesReports, /<thead>[\s\S]*data-ceo-select-all="sales_reports"[\s\S]*<th>Report<\/th>/);
 assert.doesNotMatch(ceoFinanceSalesReports, /data-ceo-clear-section|>Clear sales reports</);
 assert.doesNotMatch(ceoFinanceSalesReports, /data-reset-workspace-scope="finance"/);
@@ -1995,10 +2071,26 @@ assert.doesNotMatch(ceoFinanceSalesReports, /data-reset-workspace-scope="finance
 globalThis.window.location.hash = "#/finance?tab=product-revenue";
 const ceoProductRevenue = renderFinance({ state: store.getState() });
 assert.match(ceoProductRevenue, /Revenue, cost, and profit/);
+assert.match(ceoProductRevenue, /class="panel product-finance-records"/, "Product Revenue financial records must use the no-horizontal-scroll layout");
+assert.match(ceoProductRevenue, /data-label="Gross sales"[\s\S]*data-label="Net sales"[\s\S]*data-label="Margin"/, "every financial value must remain visible inside the reflowed record cards");
+assert.match(ceoProductRevenue, /class="product-finance-expander"[\s\S]*<summary>[^<]+<\/summary>/, "each Product Revenue list item must expand when its product summary is clicked");
 assert.match(ceoProductRevenue, /data-ceo-delete-selected="product_revenue"/);
 assert.match(ceoProductRevenue, /<thead>[\s\S]*data-ceo-select-all="product_revenue"[\s\S]*<th>Date<\/th>/);
 assert.doesNotMatch(ceoProductRevenue, /data-ceo-clear-section|Clear revenue data/);
 assert.doesNotMatch(ceoProductRevenue, /data-reset-workspace-scope="finance"/);
+const groupedProductRevenue = renderFinance({
+  state: {
+    ...store.getState(),
+    orders: [],
+    stockTransactions: [
+      { id: "TXN-GROUP-A-1", type: "sale", recordedBy: "Amina Rep", date: currentTestDate, amount: 1000 },
+      { id: "TXN-GROUP-A-2", type: "return", recordedBy: "Amina Rep", date: currentTestDate, amount: 200 },
+      { id: "TXN-GROUP-B-1", type: "sale", recordedBy: "Binta Rep", date: currentTestDate, amount: 500 }
+    ]
+  }
+});
+assert.equal((groupedProductRevenue.match(/data-product-finance-row/g) || []).length, 2, "same-day Product Revenue activity must collapse into one summary per representative");
+assert.match(groupedProductRevenue, /value="TXN-GROUP-A-1\|TXN-GROUP-A-2"/, "a grouped summary checkbox must retain every underlying backend record ID");
 
 globalThis.window.location.hash = "#/finance?tab=credit-limits";
 const financeLimits = renderFinance({ state: store.getState() });
@@ -2590,9 +2682,9 @@ assert.equal(pricedState.invoices[0].items.length, 2);
 assert.equal(pricedState.invoices[0].documentType, "sales_receipt");
 assert.equal(pricedState.stockAssignments.reduce((total, assignment) => total + assignment.sold, 0), 12, "mixed sale must consume exactly twelve assigned pieces");
 assert.equal(pricedState.orders.find((order) => order.source === "factory_dispatch")?.status, "delivered", "selling every assigned item must automatically deliver the representative dispatch order for CEO and Admin");
-const pricedSaleLines = getFinancialSalesLines(pricedState).filter((line) => line.source === "Rep quick sale" && line.customerName === "Walk-in customer");
-assert.equal(pricedSaleLines.length, 0, "representative sell-through lines must be absent from factory finance reports");
-assert.equal(getFinancialSalesLines(pricedState).reduce((total, line) => total + Number(line.revenue || 0), 0), pricedFactoryRevenueBeforeSellThrough, "selling dispatched stock onward must not double factory revenue");
+const pricedSaleLines = getFinancialSalesLines(pricedState).filter((line) => line.source === "Representative customer sale" && line.customerName === "Walk-in customer");
+assert.equal(pricedSaleLines.length, 2, "each representative customer-sale line must appear in Product Revenue");
+assert.equal(getFinancialSalesLines(pricedState).reduce((total, line) => total + Number(line.revenue || 0), 0), pricedFactoryRevenueBeforeSellThrough + 2200, "Product Revenue must recognise the actual customer sale without counting the earlier stock assignment");
 assert.equal(getFinancialInvoiceRecords(pricedState).length, pricedFactoryInvoiceCountBeforeSellThrough, "selling dispatched stock onward must not add a second financial invoice");
 assert.equal(pricedState.creditLimits.find((limit) => limit.partyName === "Pricing Rep").balance, 2200, "representative sell-through must not change the factory dispatch credit balance");
 

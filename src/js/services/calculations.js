@@ -148,7 +148,7 @@ export function getReturnableCustomerChoices(state, {
 }
 
 export function stockCategoryIdForProduct(product) {
-  const category = String(product.stockCategory || product.category || "").toLowerCase();
+  const category = String(product?.stockCategory || product?.category || "").toLowerCase();
 
   if (category.includes("raw") || category.includes("packaging")) return "raw_materials";
   if (category.includes("equipment")) return "equipment";
@@ -239,7 +239,7 @@ export function getFinancialSalesLines(state) {
   const routeMap = getOrderRouteMap(state.routes || []);
   const orderLines = (state.orders || [])
     .filter((order) => order.source !== "quick_sale")
-    .filter((order) => !isRepresentativeSellThroughOrder(order, state))
+    .filter((order) => !isFactoryDispatchToRepresentative(order, state))
     .flatMap((order) => {
       const route = routeMap.get(order.id);
       const retailer = retailerMap.get(order.retailerId);
@@ -285,8 +285,7 @@ export function getFinancialSalesLines(state) {
       const type = String(transaction.type || "").toLowerCase();
       return (
         (type === "sale" || type === "return") &&
-        !transaction.financeRevenueDeleted &&
-        !isRepresentativeSellThroughTransaction(transaction)
+        !transaction.financeRevenueDeleted
       );
     })
     .map((transaction) => {
@@ -305,6 +304,10 @@ export function getFinancialSalesLines(state) {
       const profit = revenue - cost;
       const paymentType = transaction.paymentType || (isReturn ? "return" : "cash");
       const isCredit = String(paymentType || "").toLowerCase().includes("credit");
+      const isTrackedCash = ["cash", "paid", "card", "transfer", "bank transfer", "pos"].some((value) => (
+        String(paymentType || "").toLowerCase().includes(value)
+      ));
+      const isRepresentativeSellThrough = isRepresentativeSellThroughTransaction(transaction);
       const isFactoryRawMaterialSale = (
         !isReturn &&
         stockCategoryIdForProduct(product) === "raw_materials" &&
@@ -318,7 +321,9 @@ export function getFinancialSalesLines(state) {
           ? "Customer return"
           : isFactoryRawMaterialSale
             ? "Factory raw-material sale"
-            : "Rep quick sale",
+            : isRepresentativeSellThrough
+              ? "Representative customer sale"
+              : "Direct customer sale",
         date: dateOnly(transaction.date || transaction.createdAt),
         productId: transaction.productId,
         productName: transaction.productName || product?.name || "Unknown product",
@@ -335,7 +340,7 @@ export function getFinancialSalesLines(state) {
         margin: marginPercent(revenue, profit),
         status: isReturn ? "returned" : "sold",
         paymentType,
-        cashAmount: !isReturn && !isCredit ? revenue : 0,
+        cashAmount: !isReturn && !isCredit && isTrackedCash ? revenue : 0,
         creditAmount: !isReturn && isCredit ? revenue : 0,
         returnAmount: isReturn ? nonNegativeAmount(grossAmount) : 0
       };

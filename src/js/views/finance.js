@@ -5,8 +5,9 @@ import {
   getFinancialSalesLines,
   getInvoiceAging,
   getRetailerMap,
+  isFactoryDispatchToRepresentative,
   summarizeSalesLines
-} from "../services/calculations.js?v=20260802f";
+} from "../services/calculations.js?v=20260802h";
 import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import {
   currentUserPermissions,
@@ -22,7 +23,7 @@ import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js";
 import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
-import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
+import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260802i";
 
 const DEFAULT_FINANCE_TAB = "overview";
 const FINANCE_PAGE_SIZE = 10;
@@ -482,10 +483,16 @@ function getAccountantSummary(state) {
   const cost = salesLines.reduce((total, line) => total + line.cost, 0);
   const profit = salesLines.reduce((total, line) => total + line.profit, 0);
   const cashSalesReceived = salesLines.reduce((total, line) => total + Number(line.cashAmount || 0), 0);
+  const representativeDispatchCash = (state.orders || [])
+    .filter((order) => isFactoryDispatchToRepresentative(order, state))
+    .filter((order) => !String(order.paymentType || "").toLowerCase().includes("credit"))
+    .reduce((total, order) => total + (order.items || []).reduce((lineTotal, item) => (
+      lineTotal + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || item.unitPriceAtSale || 0)))
+    ), 0), 0);
   const collectedCredit = getFinancialInvoiceRecords(state)
     .filter((invoice) => invoice.status === "paid" && String(invoice.paymentType || "").toLowerCase().includes("credit") && invoice.paidAt)
     .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
-  const cashIn = cashSalesReceived + collectedCredit;
+  const cashIn = cashSalesReceived + representativeDispatchCash + collectedCredit;
   const creditOwed = (state.creditLimits || []).reduce((total, limit) => total + Number(limit.balance || 0), 0);
   const returns = salesLines.reduce((total, line) => total + Number(line.returnAmount || 0), 0);
   const productMap = new Map((state.products || []).map((product) => [product.id, product]));
@@ -667,6 +674,13 @@ function renderAccountantSalesReportRows(state) {
       const discounts = Number(report.discountAmount || 0);
       const otherDeductions = Number(report.otherDeductions || 0);
       const netSales = Number(report.netSales ?? (grossSales - returns - discounts - otherDeductions));
+      const submittedTransactionIds = new Set((report.transactionIds || []).map(String));
+      const hasNewActivity = (state.stockTransactions || []).some((transaction) => (
+        String(transaction.recordedBy || transaction.repName || "").trim().toLowerCase() === String(report.repName || "").trim().toLowerCase() &&
+        dateOnly(transaction.date || transaction.createdAt) === dateOnly(report.reportDate) &&
+        ["sale", "return", "return to factory"].includes(String(transaction.type || "").trim().toLowerCase()) &&
+        !submittedTransactionIds.has(String(transaction.id || ""))
+      ));
       const searchIndex = [
         report.id,
         report.repName,
@@ -699,36 +713,98 @@ function renderAccountantSalesReportRows(state) {
           <td>${formatCurrency(discounts)}</td>
           <td>${formatCurrency(otherDeductions)}</td>
           <td>${formatCurrency(netSales)}</td>
-          <td>${statusPill(report.status)}</td>
+          <td>
+            ${hasNewActivity ? '<span class="status-pill credit-watch">Update needed</span><div class="muted">New activity was saved after submission</div>' : statusPill(report.status)}
+          </td>
         </tr>
       `;
     });
 }
 
 function renderAccountantProductRows(state) {
-  return getAccountantSalesLines(state)
-    .sort((a, b) => b.date.localeCompare(a.date) || a.productName.localeCompare(b.productName))
+  const summaries = new Map();
+
+  getAccountantSalesLines(state).forEach((line) => {
+    const productKey = line.productId || String(line.productName || "Unknown product").trim().toLowerCase();
+    const key = `${line.date || ""}::${String(line.repName || "Unassigned").trim().toLowerCase()}::${productKey}`;
+    const summary = summaries.get(key) || {
+      date: line.date,
+      repName: line.repName || "Unassigned",
+      lineIds: [],
+      productIds: new Set(),
+      productNames: new Set(),
+      customerNames: new Set(),
+      paymentTypes: new Set(),
+      sources: new Set(),
+      quantity: 0,
+      grossSales: 0,
+      discountAmount: 0,
+      otherDeductions: 0,
+      netSales: 0,
+      cost: 0,
+      profit: 0,
+      cashAmount: 0,
+      creditAmount: 0,
+      returnAmount: 0
+    };
+
+    summary.lineIds.push(line.id);
+    if (line.productId) summary.productIds.add(line.productId);
+    if (line.productName) summary.productNames.add(line.productName);
+    if (line.customerName) summary.customerNames.add(line.customerName);
+    if (line.paymentType || line.source) summary.paymentTypes.add(line.paymentType || line.source);
+    if (line.source) summary.sources.add(line.source);
+    summary.quantity += Number(line.quantity || 0);
+    summary.grossSales += Number(line.grossSales || 0);
+    summary.discountAmount += Number(line.discountAmount || 0);
+    summary.otherDeductions += Number(line.otherDeductions || 0);
+    summary.netSales += Number(line.netSales ?? line.revenue ?? 0);
+    summary.cost += Number(line.cost || 0);
+    summary.profit += Number(line.profit || 0);
+    summary.cashAmount += Number(line.cashAmount || 0);
+    summary.creditAmount += Number(line.creditAmount || 0);
+    summary.returnAmount += Number(line.returnAmount || 0);
+    summaries.set(key, summary);
+  });
+
+  return [...summaries.values()]
+    .sort((a, b) => String(b.date || "").localeCompare(String(a.date || "")) || a.repName.localeCompare(b.repName))
     .map((line) => {
+      const productNames = [...line.productNames];
+      const customerNames = [...line.customerNames];
+      const paymentTypes = [...line.paymentTypes];
+      const sources = [...line.sources];
+      const productSummary = productNames.length > 1
+        ? `${productNames[0]} + ${productNames.length - 1} more`
+        : productNames[0] || "Unknown product";
+      const customerSummary = customerNames.length > 1
+        ? `${customerNames[0]} + ${customerNames.length - 1} more`
+        : customerNames[0] || "Customer";
+      const paymentSummary = paymentTypes.length > 1 ? "Mixed payments" : paymentTypes[0] || "cash";
+      const sourceSummary = sources.length > 1 ? `${line.lineIds.length} sales activities` : sources[0] || `${line.lineIds.length} sales activities`;
+      const margin = line.netSales ? (line.profit / line.netSales) * 100 : 0;
       const searchIndex = [
-        line.recordId,
-        line.productName,
+        ...line.lineIds,
+        ...productNames,
         line.repName,
-        line.customerName,
-        line.source,
-        line.status,
-        line.paymentType
+        ...customerNames,
+        ...sources,
+        ...paymentTypes
       ].join(" ").toLowerCase();
 
       return `
         <tr
+          data-product-finance-row
+          tabindex="0"
+          aria-expanded="false"
           data-accountant-row="true"
           data-report-type="financial"
           data-product-sensitive="true"
-          data-products="${escapeHtml(line.productId)}"
+          data-products="${escapeHtml([...line.productIds].join(" "))}"
           data-rep="${escapeHtml(line.repName)}"
           data-date="${escapeHtml(line.date)}"
           data-gross-sales="${line.grossSales || 0}"
-          data-revenue="${line.revenue}"
+          data-revenue="${line.netSales}"
           data-net-sales="${line.netSales ?? line.revenue}"
           data-discount="${line.discountAmount || 0}"
           data-other-deductions="${line.otherDeductions || 0}"
@@ -739,24 +815,28 @@ function renderAccountantProductRows(state) {
           data-return="${line.returnAmount || 0}"
           data-search-index="${escapeHtml(searchIndex)}"
         >
-          ${currentUserRole(state) === "ceo" ? ceoSelectionCell("product_revenue", line.id, `${line.productName} revenue record`) : ""}
-          <td data-label="Date">
+          ${currentUserRole(state) === "ceo" ? ceoSelectionCell("product_revenue", line.lineIds.join("|"), `${line.repName} revenue summary`) : ""}
+          <td class="product-finance-main" data-label="Date">
             ${formatDate(line.date)}
-            <div class="muted">${escapeHtml(line.source || line.recordId)}</div>
+            <div class="muted">${escapeHtml(sourceSummary)}</div>
           </td>
-          <td data-label="Product">${escapeHtml(line.productName)}</td>
-          <td data-label="Sales representative">${escapeHtml(line.repName)}</td>
-          <td data-label="Customer">${escapeHtml(line.customerName)}</td>
-          <td data-label="Quantity">${formatNumber(line.quantity)}</td>
-          <td data-label="Payment">${escapeHtml(line.paymentType || line.source || "cash")}</td>
-          <td data-label="Gross sales">${formatCurrency(line.grossSales || 0)}</td>
-          <td data-label="Returns">${formatCurrency(line.returnAmount || 0)}</td>
-          <td data-label="Discounts">${formatCurrency(line.discountAmount || 0)}</td>
-          <td data-label="Other deductions">${formatCurrency(line.otherDeductions || 0)}</td>
-          <td data-label="Net sales">${formatCurrency(line.netSales ?? line.revenue)}</td>
-          <td data-label="Cost">${formatCurrency(line.cost)}</td>
-          <td data-label="Profit">${formatCurrency(line.profit)}</td>
-          <td data-label="Margin">${formatPercent(line.margin)}</td>
+          <td class="product-finance-main product-finance-product" data-label="Product">
+            <details class="product-finance-expander">
+              <summary>${escapeHtml(productSummary)}</summary>
+            </details>
+          </td>
+          <td data-product-finance-detail data-label="Sales representative">${escapeHtml(line.repName)}</td>
+          <td data-product-finance-detail data-label="Customer">${escapeHtml(customerSummary)}</td>
+          <td data-product-finance-detail data-label="Quantity">${formatNumber(line.quantity)}</td>
+          <td data-product-finance-detail data-label="Payment">${escapeHtml(paymentSummary)}</td>
+          <td class="product-finance-main" data-label="Gross sales">${formatCurrency(line.grossSales || 0)}</td>
+          <td data-product-finance-detail data-label="Returns">${formatCurrency(line.returnAmount || 0)}</td>
+          <td data-product-finance-detail data-label="Discounts">${formatCurrency(line.discountAmount || 0)}</td>
+          <td data-product-finance-detail data-label="Other deductions">${formatCurrency(line.otherDeductions || 0)}</td>
+          <td class="product-finance-main" data-label="Net sales">${formatCurrency(line.netSales ?? line.revenue)}</td>
+          <td data-product-finance-detail data-label="Cost">${formatCurrency(line.cost)}</td>
+          <td class="product-finance-main" data-label="Profit">${formatCurrency(line.profit)}</td>
+          <td data-product-finance-detail data-label="Margin">${formatPercent(margin)}</td>
         </tr>
       `;
     });
@@ -1216,6 +1296,27 @@ function bindAccountantFinance({ root }) {
   qsa(".js-accountant-export", root).forEach((button) => {
     button.addEventListener("click", () => {
       exportAccountantReport(root, button.dataset.format || "csv");
+    });
+  });
+
+  qsa("[data-product-finance-row]", root).forEach((row) => {
+    const expander = qs(".product-finance-expander", row);
+    if (!expander) return;
+
+    const toggle = () => {
+      expander.open = !expander.open;
+      row.setAttribute("aria-expanded", String(expander.open));
+    };
+
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("input, button, a, select, textarea")) return;
+      event.preventDefault();
+      toggle();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.target !== row || !["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      toggle();
     });
   });
 

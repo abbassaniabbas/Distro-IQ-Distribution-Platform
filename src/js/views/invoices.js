@@ -1,4 +1,5 @@
 import { downloadInvoice, getFinancialInvoiceRecords, getInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722d";
+import { isRepresentativeSellThroughInvoice } from "../services/calculations.js?v=20260802h";
 import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
 import { printTabularReport } from "../services/report-export.js";
 import { currentUserRole } from "../services/rbac.js?v=20260801d";
@@ -57,7 +58,10 @@ export function renderInvoices({ state }) {
   const heading = isRepresentative ? "My invoices" : "Invoices";
   const today = new Date().toISOString().slice(0, 10);
   const todayInvoices = invoices.filter((invoice) => invoice.issuedAt === today);
-  const totalValue = invoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
+  const salesInvoices = isRepresentative
+    ? invoices.filter((invoice) => isRepresentativeSellThroughInvoice(invoice, state))
+    : invoices;
+  const totalValue = salesInvoices.reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
   const openValue = invoices.filter((invoice) => ["open", "overdue"].includes(invoice.status)).reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
 
   return `
@@ -65,7 +69,7 @@ export function renderInvoices({ state }) {
       <div class="metric-grid invoice-metrics">
         ${metricCard({ label: heading, value: formatNumber(invoices.length), meta: isRepresentative ? "Customer sales information" : "Factory cash and credit sales", iconName: "orders" })}
         ${metricCard({ label: "Today", value: formatNumber(todayInvoices.length), meta: "Invoices created today", iconName: "clock" })}
-        ${metricCard({ label: "Total sales", value: formatCurrency(totalValue), meta: "Value on all my invoices", iconName: "finance" })}
+        ${metricCard({ label: "Total sales", value: formatCurrency(totalValue), meta: isRepresentative ? "Customer sales receipts only" : "Value on all invoices", iconName: "finance" })}
         ${metricCard({ label: "Still unpaid", value: formatCurrency(openValue), meta: "Credit invoices awaiting payment", iconName: "wallet" })}
       </div>
       <section class="panel">

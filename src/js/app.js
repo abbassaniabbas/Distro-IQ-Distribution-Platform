@@ -1,5 +1,5 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js?v=20260801d";
-import { createStore } from "./state/store.js?v=20260802f";
+import { createStore } from "./state/store.js?v=20260802h";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace, loadWorkspaceFeatureModules, loadWorkspacePackagingState, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260801b";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
@@ -22,14 +22,14 @@ import {
   getUnreadMessageCount
 } from "./ui/topbar-communications.js?v=20260801d";
 import { showToast } from "./ui/toast.js";
-import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260802f";
+import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260804c";
 import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260801d";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js?v=20260801d";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260802f";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260802f";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260804c";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260802i";
 import { renderInventory, bindInventory } from "./views/inventory.js?v=20260802a";
-import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260801d";
+import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260804b";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js?v=20260801d";
 import {

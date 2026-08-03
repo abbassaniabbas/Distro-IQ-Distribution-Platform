@@ -15,7 +15,7 @@ import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
   renderManagerReportReview
-} from "./dashboard.js?v=20260802f";
+} from "./dashboard.js?v=20260804c";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
 

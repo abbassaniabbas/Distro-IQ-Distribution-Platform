@@ -6075,21 +6075,33 @@
 
 .product-finance-records .data-table tbody {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
-  gap: 12px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
 }
 
 .product-finance-records .data-table tbody tr {
   position: relative;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 12px 16px;
+  grid-template-columns: minmax(100px, 0.75fr) minmax(180px, 1.5fr) repeat(3, minmax(105px, 0.8fr));
+  align-items: center;
+  gap: 10px 14px;
   min-width: 0;
-  padding: 16px;
-  padding-right: 52px;
+  padding: 12px 14px;
+  padding-left: 52px;
   border: 1px solid var(--line);
   border-radius: var(--radius-sm);
   background: #ffffff;
+}
+
+.product-finance-records .data-table tbody tr:has(.product-finance-expander[open]) {
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  align-items: start;
+  padding-block: 16px;
+  background: var(--surface-alt);
+}
+
+.product-finance-records .data-table tbody tr:has(.product-finance-expander:not([open])) [data-product-finance-detail] {
+  display: none;
 }
 
 .product-finance-records .data-table tbody td {
@@ -6113,7 +6125,7 @@
 .product-finance-records .data-table tbody .record-select-cell {
   position: absolute;
   top: 14px;
-  right: 14px;
+  left: 14px;
   display: block;
 }
 
@@ -6123,6 +6135,52 @@
 
 .product-finance-records .data-table tbody td[colspan] {
   grid-column: 1 / -1;
+}
+
+.product-finance-expander summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--navy);
+  font-weight: 900;
+  cursor: pointer;
+  list-style: none;
+}
+
+.product-finance-expander summary::-webkit-details-marker {
+  display: none;
+}
+
+.product-finance-records [data-product-finance-row] {
+  cursor: pointer;
+}
+
+.product-finance-records [data-product-finance-row]:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--mint-dark) 45%, transparent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .product-finance-records .data-table tbody tr,
+  .product-finance-records .data-table tbody tr:has(.product-finance-expander[open]) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .product-finance-records .product-finance-product {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 520px) {
+  .product-finance-records .data-table tbody tr,
+  .product-finance-records .data-table tbody tr:has(.product-finance-expander[open]) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .product-finance-records .product-finance-product {
+    grid-column: auto;
+  }
 }
 
 .credit-account-list {

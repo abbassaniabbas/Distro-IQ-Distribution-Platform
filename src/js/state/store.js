@@ -9,7 +9,7 @@ import {
   isRepresentativeSellThroughTransaction,
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260802f";
+} from "../services/calculations.js?v=20260802h";
 import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260801d";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js?v=20260801d";
