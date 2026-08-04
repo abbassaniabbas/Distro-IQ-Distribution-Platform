@@ -4,7 +4,7 @@ import {
   getStockHealth,
   isRepresentativeSellThroughOrder,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260722";
+} from "../services/calculations.js?v=20260804i";
 import {
   formatCurrency,
   currencySymbolFor,
@@ -14,7 +14,7 @@ import {
   statusText
 } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js?v=20260801d";
-import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
+import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { loadSharedProductImages, purgeSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { productImageStorageKey, removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
@@ -1263,6 +1263,18 @@ function renderDispatchForm(state, permissions) {
             <option value="credit">Credit</option>
           </select>
         </label>
+        <label class="field" data-rep-dispatch-arrangement-field>
+          <span>Stock arrangement</span>
+          <select name="dispatchArrangement" required>
+            <option value="stock_transfer">Consignment</option>
+            <option value="rep_purchase">Sales rep purchase</option>
+            <option value="refundable_deposit">Stock deposit</option>
+          </select>
+        </label>
+        <label class="field" data-rep-deposit-field hidden>
+          <span>Stock deposit amount (${escapeHtml(currencySymbolFor(state.client?.currency || "NGN"))})</span>
+          <input name="depositAmount" type="number" min="1" step="0.01" inputmode="decimal" disabled>
+        </label>
         <section class="span-full dispatch-items-builder">
           <header>
             <strong>Products being dispatched</strong>
@@ -2240,6 +2252,10 @@ export function bindInventory({ root, store, signal }) {
   const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
   const dispatchPaymentField = dispatchForm ? qs("[data-dispatch-payment-field]", dispatchForm) : null;
   const dispatchPaymentSelect = dispatchForm ? qs('select[name="paymentType"]', dispatchForm) : null;
+  const dispatchArrangementField = dispatchForm ? qs("[data-rep-dispatch-arrangement-field]", dispatchForm) : null;
+  const dispatchArrangementSelect = dispatchForm ? qs('select[name="dispatchArrangement"]', dispatchForm) : null;
+  const dispatchDepositField = dispatchForm ? qs("[data-rep-deposit-field]", dispatchForm) : null;
+  const dispatchDepositInput = dispatchForm ? qs('input[name="depositAmount"]', dispatchForm) : null;
   const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
   const dispatchDateInput = dispatchForm ? qs('input[name="dispatchDate"]', dispatchForm) : null;
   const expectedDeliveryInput = dispatchForm ? qs('input[name="expectedDeliveryAt"]', dispatchForm) : null;
@@ -4055,13 +4071,29 @@ export function bindInventory({ root, store, signal }) {
   }
 
   function syncDispatchPaymentField() {
-    if (!dispatchRecipientType || !dispatchPaymentField || !dispatchPaymentSelect) return;
-    const isInternal = dispatchRecipientType.value.toLowerCase().includes("internal");
-    const isWalkIn = dispatchRecipientType.value.toLowerCase().includes("walk-in") || dispatchRecipientType.value.toLowerCase().includes("walk in");
-    dispatchPaymentField.hidden = isInternal || isWalkIn;
-    dispatchPaymentSelect.disabled = isInternal || isWalkIn;
-    dispatchPaymentSelect.required = !isInternal && !isWalkIn;
-    if (isInternal || isWalkIn) dispatchPaymentSelect.value = "cash";
+    if (!dispatchRecipientType) return;
+    const recipientType = dispatchRecipientType.value.toLowerCase();
+    const isInternal = recipientType.includes("internal");
+    const isWalkIn = recipientType.includes("walk-in") || recipientType.includes("walk in");
+    const isRepresentative = recipientType.includes("representative");
+    if (dispatchPaymentField && dispatchPaymentSelect) {
+      dispatchPaymentField.hidden = isInternal || isWalkIn || isRepresentative;
+      dispatchPaymentSelect.disabled = isInternal || isWalkIn || isRepresentative;
+      dispatchPaymentSelect.required = !isInternal && !isWalkIn && !isRepresentative;
+      if (isInternal || isWalkIn || isRepresentative) dispatchPaymentSelect.value = "cash";
+    }
+    if (dispatchArrangementField && dispatchArrangementSelect) {
+      dispatchArrangementField.hidden = !isRepresentative;
+      dispatchArrangementSelect.disabled = !isRepresentative;
+      dispatchArrangementSelect.required = isRepresentative;
+    }
+    const recordsDeposit = isRepresentative && dispatchArrangementSelect?.value === "refundable_deposit";
+    if (dispatchDepositField && dispatchDepositInput) {
+      dispatchDepositField.hidden = !recordsDeposit;
+      dispatchDepositInput.disabled = !recordsDeposit;
+      dispatchDepositInput.required = recordsDeposit;
+      if (!recordsDeposit) dispatchDepositInput.value = "";
+    }
   }
 
   updateDispatchRecipientOptions();
@@ -4086,6 +4118,7 @@ export function bindInventory({ root, store, signal }) {
     updateDispatchProductOptions();
     syncDispatchPaymentField();
   });
+  dispatchArrangementSelect?.addEventListener("change", syncDispatchPaymentField);
   dispatchRecipientSelect?.addEventListener("change", updateOtherRecipientField);
   addDispatchItemButton?.addEventListener("click", () => {
     if (!dispatchItemList || !dispatchItemTemplate) return;
@@ -4128,7 +4161,16 @@ export function bindInventory({ root, store, signal }) {
     const recipientType = String(formData.get("recipientType") || "");
     const isInternalDispatch = recipientType.toLowerCase().includes("internal");
     const isWalkInDispatch = recipientType.toLowerCase().includes("walk-in") || recipientType.toLowerCase().includes("walk in");
-    const paymentType = isInternalDispatch ? "none" : isWalkInDispatch ? "cash" : String(formData.get("paymentType") || "");
+    const isRepresentativeDispatch = recipientType.toLowerCase().includes("representative");
+    const dispatchArrangement = isRepresentativeDispatch ? String(formData.get("dispatchArrangement") || "stock_transfer") : "";
+    const depositAmount = dispatchArrangement === "refundable_deposit" ? Number(formData.get("depositAmount") || 0) : 0;
+    const paymentType = isInternalDispatch
+      ? "none"
+      : isWalkInDispatch
+        ? "cash"
+        : isRepresentativeDispatch
+          ? dispatchArrangement === "rep_purchase" ? "cash" : dispatchArrangement === "refundable_deposit" ? "deposit" : "none"
+          : String(formData.get("paymentType") || "");
     const recipientChoice = String(formData.get("recipientNameChoice") || "").trim();
     const otherRecipient = String(formData.get("recipientNameOther") || "").trim();
     const recipientName = recipientChoice === "__other__" ? otherRecipient : recipientChoice;
@@ -4138,8 +4180,10 @@ export function bindInventory({ root, store, signal }) {
 
     if (message) message.textContent = "";
 
-    if (!items.length || items.some((item) => !item.productId || !item.packagingQuantity || item.packagingQuantity <= 0 || !item.quantity || item.quantity <= 0) || !recipientName || !dispatchDate || !expectedDeliveryAt || (!isInternalDispatch && !paymentType)) {
-      if (message) message.textContent = "Complete every product, quantity, recipient, payment method, and delivery date.";
+    if (!items.length || items.some((item) => !item.productId || !item.packagingQuantity || item.packagingQuantity <= 0 || !item.quantity || item.quantity <= 0) || !recipientName || !dispatchDate || !expectedDeliveryAt || (!isInternalDispatch && !paymentType) || (dispatchArrangement === "refundable_deposit" && (!Number.isFinite(depositAmount) || depositAmount <= 0))) {
+      if (message) message.textContent = dispatchArrangement === "refundable_deposit"
+        ? "Enter the stock deposit amount and complete the required dispatch details."
+        : "Complete every product, quantity, recipient, payment method, and delivery date.";
       return;
     }
 
@@ -4184,6 +4228,8 @@ export function bindInventory({ root, store, signal }) {
       recipientType,
       recipientName,
       paymentType,
+      dispatchArrangement,
+      depositAmount,
       destination: formData.get("destination"),
       dispatchDate,
       expectedDeliveryAt,

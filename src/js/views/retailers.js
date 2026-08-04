@@ -3,10 +3,10 @@ import {
   getCreditLimitForParty,
   getCustomerOrderCompletion,
   getCustomerRating
-} from "../services/calculations.js?v=20260722";
+} from "../services/calculations.js?v=20260804i";
 import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../services/rbac.js?v=20260802c";
-import { isModuleEnabled } from "../services/features.js";
+import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { getNigeriaLgas, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../data/nigeria-locations.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";

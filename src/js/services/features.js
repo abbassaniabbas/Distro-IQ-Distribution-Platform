@@ -1,4 +1,4 @@
-import { stockCategoryIdForProduct } from "./calculations.js?v=20260722";
+import { stockCategoryIdForProduct } from "./calculations.js?v=20260804i";
 
 export const FEATURE_MODULES = [
   "raw_materials",

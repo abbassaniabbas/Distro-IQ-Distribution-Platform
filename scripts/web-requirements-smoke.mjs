@@ -195,7 +195,7 @@ const representativeCustodySalesFixture = {
   routes: [],
   retailers: []
 };
-assert.equal(calculateMetrics(representativeCustodySalesFixture).orderRevenue, 48000, "the finance ledger calculation must remain unchanged for the existing representative dispatch invoice");
+assert.equal(calculateMetrics(representativeCustodySalesFixture).orderRevenue, 0, "legacy representative dispatches must be treated as stock transfers rather than factory sales");
 assert.equal(getFinancialSalesLines(representativeCustodySalesFixture).reduce((total, line) => total + line.revenue, 0), 30000, "Product Revenue must use the actual customer sale rather than representative stock custody value");
 assert.equal(ceoActualSalesRevenue(representativeCustodySalesFixture), 30000, "the CEO Sales card must show the actual ₦30,000 customer sale instead of the ₦48,000 representative stock dispatch");
 
@@ -531,7 +531,7 @@ productRevenueCleanupStore.dispatch({
   type: "SET_OPERATIONAL_RECORDS",
   collections: {
     products: [{ id: "SKU-CHIPS", sku: "SKU-CHIPS", name: "Plantain Chips", stockCategory: "finished_products", unitPrice: 500, unitCost: 200 }],
-    invoices: [{ id: "INV-KEEP" }, { id: "INV-DELETE" }],
+    invoices: [{ id: "INV-KEEP" }, { id: "INV-DELETE", orderId: "ORDER-KEEP" }],
     salesReports: [{ id: "REPORT-KEEP" }, { id: "REPORT-DELETE" }],
     creditLimits: [
       { id: "LIMIT-REP", partyType: "Sales Representative", partyName: "Rep" },
@@ -553,6 +553,8 @@ productRevenueCleanupStore.dispatch({
   }
 });
 productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "invoices", ids: ["INV-DELETE"] });
+assert.equal(productRevenueCleanupStore.getState().orders.find((order) => order.id === "ORDER-KEEP").invoiceDeleted, true, "deleting an explicit invoice must prevent its linked order from regenerating the document");
+assert.equal(getInvoiceRecords(productRevenueCleanupStore.getState()).some((invoice) => invoice.id === "INV-DELETE"), false, "a deleted invoice must leave no visible derived copy");
 productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "sales_reports", ids: ["REPORT-DELETE"] });
 productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "representative_credit_limits", ids: ["LIMIT-REP"] });
 productRevenueCleanupStore.dispatch({ type: "DELETE_CEO_DATA_RECORDS", scope: "representative_credit_history", ids: ["HISTORY-DELETE"] });
@@ -1018,6 +1020,7 @@ const rawMaterialSale = store.getState().stockTransactions.find((item) => item.p
 assert.ok(rawMaterialSale, "raw-material sale must create a stock movement");
 assert.ok(store.getState().orders.some((order) => order.transactionId === rawMaterialSale.id), "raw-material sale must create an order");
 assert.ok(store.getState().invoices.some((invoice) => invoice.transactionId === rawMaterialSale.id), "raw-material sale must create an invoice");
+assert.match(store.getState().invoices.find((invoice) => invoice.transactionId === rawMaterialSale.id).id, /^FAC-INV-/, "direct factory customer sales must use factory invoice numbering");
 
 store.getState().featureModules = [{ clientId: client.id, moduleKey: "raw_materials", enabled: false }];
 globalThis.window.location.hash = "#/inventory?tab=stock-health";
@@ -1043,6 +1046,11 @@ const assignment = state.stockAssignments[0];
 assert.equal(state.products.find((item) => item.id === "SKU-CHIPS").stock, 90, "dispatch must immediately reduce factory stock");
 assert.equal(assignment.assigned, 20);
 assert.equal(assignment.repUserId, "user-rep", "assignment must be scoped to the selected representative account");
+const representativeDispatchNote = state.invoices.find((invoice) => invoice.dispatchId === assignment.dispatchId);
+assert.equal(representativeDispatchNote.documentType, "representative_stock_transfer_note");
+assert.equal(representativeDispatchNote.paymentType, "none");
+assert.equal(representativeDispatchNote.status, "recorded");
+assert.match(representativeDispatchNote.id, /^STK-TRF-/, "consignment stock assignments must use stock-transfer numbering");
 const financialRevenueBeforeRepSale = getFinancialSalesLines(state).reduce((total, line) => total + Number(line.revenue || 0), 0);
 const financialInvoicesBeforeRepSale = getFinancialInvoiceRecords(state).length;
 const financialOrdersBeforeRepSale = getOrdersWithTotals(state).length;
@@ -1072,18 +1080,19 @@ assert.equal(store.getState().offlineSalesQueue.length, 0, "online sync must cle
 assert.equal(store.getState().stockTransactions.find((item) => item.id === sale.id).syncStatus, "synced");
 assert.ok(sale, "walk-in sell-through must be saved");
 assert.equal(sale.partyName, "Walk-in customer");
-assert.equal(sale.paymentType, "not_tracked", "representative customer payment sources must not be recorded");
+assert.equal(sale.paymentType, "cash", "representative customer payments must retain their payment source");
 assert.equal(state.stockAssignments[0].sold, 2);
 const cashInvoice = getInvoiceRecords(state).find((invoice) => invoice.transactionId === sale.id);
 assert.ok(cashInvoice, "every representative customer sale must create a receipt");
-assert.equal(cashInvoice.status, "recorded");
-assert.equal(cashInvoice.paymentType, "not_tracked");
+assert.equal(cashInvoice.status, "paid");
+assert.equal(cashInvoice.paymentType, "cash");
 assert.equal(cashInvoice.repName, "Amina Rep");
 assert.equal(cashInvoice.items[0].productName, "Plantain Chips");
 assert.equal(cashInvoice.financialImpact, false, "representative sell-through receipts must not affect factory finances");
-assert.equal(cashInvoice.documentType, "sales_receipt");
+assert.equal(cashInvoice.documentType, "representative_customer_receipt");
+assert.match(cashInvoice.id, /^REP-REC-/, "paid representative customer sales must use receipt numbering");
 assert.equal(getFinancialSalesLines(state).reduce((total, line) => total + Number(line.revenue || 0), 0), financialRevenueBeforeRepSale + sale.amount, "Product Revenue must increase from the representative's actual customer sale");
-assert.equal(getFinancialInvoiceRecords(state).length, financialInvoicesBeforeRepSale, "representative receipts must not enter the factory invoice ledger");
+assert.equal(getFinancialInvoiceRecords(state).length, financialInvoicesBeforeRepSale + 1, "representative customer receipts must enter company sales without counting the earlier dispatch note");
 assert.equal(getOrdersWithTotals(state).length, financialOrdersBeforeRepSale, "representative sell-through must not create another factory sales order");
 assert.equal(calculateMetrics(state).receivables, receivablesBeforeRepSale, "representative sell-through must not change factory receivables");
 const legacySellThroughState = structuredClone(state);
@@ -1095,7 +1104,7 @@ const legacyInvoice = legacySellThroughState.invoices.find((item) => item.id ===
   delete record.accountingTreatment;
   delete record.documentType;
 });
-assert.equal(getFinancialInvoiceRecords(legacySellThroughState).some((invoice) => invoice.id === cashInvoice.id), false, "historical assignment-linked representative receipts must remain outside factory finance");
+assert.equal(getFinancialInvoiceRecords(legacySellThroughState).some((invoice) => invoice.id === cashInvoice.id), true, "historical assignment-linked representative customer sales must remain in company sales");
 assert.equal(getOrdersWithTotals(legacySellThroughState).some((order) => order.id === cashInvoice.orderId), false, "historical representative sell-through orders must remain outside factory order totals");
 assert.equal(getFinancialSalesLines(legacySellThroughState).some((line) => line.recordId === cashInvoice.orderId || line.id === sale.id), true, "historical assignment-linked customer sales must remain visible in Product Revenue");
 const invoiceDocument = buildInvoiceDocument(cashInvoice, state);
@@ -1104,14 +1113,14 @@ assert.match(invoiceDocument, /Test Factory/);
 assert.match(invoiceDocument, /Walk-in customer/);
 assert.match(invoiceDocument, /Plantain Chips/);
 assert.match(invoiceDocument, /Sold by Amina Rep/);
-assert.match(invoiceDocument, /SALES RECEIPT/);
+assert.match(invoiceDocument, /CUSTOMER RECEIPT/);
 assert.doesNotMatch(invoiceDocument, /Representative sell-through record only|Factory revenue was already recognised/);
 assert.doesNotMatch(invoiceDocument, /Payment:/, "representative sales receipts must not expose a customer payment source");
 const invoicePreview = buildInvoicePreviewContent(cashInvoice, state);
 assert.match(invoicePreview, /invoice-modal-document/);
 assert.match(invoicePreview, /Bill to/);
 assert.match(invoicePreview, /Plantain Chips/);
-assert.match(invoicePreview, /Sales receipt/);
+assert.match(invoicePreview, /Customer receipt/);
 assert.doesNotMatch(invoicePreview, /Representative sell-through record only|factory revenue was already recognised/i);
 assert.doesNotMatch(invoicePreview, /iframe/);
 const factoryRepresentativeInvoice = {
@@ -1138,13 +1147,13 @@ const factoryRepresentativeInvoiceState = {
 };
 assert.match(
   buildInvoicePreviewContent(factoryRepresentativeInvoice, factoryRepresentativeInvoiceState),
-  /Bill to[\s\S]*Amina Rep[\s\S]*invoice-modal-origin-note">From factory</,
-  "factory stock invoices to sales representatives must show the origin note below Bill to"
+  /Transferred to[\s\S]*Amina Rep[\s\S]*invoice-modal-origin-note">From factory</,
+  "factory stock transfer notes to sales representatives must show the origin note below the recipient"
 );
 assert.match(
   buildInvoiceDocument(factoryRepresentativeInvoice, factoryRepresentativeInvoiceState),
-  /<h2>Bill to<\/h2>[\s\S]*Amina Rep[\s\S]*origin-note">From factory</,
-  "downloaded and printed representative stock invoices must retain the factory origin note"
+  /<h2>Transferred to<\/h2>[\s\S]*Amina Rep[\s\S]*origin-note">From factory</,
+  "downloaded and printed representative stock transfer notes must retain the factory origin note"
 );
 assert.doesNotMatch(invoicePreview, /invoice-modal-origin-note">From factory</, "customer sales receipts must not show the factory-assignment note");
 const packagedInvoicePreview = buildInvoicePreviewContent({
@@ -1157,8 +1166,8 @@ const representativeInvoices = renderInvoices({ state: scopeStateForCurrentRole(
 assert.match(representativeInvoices, /My invoices/);
 assert.match(
   representativeInvoices,
-  /Total sales<\/span>[\s\S]*?metric-value">₦1,000<[\s\S]*?Customer sales receipts only/,
-  "representative Total sales must include customer receipts without adding assigned-stock dispatch invoices"
+  /Total sales<\/span>[\s\S]*?metric-value">₦1,000<[\s\S]*?Your customer sales only/,
+  "representative Total sales must include customer receipts without adding stock-transfer documents"
 );
 assert.doesNotMatch(
   representativeInvoices,
@@ -1169,6 +1178,18 @@ assert.match(representativeInvoices, /js-download-invoice/);
 assert.match(representativeInvoices, /js-print-invoice/);
 assert.match(representativeInvoices, /js-print-invoice-list/);
 assert.match(representativeInvoices, /aria-label="Print invoice list"/);
+assert.match(representativeInvoices, new RegExp(representativeDispatchNote.id), "sales representatives must receive the stock document connected to stock they collected");
+authenticate("user-admin");
+const adminInvoiceDocuments = renderInvoices({ state: store.getState() });
+assert.match(adminInvoiceDocuments, new RegExp(representativeDispatchNote.id), "Admin must be able to review representative stock-transfer notes");
+assert.match(adminInvoiceDocuments, new RegExp(cashInvoice.id), "Admin must also be able to review representative customer receipts");
+assert.match(adminInvoiceDocuments, /Stock transfer note/);
+assert.match(adminInvoiceDocuments, /Customer receipt/);
+authenticate("user-store");
+const storeKeeperInvoiceDocuments = renderInvoices({ state: store.getState() });
+assert.match(storeKeeperInvoiceDocuments, new RegExp(representativeDispatchNote.id), "Store Keeper must receive representative stock-transfer notes");
+assert.doesNotMatch(storeKeeperInvoiceDocuments, new RegExp(cashInvoice.id), "Store Keeper invoice access must remain limited to representative stock documents");
+authenticate("user-rep");
 const sharedCustomerInvoiceState = {
   ...state,
   accounts: [
@@ -1303,7 +1324,8 @@ assert.match(repDashboard, /rep-sale-item-quantity/);
 assert.match(repDashboard, /rep-sale-item-packaging/);
 assert.match(repDashboard, /rep-sale-item-price/);
 assert.match(repDashboard, /rep-sale-item-remove[\s\S]*js-remove-rep-sale-item/, "Quick Sale fields and remove control must use the contained item-row layout");
-assert.doesNotMatch(repDashboard, /name="salePaymentType"|name="returnPaymentType"/, "representative sales and returns must not ask where customer money came from");
+assert.match(repDashboard, /name="salePaymentType"/, "representative sales must record whether the customer paid or bought on credit");
+assert.doesNotMatch(repDashboard, /name="returnPaymentType"/, "customer returns do not require a second payment-source field");
 
 store.dispatch({
   type: "SUBMIT_REP_REPORT",
@@ -1455,6 +1477,11 @@ assert.equal(defaultExpectedDeliveryDate, defaultDispatchDate, "expected deliver
 assert.match(defaultDispatchForm, /name="dispatchPackagingType"/, "factory dispatch must accept configured packaging types");
 assert.match(defaultDispatchForm, /Destination \/ drop-off point \(optional\)/, "factory dispatch must identify the destination as optional");
 assert.doesNotMatch(defaultDispatchForm, /name="destination"[^>]*required/, "factory dispatch must not require a destination");
+assert.match(defaultDispatchForm, /name="dispatchArrangement"[\s\S]*value="stock_transfer">Consignment</, "representative dispatch must default to a non-sale stock transfer");
+assert.match(defaultDispatchForm, /value="rep_purchase">Sales rep purchase</, "representative dispatch must support an outright purchase");
+assert.match(defaultDispatchForm, /value="refundable_deposit">Stock deposit</, "representative dispatch must support a stock deposit");
+assert.match(defaultDispatchForm, /data-rep-deposit-field hidden[\s\S]*Stock deposit amount \(₦\)[\s\S]*name="depositAmount"[^>]*disabled/, "the stock deposit amount must be hidden and disabled until Stock deposit is selected");
+assert.doesNotMatch(defaultDispatchForm, /Consignment - no payment|Rep purchase - paid cash|Refundable stock deposit|Refundable deposit amount/);
 assert.match(storeKeeperInventory, /field stock-health-type-filter/);
 
 assert.equal(effectiveOrderStatus({ status: "in_transit", expectedDeliveryAt: "2026-07-01" }, "2026-07-11"), "delayed");
@@ -1713,7 +1740,7 @@ assert.match(ceoSubmittedReports, /js-review-report/, "CEO must inherit report r
 authenticate("user-store");
 const storeKeeperDashboard = renderDashboard({ state: store.getState() });
 assert.match(storeKeeperDashboard, /Tola Store/);
-assert.deepEqual(currentUserPermissions(store.getState()).nav, ["dashboard", "inventory", "activity-log", "settings"]);
+assert.deepEqual(currentUserPermissions(store.getState()).nav, ["dashboard", "inventory", "invoices", "activity-log", "settings"]);
 assert.equal(currentUserPermissions(store.getState()).canFulfillPurchaseOrders, false);
 assert.match(storeKeeperDashboard, /storekeeper-factory-stock-dropdown/);
 assert.match(storeKeeperDashboard, /<details>/);
@@ -2042,11 +2069,14 @@ assert.match(financeOverview, /Credit aging[\s\S]*₦1,500/, "open credit orders
 
 globalThis.window.location.hash = "#/finance?tab=invoices";
 const ceoFinanceInvoices = renderFinance({ state: store.getState() });
-assert.match(ceoFinanceInvoices, /Download, print, and confirm customer payments/);
+assert.match(ceoFinanceInvoices, /Review each document type, download records, and confirm credit payments/);
 assert.match(ceoFinanceInvoices, /js-view-invoice/);
 assert.match(ceoFinanceInvoices, /js-download-invoice/);
 assert.match(ceoFinanceInvoices, /data-ceo-delete-selected="invoices"/);
-assert.match(ceoFinanceInvoices, /<thead>[\s\S]*data-ceo-select-all="invoices"[\s\S]*<th>Invoice<\/th>/);
+assert.match(ceoFinanceInvoices, /<thead>[\s\S]*data-ceo-select-all="invoices"[\s\S]*<th>Document<\/th>/);
+assert.match(ceoFinanceInvoices, /Factory customer invoice/);
+assert.match(ceoFinanceInvoices, /Customer receipt/);
+assert.match(ceoFinanceInvoices, /Stock transfer note/);
 assert.doesNotMatch(ceoFinanceInvoices, /data-ceo-clear-section|>Clear invoices</);
 assert.doesNotMatch(ceoFinanceInvoices, /data-reset-workspace-scope="finance"/, "the broad finance clear control must stay on Overview only");
 
@@ -2168,6 +2198,7 @@ authenticate("user-rep");
 assert.equal(scopeStateForCurrentRole(store.getState()).stockAssignments.length, 1, "reactivated products must return to representative stock flows");
 
 store.getState().retailers = [{ id: "RTL-CREDIT", name: "Credit Corner", channel: "Retailer" }];
+store.getState().creditLimits.push({ id: "CR-CREDIT-CORNER", partyType: "Customer", partyName: "Credit Corner", limit: 5000, balance: 0, paymentPeriodDays: 14 });
 const financialInvoiceCountBeforeCreditSellThrough = getFinancialInvoiceRecords(store.getState()).length;
 store.dispatch({
   type: "LOG_REP_TRANSACTION",
@@ -2182,12 +2213,48 @@ store.dispatch({
   repName: "Amina Rep"
 });
 const creditSaleInvoice = getInvoiceRecords(store.getState()).find((invoice) => invoice.customerName === "Credit Corner");
-assert.ok(creditSaleInvoice, "every representative customer sale must create a receipt");
-assert.equal(creditSaleInvoice.status, "recorded");
-assert.equal(creditSaleInvoice.paymentType, "not_tracked");
+assert.ok(creditSaleInvoice, "every representative customer credit sale must create an invoice");
+assert.equal(creditSaleInvoice.status, "open");
+assert.equal(creditSaleInvoice.paymentType, "credit");
 assert.equal(creditSaleInvoice.financialImpact, false);
-assert.equal(getFinancialInvoiceRecords(store.getState()).length, financialInvoiceCountBeforeCreditSellThrough, "customer credit recorded by a representative must not add a factory receivable");
-assert.equal(store.getState().creditLimits.some((limit) => limit.partyName === "Credit Corner"), false, "representative customer credit must not create or change a factory credit balance");
+assert.equal(creditSaleInvoice.documentType, "representative_customer_invoice");
+assert.match(creditSaleInvoice.id, /^REP-INV-/, "representative credit sales must use credit-invoice numbering");
+assert.equal(getFinancialInvoiceRecords(store.getState()).length, financialInvoiceCountBeforeCreditSellThrough + 1, "representative customer credit must appear as a company receivable without counting stock dispatch as sales");
+assert.equal(store.getState().creditLimits.find((limit) => limit.partyName === "Credit Corner").balance, creditSaleInvoice.amount, "representative customer credit must increase that customer's balance");
+
+store.dispatch({
+  type: "UPDATE_REP_CREDIT_INVOICE",
+  invoiceId: creditSaleInvoice.id,
+  status: "open",
+  dueAt: "2099-08-20",
+  paymentNote: "Customer promised a bank transfer"
+});
+let updatedRepCreditInvoice = store.getState().invoices.find((invoice) => invoice.id === creditSaleInvoice.id);
+assert.equal(updatedRepCreditInvoice.dueAt, "2099-08-20", "the representative must be able to update an unpaid credit invoice");
+assert.equal(updatedRepCreditInvoice.paymentNote, "Customer promised a bank transfer");
+store.dispatch({
+  type: "UPDATE_REP_CREDIT_INVOICE",
+  invoiceId: creditSaleInvoice.id,
+  status: "paid",
+  dueAt: "2099-08-20",
+  paymentNote: "Paid by bank transfer"
+});
+updatedRepCreditInvoice = store.getState().invoices.find((invoice) => invoice.id === creditSaleInvoice.id);
+assert.equal(updatedRepCreditInvoice.status, "paid", "the representative must be able to confirm payment");
+assert.equal(store.getState().creditLimits.find((limit) => limit.partyName === "Credit Corner").balance, 0, "confirming payment must clear the customer balance");
+store.dispatch({
+  type: "UPDATE_REP_CREDIT_INVOICE",
+  invoiceId: creditSaleInvoice.id,
+  status: "paid",
+  dueAt: "2099-08-20",
+  paymentNote: "Paid by bank transfer - receipt confirmed"
+});
+updatedRepCreditInvoice = store.getState().invoices.find((invoice) => invoice.id === creditSaleInvoice.id);
+assert.match(updatedRepCreditInvoice.paymentNote, /receipt confirmed/, "the representative must also be able to update notes after payment");
+const representativeCreditInvoicePage = renderInvoices({ state: scopeStateForCurrentRole(store.getState()) });
+assert.match(representativeCreditInvoicePage, /id="rep-credit-invoice-modal"/);
+assert.match(representativeCreditInvoicePage, /js-edit-rep-credit-invoice/);
+assert.match(representativeCreditInvoicePage, /Representative customer credit invoice/);
 
 const stockBeforeFactoryReturn = store.getState().products.find((product) => product.id === "SKU-CHIPS").stock;
 const outstandingBeforeFactoryReturn = store.getState().stockAssignments.find((item) => item.id === assignment.id).assigned
@@ -2496,7 +2563,7 @@ multiDispatchStore.dispatch({
   ],
   recipientType: "Sales Representative",
   recipientName: "Multi Rep",
-  paymentType: "credit",
+  dispatchArrangement: "stock_transfer",
   dispatchDate: "2026-07-15",
   expectedDeliveryAt: "2026-07-16",
   staffName: "Multi CEO"
@@ -2508,17 +2575,18 @@ assert.equal(multiDispatchState.stockTransactions.find((transaction) => transact
 assert.equal(multiDispatchState.stockAssignments.length, 2, "each selected product must create a representative assignment");
 assert.equal(multiDispatchState.stockTransactions.filter((transaction) => transaction.dispatchId).length, 2, "one dispatch transaction must be recorded per product");
 assert.equal(multiDispatchState.orders[0].items.length, 2, "factory dispatch order must contain every selected product");
-assert.equal(multiDispatchState.invoices[0].items.length, 2, "factory dispatch invoice must contain every selected product");
+assert.equal(multiDispatchState.invoices[0].items.length, 2, "stock transfer note must contain every selected product");
 assert.equal(multiDispatchState.invoices[0].amount, 3100);
-assert.equal(multiDispatchState.invoices[0].paymentType, "credit");
-assert.equal(multiDispatchState.invoices[0].status, "open");
-assert.equal(multiDispatchState.creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 3100);
+assert.equal(multiDispatchState.invoices[0].paymentType, "none");
+assert.equal(multiDispatchState.invoices[0].status, "recorded");
+assert.equal(multiDispatchState.invoices[0].documentType, "representative_stock_transfer_note");
+assert.equal(multiDispatchState.creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0);
 const multiDispatchInvoicePreview = buildInvoicePreviewContent(multiDispatchState.invoices[0], multiDispatchState);
 assert.match(multiDispatchInvoicePreview, /Plantain Chips 50g/);
 assert.match(multiDispatchInvoicePreview, /Kuli Kuli 100g/);
-assert.match(multiDispatchInvoicePreview, /Credit/);
-assert.match(multiDispatchInvoicePreview, /Collected by[\s\S]*Multi Rep/, "factory dispatch invoices must identify who collected the stock");
-assert.doesNotMatch(multiDispatchInvoicePreview, /Sold by/, "factory dispatch invoices must not label the collector as the seller");
+assert.doesNotMatch(multiDispatchInvoicePreview, /Credit/);
+assert.match(multiDispatchInvoicePreview, /Transferred to[\s\S]*Multi Rep/, "stock transfer notes must identify the representative receiving the stock");
+assert.doesNotMatch(multiDispatchInvoicePreview, /Sold by/, "stock transfer notes must not label the recipient as the seller");
 const multiDispatchQuickView = buildInvoiceQuickViewMarkup(multiDispatchState.invoices[0], multiDispatchState);
 assert.match(multiDispatchQuickView, /js-download-invoice-preview/);
 assert.match(multiDispatchQuickView, /aria-label="Download invoice"/);
@@ -2531,7 +2599,7 @@ const quickSaleInvoiceView = buildInvoiceQuickViewMarkup(multiDispatchState.invo
 assert.match(quickSaleInvoiceView, /aria-label="Save invoice"/);
 assert.match(quickSaleInvoiceView, /js-print-invoice-preview/);
 multiDispatchStore.dispatch({ type: "MARK_INVOICE_PAID", invoiceId: multiDispatchState.invoices[0].id });
-assert.equal(multiDispatchStore.getState().invoices[0].status, "paid");
+assert.equal(multiDispatchStore.getState().invoices[0].status, "recorded", "stock transfer notes must not be markable as paid");
 assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0);
 const invoiceCountBeforeRejectedDispatch = multiDispatchStore.getState().invoices.length;
 multiDispatchStore.dispatch({
@@ -2540,7 +2608,7 @@ multiDispatchStore.dispatch({
   recipientType: "Sales Representative",
   recipientName: "Multi Rep",
   destination: "Van 12",
-  paymentType: "cash",
+  dispatchArrangement: "rep_purchase",
   dispatchDate: "2026-07-15",
   expectedDeliveryAt: "2026-07-16",
   staffName: "Multi CEO"
@@ -2553,7 +2621,7 @@ multiDispatchStore.dispatch({
   recipientType: "Sales Representative",
   recipientName: "Multi Rep",
   destination: "Van 12",
-  paymentType: "cash",
+  dispatchArrangement: "rep_purchase",
   dispatchDate: "2026-07-15",
   expectedDeliveryAt: "2026-07-16",
   staffName: "Multi CEO"
@@ -2561,7 +2629,46 @@ multiDispatchStore.dispatch({
 assert.equal(multiDispatchStore.getState().invoices[0].paymentType, "cash");
 assert.equal(multiDispatchStore.getState().invoices[0].status, "paid");
 assert.equal(multiDispatchStore.getState().invoices[0].amount, 1300);
-assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0, "cash dispatch must not increase representative credit");
+assert.equal(multiDispatchStore.getState().invoices[0].documentType, "representative_purchase_receipt");
+assert.match(multiDispatchStore.getState().invoices[0].id, /^SRP-\d+$/, "sales rep purchase receipts must use one prefix followed by the number");
+assert.doesNotMatch(multiDispatchStore.getState().invoices[0].id, /^SRP-REC-|^REP-STK-REC-/, "sales rep purchase receipt numbers must not contain three sections");
+assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0, "representative cash purchases must not increase representative credit");
+const purchasedStockState = structuredClone(multiDispatchStore.getState());
+const purchasedAssignment = purchasedStockState.stockAssignments.find((item) => item.productId === "MULTI-A" && item.dispatchArrangement === "rep_purchase");
+const purchaseRevenue = getFinancialSalesLines(purchasedStockState).reduce((total, line) => total + Number(line.revenue || 0), 0);
+purchasedStockState.stockTransactions.unshift({
+  id: "TXN-PURCHASED-RESALE",
+  type: "sale",
+  productId: "MULTI-A",
+  quantity: 1,
+  amount: 500,
+  grossAmount: 500,
+  paymentType: "cash",
+  partyName: "Purchased-stock customer",
+  assignmentId: purchasedAssignment.id,
+  assignmentIds: [purchasedAssignment.id],
+  assignmentAllocations: [{ assignmentId: purchasedAssignment.id, quantity: 1 }],
+  date: "2026-07-15"
+});
+assert.equal(getFinancialSalesLines(purchasedStockState).reduce((total, line) => total + Number(line.revenue || 0), 0), purchaseRevenue, "a representative's later resale of purchased stock must not count as a second factory sale");
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  items: [{ productId: "MULTI-B", quantity: 1 }],
+  recipientType: "Sales Representative",
+  recipientName: "Multi Rep",
+  destination: "Van 12",
+  dispatchArrangement: "refundable_deposit",
+  depositAmount: 500,
+  dispatchDate: "2026-07-15",
+  expectedDeliveryAt: "2026-07-16",
+  staffName: "Multi CEO"
+});
+assert.equal(multiDispatchStore.getState().invoices[0].documentType, "representative_deposit_receipt");
+assert.equal(multiDispatchStore.getState().invoices[0].amount, 500);
+assert.equal(multiDispatchStore.getState().invoices[0].stockValue, 800);
+assert.equal(multiDispatchStore.getState().invoices[0].paymentType, "deposit");
+assert.equal(multiDispatchStore.getState().invoices[0].status, "paid");
+assert.match(buildInvoicePreviewContent(multiDispatchStore.getState().invoices[0], multiDispatchStore.getState()), /Stock deposit[\s\S]*₦500/);
 const assignmentsBeforeWalkInDispatch = multiDispatchStore.getState().stockAssignments.length;
 const revenueBeforeWalkInDispatch = getFinancialSalesLines(multiDispatchStore.getState()).reduce((total, line) => total + Number(line.revenue || 0), 0);
 multiDispatchStore.dispatch({
@@ -2583,7 +2690,24 @@ assert.equal(walkInDispatchState.invoices[0].paymentType, "cash", "walk-in facto
 assert.equal(getFinancialSalesLines(walkInDispatchState).reduce((total, line) => total + Number(line.revenue || 0), 0), revenueBeforeWalkInDispatch + 1000, "walk-in factory dispatch must add one factory sale");
 globalThis.window.location.hash = "#/finance";
 const inflowFinanceOverview = renderFinance({ state: walkInDispatchState });
-assert.match(inflowFinanceOverview, /Cash in[\s\S]*₦5,400/, "cash inflow must include paid representative dispatches and factory walk-in sales");
+assert.match(inflowFinanceOverview, /Cash in[\s\S]*₦2,800/, "cash inflow must include representative purchases, refundable deposits, and factory walk-in sales without counting consignment transfers");
+
+multiDispatchStore.dispatch({
+  type: "RECORD_STOCK_DISPATCH",
+  items: [{ productId: "MULTI-A", quantity: 1 }],
+  recipientType: "Supermarket",
+  recipientName: "Direct Factory Customer",
+  destination: "Customer warehouse",
+  paymentType: "credit",
+  dispatchDate: "2026-07-15",
+  expectedDeliveryAt: "2026-07-16",
+  staffName: "Multi CEO"
+});
+const directFactoryCustomerInvoice = multiDispatchStore.getState().invoices[0];
+assert.equal(directFactoryCustomerInvoice.documentType, "factory_customer_invoice", "a customer buying directly from the factory must receive a factory customer invoice");
+assert.match(directFactoryCustomerInvoice.id, /^FAC-INV-/);
+assert.equal(directFactoryCustomerInvoice.paymentType, "credit");
+assert.equal(directFactoryCustomerInvoice.status, "open");
 
 const pricedPackagingStore = createStore();
 const pricedPackagingClient = {
@@ -2636,18 +2760,19 @@ pricedPackagingStore.dispatch({
   recipientType: "Sales Representative",
   recipientName: "Pricing Rep",
   destination: "Pricing van",
-  paymentType: "credit",
+  dispatchArrangement: "stock_transfer",
   dispatchDate: "2026-07-16",
   expectedDeliveryAt: "2026-07-16",
   staffName: "Pricing CEO"
 });
 let pricedState = pricedPackagingStore.getState();
 assert.equal(pricedState.products.find((product) => product.id === "PRICE-CHIPS").stock, 88, "one carton of ten plus two pieces must deduct exactly twelve pieces");
-assert.equal(pricedState.invoices[0].amount, 2200, "mixed dispatch revenue must use the discounted carton price plus loose-piece price");
-assert.equal(pricedState.invoices[0].items.length, 2, "mixed carton and piece dispatch must retain separate invoice lines");
+assert.equal(pricedState.invoices[0].stockValue, 2200, "mixed stock transfer value must use the discounted carton price plus loose-piece price");
+assert.equal(pricedState.invoices[0].items.length, 2, "mixed carton and piece dispatch must retain separate transfer-note lines");
 assert.equal(pricedState.invoices[0].items.find((item) => item.packagingType === "carton").packagingUnitPrice, 1800);
+assert.equal(pricedState.stockAssignments.length, 2, "each package line must remain a separate backend allocation for reconciliation");
 assert.equal(pricedState.stockAssignments.reduce((total, assignment) => total + assignment.assigned, 0), 12);
-assert.equal(pricedState.creditLimits.find((limit) => limit.partyName === "Pricing Rep").balance, 2200, "credit must use the package-specific mixed dispatch total");
+assert.equal(pricedState.creditLimits.find((limit) => limit.partyName === "Pricing Rep").balance, 0, "consignment stock must not create representative credit");
 assert.match(buildInvoicePreviewContent(pricedState.invoices[0], pricedState), /₦1,800/);
 const pricedFactoryRevenueBeforeSellThrough = getFinancialSalesLines(pricedState).reduce((total, line) => total + Number(line.revenue || 0), 0);
 const pricedFactoryInvoiceCountBeforeSellThrough = getFinancialInvoiceRecords(pricedState).length;
@@ -2662,8 +2787,8 @@ const pricedRepDashboard = renderDashboard({
     }))
   }
 });
-assert.match(pricedRepDashboard, /rep-assigned-piece-stock[^>]*>10<\/strong>[\s\S]*rep-assigned-package-stock[^>]*>1 carton<\/strong>/, "assigned stock must show a carton alongside its exact piece count");
-assert.match(pricedRepDashboard, /rep-assigned-piece-stock[^>]*>2<\/strong>[\s\S]*rep-assigned-package-stock[^>]*>0 cartons \+ 2 pieces<\/strong>/, "loose assigned stock must show its package and piece breakdown");
+assert.equal((pricedRepDashboard.match(/<article class="rep-stock-card"/g) || []).length, 1, "same-day assignments for the same product must render as one assigned-stock card");
+assert.match(pricedRepDashboard, /rep-assigned-piece-stock[^>]*>12<\/strong>[\s\S]*rep-assigned-package-stock[^>]*>1 carton \+ 2 pieces<\/strong>/, "the combined card must show the total pieces and package breakdown");
 assert.match(pricedRepDashboard, /rep-stock-quantity-row[\s\S]*rep-stock-count[\s\S]*rep-stock-package-summary/, "pieces and package quantities must render together in one horizontal stock row");
 pricedPackagingStore.dispatch({
   type: "LOG_REP_SALE",
@@ -2679,14 +2804,14 @@ pricedPackagingStore.dispatch({
 pricedState = pricedPackagingStore.getState();
 assert.equal(pricedState.invoices[0].amount, 2200, "mixed quick-sale invoice must use package-specific prices");
 assert.equal(pricedState.invoices[0].items.length, 2);
-assert.equal(pricedState.invoices[0].documentType, "sales_receipt");
+assert.equal(pricedState.invoices[0].documentType, "representative_customer_receipt");
 assert.equal(pricedState.stockAssignments.reduce((total, assignment) => total + assignment.sold, 0), 12, "mixed sale must consume exactly twelve assigned pieces");
 assert.equal(pricedState.orders.find((order) => order.source === "factory_dispatch")?.status, "delivered", "selling every assigned item must automatically deliver the representative dispatch order for CEO and Admin");
 const pricedSaleLines = getFinancialSalesLines(pricedState).filter((line) => line.source === "Representative customer sale" && line.customerName === "Walk-in customer");
 assert.equal(pricedSaleLines.length, 2, "each representative customer-sale line must appear in Product Revenue");
 assert.equal(getFinancialSalesLines(pricedState).reduce((total, line) => total + Number(line.revenue || 0), 0), pricedFactoryRevenueBeforeSellThrough + 2200, "Product Revenue must recognise the actual customer sale without counting the earlier stock assignment");
-assert.equal(getFinancialInvoiceRecords(pricedState).length, pricedFactoryInvoiceCountBeforeSellThrough, "selling dispatched stock onward must not add a second financial invoice");
-assert.equal(pricedState.creditLimits.find((limit) => limit.partyName === "Pricing Rep").balance, 2200, "representative sell-through must not change the factory dispatch credit balance");
+assert.equal(getFinancialInvoiceRecords(pricedState).length, pricedFactoryInvoiceCountBeforeSellThrough + 1, "the actual representative customer sale must enter sales while the earlier stock transfer note stays excluded");
+assert.equal(pricedState.creditLimits.find((limit) => limit.partyName === "Pricing Rep").balance, 0, "representative sell-through must not create representative dispatch credit");
 
 authenticatePricedPackaging("priced-ceo-user");
 pricedPackagingStore.dispatch({
@@ -2849,7 +2974,7 @@ if (procurementOrder) {
 }
 
 authenticateMulti("multi-store-user");
-assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "inventory", "activity-log", "settings"]);
+assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "inventory", "invoices", "activity-log", "settings"]);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canFulfillPurchaseOrders, false);
 globalThis.window.location.hash = "#/inventory?tab=stock-requests";
 const storeKeeperStockRequests = renderInventory({ state: multiDispatchStore.getState() });

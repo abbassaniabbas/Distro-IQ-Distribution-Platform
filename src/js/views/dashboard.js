@@ -19,11 +19,11 @@ import {
   isRepresentativeSellThroughTransaction,
   getStockHealth,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260802h";
+} from "../services/calculations.js?v=20260804i";
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260801d";
-import { isModuleEnabled } from "../services/features.js";
-import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
+import { isModuleEnabled } from "../services/features.js?v=20260804e";
+import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
@@ -2448,14 +2448,49 @@ function repPackageStockLabels(assignment, state) {
     });
 }
 
+function groupRepStockCards(assignments) {
+  const grouped = new Map();
+
+  assignments.forEach((assignment) => {
+    const key = `${assignment.productId}:${assignment.assignedDate}`;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...assignment,
+        assignmentIds: [assignment.id],
+        assigned: Number(assignment.assigned || 0),
+        sold: Number(assignment.sold || 0),
+        returned: Number(assignment.returned || 0),
+        heldReturns: Number(assignment.heldReturns || 0),
+        outstanding: Number(assignment.outstanding || 0)
+      });
+      return;
+    }
+
+    existing.assignmentIds.push(assignment.id);
+    existing.assigned += Number(assignment.assigned || 0);
+    existing.sold += Number(assignment.sold || 0);
+    existing.returned += Number(assignment.returned || 0);
+    existing.heldReturns += Number(assignment.heldReturns || 0);
+    existing.outstanding += Number(assignment.outstanding || 0);
+  });
+
+  return [...grouped.values()].map((assignment) => ({
+    ...assignment,
+    soldPercent: assignment.assigned ? (assignment.sold / assignment.assigned) * 100 : 0
+  }));
+}
+
 function renderRepStockCards(assignments, state) {
-  if (!assignments.length) {
+  const groupedAssignments = groupRepStockCards(assignments);
+
+  if (!groupedAssignments.length) {
     return '<div class="empty-state">No stock assigned in the past 7 days</div>';
   }
 
   return `
     <div class="rep-stock-grid">
-      ${assignments.map((assignment) => {
+      ${groupedAssignments.map((assignment) => {
         const packageLabels = repPackageStockLabels(assignment, state);
 
         return `
@@ -2708,6 +2743,14 @@ function renderRepQuickLog(state, assignments) {
           </section>
 
           ${renderRepCustomerField(customers, "sale", true)}
+
+          <label class="field">
+            <span>Payment</span>
+            <select name="salePaymentType" required>
+              <option value="cash">Paid</option>
+              <option value="credit">Credit - awaiting payment</option>
+            </select>
+          </label>
 
           <span id="rep-sale-message" class="rep-form-message" role="status" aria-live="polite"></span>
           <button class="button primary rep-save-button" type="submit">
@@ -4329,7 +4372,7 @@ function bindSalesRepDashboard({ root, store }) {
     const customerId = isWalkInSale ? "" : selectedCustomerId;
     const customer = (state.retailers || []).find((item) => item.id === customerId);
     const customerName = isWalkInSale ? "Walk-in customer" : customer?.name || "";
-    const paymentType = "not_tracked";
+    const paymentType = String(formData.get("salePaymentType") || "cash") === "credit" ? "credit" : "cash";
     const repName = currentRepName(state);
     const items = qsa("[data-rep-sale-item-row]", form).map((row) => {
       const productId = String(qs("[data-rep-sale-product]", row)?.value || "");

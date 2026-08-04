@@ -2,12 +2,12 @@ import {
   actionTypeLabel,
   getScopedActivityLogs,
   recordTypeLabel
-} from "../services/activity.js?v=20260801d";
+} from "../services/activity.js?v=20260804e";
 import { formatCurrency, formatNumber } from "../services/formatters.js";
 import { dateIsWithinRange } from "../services/filtering.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { accountForUser, currentUserRole } from "../services/rbac.js?v=20260801d";
-import { isModuleEnabled } from "../services/features.js";
+import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, table } from "../ui/components.js?v=20260724b";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
@@ -15,7 +15,7 @@ import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
   renderManagerReportReview
-} from "./dashboard.js?v=20260804c";
+} from "./dashboard.js?v=20260804e";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
 

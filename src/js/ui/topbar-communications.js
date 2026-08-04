@@ -1,4 +1,4 @@
-import { actionTypeLabel, getScopedActivityLogs, isProductionActivityEntry } from "../services/activity.js?v=20260801d";
+import { actionTypeLabel, getScopedActivityLogs, isProductionActivityEntry } from "../services/activity.js?v=20260804e";
 import {
   accountForCurrentUser,
   initials,

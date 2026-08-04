@@ -1947,8 +1947,10 @@
   display: none;
 }
 
-[data-dispatch-payment-field][hidden] {
-  display: none;
+[data-dispatch-payment-field][hidden],
+[data-rep-dispatch-arrangement-field][hidden],
+[data-rep-deposit-field][hidden] {
+  display: none !important;
 }
 
 .dispatch-items-builder {

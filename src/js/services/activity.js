@@ -1,7 +1,7 @@
 import { createId } from "./tenant.js?v=20260801d";
 import { currentUserRole } from "./rbac.js?v=20260801d";
 import { formatCurrency, formatNumber } from "./formatters.js";
-import { isRepresentativeSellThroughTransaction } from "./calculations.js?v=20260722";
+import { isRepresentativeSellThroughTransaction } from "./calculations.js?v=20260804i";
 
 export const ACTION_LABELS = {
   created: "Created",

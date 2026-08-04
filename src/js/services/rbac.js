@@ -61,7 +61,7 @@ const ROLE_PERMISSIONS = {
     canFulfillPurchaseOrders: false
   },
   store_keeper: {
-    nav: ["dashboard", "inventory", "activity-log", "settings"],
+    nav: ["dashboard", "inventory", "invoices", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,

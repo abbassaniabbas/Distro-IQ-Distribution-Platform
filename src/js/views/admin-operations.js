@@ -1,4 +1,4 @@
-import { assignmentOutstanding, getFinancialSalesLines, stockCategoryIdForProduct } from "../services/calculations.js?v=20260722";
+import { assignmentOutstanding, getFinancialSalesLines, stockCategoryIdForProduct } from "../services/calculations.js?v=20260804i";
 import { formatCurrency, formatDate, formatDateTime, formatNumber, statusText } from "../services/formatters.js";
 import { currentUserRole, salesRepresentativeAccounts } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";

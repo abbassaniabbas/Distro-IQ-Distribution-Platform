@@ -1,16 +1,16 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js?v=20260801d";
-import { createStore } from "./state/store.js?v=20260802h";
+import { createStore } from "./state/store.js?v=20260804k";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
 import { loadWorkspace, loadWorkspaceFeatureModules, loadWorkspacePackagingState, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260801b";
-import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260722";
+import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260804e";
 import { setCurrencySettings } from "./services/formatters.js";
-import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js?v=20260802c";
+import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js?v=20260804e";
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
 import { createOperationalSync } from "./services/operational-sync.js?v=20260802c";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "./services/global-search.js?v=20260802c";
 import { createInactivitySession } from "./services/inactivity-session.js?v=20260801d";
-import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=20260722";
+import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=20260804i";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
@@ -20,16 +20,16 @@ import {
   getTopbarNotificationItems,
   getUnreadNotificationCount,
   getUnreadMessageCount
-} from "./ui/topbar-communications.js?v=20260801d";
+} from "./ui/topbar-communications.js?v=20260804e";
 import { showToast } from "./ui/toast.js";
-import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260804c";
-import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260801d";
+import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260804e";
+import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260804e";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js?v=20260801d";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260804c";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260802i";
-import { renderInventory, bindInventory } from "./views/inventory.js?v=20260802a";
-import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260804b";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260804g";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260804i";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260804i";
+import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260804i";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js?v=20260801d";
 import {
@@ -38,14 +38,14 @@ import {
   renderOnboardingConfirmation,
   bindOnboardingConfirmation
 } from "./views/onboarding.js?v=20260801d";
-import { renderOrders, bindOrders } from "./views/orders.js?v=20260801d";
+import { renderOrders, bindOrders } from "./views/orders.js?v=20260804e";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js?v=20260801d";
-import { renderProduction, bindProduction } from "./views/production.js?v=20260801e";
-import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260801d";
-import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260802c";
+import { renderProduction, bindProduction } from "./views/production.js?v=20260804e";
+import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260804f";
+import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260804e";
 import { renderSettings, bindSettings } from "./views/settings.js?v=20260801d";
-import { renderTeam, bindTeam } from "./views/team.js?v=20260801d";
+import { renderTeam, bindTeam } from "./views/team.js?v=20260804e";
 
 const routes = {
   loading: {

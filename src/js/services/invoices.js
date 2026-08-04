@@ -1,6 +1,10 @@
 import { currencySymbolFor, formatDate, statusText } from "./formatters.js";
 import { packagingQuantityLabel } from "./packaging.js";
-import { isRepresentativeSellThroughInvoice } from "./calculations.js?v=20260722";
+import {
+  isRepresentativePurchasedStockSellThroughTransaction,
+  isRepresentativeSellThroughInvoice,
+  representativeSellThroughFinancialFactor
+} from "./calculations.js?v=20260804i";
 import { escapeHtml } from "../ui/dom.js";
 import { icon } from "../ui/icons.js";
 
@@ -27,29 +31,72 @@ function invoiceStatus(invoice) {
   return invoice.dueAt && invoice.dueAt < new Date().toISOString().slice(0, 10) ? "overdue" : "open";
 }
 
+export const INVOICE_DOCUMENT_TYPES = {
+  FACTORY_CUSTOMER_INVOICE: "factory_customer_invoice",
+  REPRESENTATIVE_CUSTOMER_RECEIPT: "representative_customer_receipt",
+  REPRESENTATIVE_CUSTOMER_INVOICE: "representative_customer_invoice",
+  REPRESENTATIVE_DISPATCH_NOTE: "representative_dispatch_note",
+  REPRESENTATIVE_PURCHASE_RECEIPT: "representative_purchase_receipt",
+  REPRESENTATIVE_DEPOSIT_RECEIPT: "representative_deposit_receipt",
+  REPRESENTATIVE_STOCK_TRANSFER_NOTE: "representative_stock_transfer_note"
+};
+
+export function invoiceDocumentType(invoice, state = {}) {
+  const explicitType = String(invoice?.documentType || "").trim().toLowerCase();
+  if (Object.values(INVOICE_DOCUMENT_TYPES).includes(explicitType)) return explicitType;
+
+  const sourceOrder = (state.orders || []).find((order) => order.id === invoice?.orderId);
+  if (isFactoryRepresentativeInvoice(invoice, state, sourceOrder)) {
+    return INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DISPATCH_NOTE;
+  }
+  if (isRepresentativeSellThroughInvoice(invoice, state)) {
+    return String(invoice?.paymentType || sourceOrder?.paymentType || "").toLowerCase().includes("credit")
+      ? INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE
+      : INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT;
+  }
+  return INVOICE_DOCUMENT_TYPES.FACTORY_CUSTOMER_INVOICE;
+}
+
+export function invoiceDocumentLabel(invoice, state = {}) {
+  const type = invoiceDocumentType(invoice, state);
+  if (type === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DISPATCH_NOTE) return "Stock transfer note";
+  if (type === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT) return "Customer receipt";
+  if (type === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE) return "Representative customer credit invoice";
+  if (type === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT) return "Sales rep purchase receipt";
+  if (type === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT) return "Stock deposit receipt";
+  if (type === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE) return "Stock transfer note";
+  return "Factory customer invoice";
+}
+
 export function getInvoiceRecords(state) {
   const ordersById = new Map((state.orders || []).map((order) => [order.id, order]));
   const retailersById = new Map((state.retailers || []).map((retailer) => [retailer.id, retailer]));
   const explicitInvoices = (state.invoices || []).map((invoice) => {
     const order = ordersById.get(invoice.orderId);
     const retailer = retailersById.get(invoice.retailerId || order?.retailerId);
-    const representativeSellThrough = isRepresentativeSellThroughInvoice(invoice, state);
-
-    return {
+    const record = {
       ...invoice,
       customerName: invoice.customerName || retailer?.name || order?.customerName || "Customer",
       customerAddress: invoice.customerAddress || retailer?.address || "",
       customerPhone: invoice.customerPhone || retailer?.contactPhone || "",
       collectedBy: invoice.collectedBy || (order?.source === "factory_dispatch" ? (invoice.customerName || order?.customerName || "Customer") : ""),
-      paymentType: representativeSellThrough ? "not_tracked" : invoice.paymentType || order?.paymentType || "cash",
+      paymentType: invoice.paymentType || order?.paymentType || "cash",
       repName: invoice.repName || order?.repName || "Sales Representative",
       repUserId: invoice.repUserId || order?.repUserId || "",
       items: invoice.items?.length ? invoice.items : (order?.items || []),
       amount: Number(invoice.amount ?? orderTotal(order)),
       financialImpact: invoice.financialImpact ?? order?.financialImpact ?? true,
       accountingTreatment: invoice.accountingTreatment || order?.accountingTreatment || "factory_revenue",
-      documentType: invoice.documentType || order?.documentType || "invoice",
-      status: representativeSellThrough ? "recorded" : invoiceStatus(invoice)
+      documentType: invoice.documentType || order?.documentType || "",
+      status: invoiceStatus(invoice)
+    };
+    const documentType = invoiceDocumentType(record, state);
+    return {
+      ...record,
+      documentType,
+      status: documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT
+        ? "paid"
+        : record.status
     };
   });
   const linkedOrderIds = new Set(explicitInvoices.map((invoice) => invoice.orderId).filter(Boolean));
@@ -62,11 +109,10 @@ export function getInvoiceRecords(state) {
       const retailer = retailersById.get(order.retailerId);
       const issuedAt = dateOnly(order.createdAt || order.updatedAt);
       const isCredit = String(order.paymentType || "").toLowerCase().includes("credit");
-      const representativeSellThrough = isRepresentativeSellThroughInvoice({ orderId: order.id }, state);
       const limit = limitsByName.get(String(order.customerName || "").trim().toLowerCase());
       const dueAt = isCredit ? (dateOnly(order.dueAt) || addDays(issuedAt, limit?.paymentPeriodDays ?? 14)) : issuedAt;
 
-      return {
+      const record = {
         id: `INV-${order.id}`,
         clientId: state.client?.id || order.clientId || "",
         orderId: order.id,
@@ -80,13 +126,21 @@ export function getInvoiceRecords(state) {
         amount: orderTotal(order),
         financialImpact: order.financialImpact ?? true,
         accountingTreatment: order.accountingTreatment || "factory_revenue",
-        documentType: order.documentType || "invoice",
-        status: representativeSellThrough ? "recorded" : invoiceStatus({ status: order.paymentStatus === "recorded" ? "recorded" : order.paymentStatus === "paid" ? "paid" : "open", dueAt }),
-        paymentType: representativeSellThrough ? "not_tracked" : order.paymentType || "cash",
+        documentType: order.documentType || "",
+        status: invoiceStatus({ status: order.paymentStatus === "recorded" ? "recorded" : order.paymentStatus === "paid" ? "paid" : "open", dueAt }),
+        paymentType: order.paymentType || "cash",
         repName: order.repName || "Sales Representative",
         repUserId: order.repUserId || "",
         items: order.items || [],
         derived: true
+      };
+      const documentType = invoiceDocumentType(record, state);
+      return {
+        ...record,
+        documentType,
+        status: documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT
+          ? "paid"
+          : record.status
       };
     });
 
@@ -95,7 +149,31 @@ export function getInvoiceRecords(state) {
 }
 
 export function getFinancialInvoiceRecords(state) {
-  return getInvoiceRecords(state).filter((invoice) => !isRepresentativeSellThroughInvoice(invoice, state));
+  const transactionMap = new Map((state.stockTransactions || []).map((transaction) => [String(transaction.id || ""), transaction]));
+  const nonSalesTypes = new Set([
+    INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DISPATCH_NOTE,
+    INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT,
+    INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE
+  ]);
+
+  return getInvoiceRecords(state).flatMap((invoice) => {
+    const type = invoiceDocumentType(invoice, state);
+    if (nonSalesTypes.has(type)) return [];
+    if (![INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT, INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE].includes(type)) return [invoice];
+    const transactionIds = [invoice.transactionId, ...(invoice.transactionIds || []), ...(invoice.items || []).map((item) => item.transactionId)]
+      .map(String)
+      .filter(Boolean);
+    const linkedTransactions = [...new Set(transactionIds)].map((id) => transactionMap.get(id)).filter(Boolean);
+    if (!linkedTransactions.length) return [invoice];
+    if (linkedTransactions.every((transaction) => isRepresentativePurchasedStockSellThroughTransaction(transaction, state))) return [];
+
+    const linkedAmount = linkedTransactions.reduce((total, transaction) => total + Math.max(0, Number(transaction.amount || 0)), 0);
+    const financialAmount = linkedTransactions.reduce((total, transaction) => (
+      total + Math.max(0, Number(transaction.amount || 0)) * representativeSellThroughFinancialFactor(transaction, state)
+    ), 0);
+    const financialFactor = linkedAmount ? Math.max(0, Math.min(1, financialAmount / linkedAmount)) : 1;
+    return financialFactor >= 1 ? [invoice] : [{ ...invoice, amount: Number(invoice.amount || 0) * financialFactor }];
+  });
 }
 
 function money(value, client) {
@@ -150,12 +228,17 @@ export function buildInvoicePreviewContent(invoice, state) {
   const total = Number(invoice.amount ?? items.reduce((sum, item) => (
     sum + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)))
   ), 0));
-  const isSalesReceipt = isRepresentativeSellThroughInvoice(invoice, state);
-  const documentLabel = isSalesReceipt ? "Sales receipt" : "Invoice";
+  const documentType = invoiceDocumentType(invoice, state);
+  const isSalesReceipt = documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT;
+  const isPurchaseReceipt = documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT;
+  const isDepositReceipt = documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT;
+  const isTransferNote = [INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DISPATCH_NOTE, INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE].includes(documentType);
+  const hidePaymentTerms = isSalesReceipt || isPurchaseReceipt || isDepositReceipt || isTransferNote;
+  const documentLabel = invoiceDocumentLabel(invoice, state);
   const sourceOrder = (state.orders || []).find((order) => order.id === invoice.orderId);
   const isFactoryDispatch = Boolean(invoice.dispatchId || sourceOrder?.source === "factory_dispatch");
   const isFactoryRepresentativeDispatch = isFactoryRepresentativeInvoice(invoice, state, sourceOrder);
-  const handlingLabel = isFactoryDispatch ? "Collected by" : "Sold by";
+  const handlingLabel = isPurchaseReceipt ? "Purchased by" : isDepositReceipt ? "Deposit from" : isTransferNote ? "Transferred to" : isFactoryDispatch ? "Collected by" : "Sold by";
   const handlingName = isFactoryDispatch
     ? (invoice.collectedBy || invoice.customerName || "Customer")
     : (invoice.repName || "Sales Representative");
@@ -179,19 +262,20 @@ export function buildInvoicePreviewContent(invoice, state) {
 
       <div class="invoice-modal-details">
         <section>
-          <span>Bill to</span>
+          <span>${isDepositReceipt ? "Received from" : isTransferNote ? "Transferred to" : isPurchaseReceipt ? "Sold to" : "Bill to"}</span>
           <strong>${escapeHtml(invoice.customerName || "Customer")}</strong>
           ${isFactoryRepresentativeDispatch ? '<small class="invoice-modal-origin-note">From factory</small>' : ""}
           ${invoice.customerAddress ? `<p>${escapeHtml(invoice.customerAddress)}</p>` : ""}
           ${invoice.customerPhone ? `<p>${escapeHtml(invoice.customerPhone)}</p>` : ""}
         </section>
         <section>
-          <span>${documentLabel} details</span>
+          <span>${isTransferNote ? "Transfer details" : isDepositReceipt ? "Deposit details" : isPurchaseReceipt ? "Purchase details" : `${documentLabel} details`}</span>
           <dl>
             <div><dt>Issued</dt><dd>${escapeHtml(formatDate(invoice.issuedAt))}</dd></div>
-            ${isSalesReceipt ? "" : `<div><dt>Due</dt><dd>${escapeHtml(formatDate(invoice.dueAt))}</dd></div>`}
-            ${isSalesReceipt ? "" : `<div><dt>Payment</dt><dd>${escapeHtml(statusText(invoice.paymentType))}</dd></div>`}
+            ${hidePaymentTerms ? "" : `<div><dt>Due</dt><dd>${escapeHtml(formatDate(invoice.dueAt))}</dd></div>`}
+            ${hidePaymentTerms ? "" : `<div><dt>Payment</dt><dd>${escapeHtml(statusText(invoice.paymentType))}</dd></div>`}
             <div><dt>${handlingLabel}</dt><dd>${escapeHtml(handlingName)}</dd></div>
+            ${isDepositReceipt && Number(invoice.stockValue || 0) > 0 ? `<div><dt>Stock value</dt><dd>${escapeHtml(money(invoice.stockValue, client))}</dd></div>` : ""}
           </dl>
         </section>
       </div>
@@ -217,7 +301,7 @@ export function buildInvoicePreviewContent(invoice, state) {
       </div>
 
       <div class="invoice-modal-total">
-        <span>Total</span>
+        <span>${isDepositReceipt ? "Stock deposit" : isTransferNote ? "Stock value" : isPurchaseReceipt ? "Purchase total" : "Total"}</span>
         <strong>${escapeHtml(money(total, client))}</strong>
       </div>
 
@@ -234,12 +318,17 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
   const companyName = client.documentBusinessName || client.companyName || "DistroIQ Company";
   const items = invoice.items || [];
   const total = Number(invoice.amount ?? items.reduce((sum, item) => sum + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0));
-  const isSalesReceipt = isRepresentativeSellThroughInvoice(invoice, state);
-  const documentLabel = isSalesReceipt ? "SALES RECEIPT" : "INVOICE";
+  const documentType = invoiceDocumentType(invoice, state);
+  const isSalesReceipt = documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT;
+  const isPurchaseReceipt = documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT;
+  const isDepositReceipt = documentType === INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT;
+  const isTransferNote = [INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_DISPATCH_NOTE, INVOICE_DOCUMENT_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE].includes(documentType);
+  const hidePaymentTerms = isSalesReceipt || isPurchaseReceipt || isDepositReceipt || isTransferNote;
+  const documentLabel = invoiceDocumentLabel(invoice, state).toUpperCase();
   const sourceOrder = (state.orders || []).find((order) => order.id === invoice.orderId);
   const isFactoryDispatch = Boolean(invoice.dispatchId || sourceOrder?.source === "factory_dispatch");
   const isFactoryRepresentativeDispatch = isFactoryRepresentativeInvoice(invoice, state, sourceOrder);
-  const handlingLabel = isFactoryDispatch ? "Collected by" : "Sold by";
+  const handlingLabel = isPurchaseReceipt ? "Purchased by" : isDepositReceipt ? "Deposit from" : isTransferNote ? "Transferred to" : isFactoryDispatch ? "Collected by" : "Sold by";
   const handlingName = isFactoryDispatch
     ? (invoice.collectedBy || invoice.customerName || "Customer")
     : (invoice.repName || "Sales Representative");
@@ -294,14 +383,14 @@ export function buildInvoiceDocument(invoice, state, options = {}) {
             <div class="invoice-title"><h1>${documentLabel}</h1><p>${escapeHtml(invoice.id)}</p><span class="status">${escapeHtml(statusText(invoice.status))}</span></div>
           </header>
           <div class="details">
-            <section><h2>Bill to</h2><strong>${escapeHtml(invoice.customerName || "Customer")}</strong>${isFactoryRepresentativeDispatch ? '<p class="muted origin-note">From factory</p>' : ""}${invoice.customerAddress ? `<p class="muted">${escapeHtml(invoice.customerAddress)}</p>` : ""}${invoice.customerPhone ? `<p class="muted">${escapeHtml(invoice.customerPhone)}</p>` : ""}</section>
-            <section><h2>Sale details</h2><strong>${handlingLabel} ${escapeHtml(handlingName)}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p>${isSalesReceipt ? "" : `<p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p>`}</section>
+            <section><h2>${isDepositReceipt ? "Received from" : isTransferNote ? "Transferred to" : isPurchaseReceipt ? "Sold to" : "Bill to"}</h2><strong>${escapeHtml(invoice.customerName || "Customer")}</strong>${isFactoryRepresentativeDispatch ? '<p class="muted origin-note">From factory</p>' : ""}${invoice.customerAddress ? `<p class="muted">${escapeHtml(invoice.customerAddress)}</p>` : ""}${invoice.customerPhone ? `<p class="muted">${escapeHtml(invoice.customerPhone)}</p>` : ""}</section>
+            <section><h2>${isTransferNote ? "Transfer details" : isDepositReceipt ? "Deposit details" : isPurchaseReceipt ? "Purchase details" : "Sale details"}</h2><strong>${handlingLabel} ${escapeHtml(handlingName)}</strong><p class="muted">Issued ${escapeHtml(formatDate(invoice.issuedAt))}</p>${hidePaymentTerms ? "" : `<p class="muted">Payment: ${escapeHtml(statusText(invoice.paymentType))}</p><p class="muted">Due: ${escapeHtml(formatDate(invoice.dueAt))}</p>`}${isDepositReceipt && Number(invoice.stockValue || 0) > 0 ? `<p class="muted">Stock value: ${escapeHtml(money(invoice.stockValue, client))}</p>` : ""}</section>
           </div>
           <table><thead><tr><th>Product</th><th>Quantity</th><th>Unit price</th><th>Amount</th></tr></thead><tbody>${items.map((item) => {
             const lineTotal = Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0)));
             return `<tr><td>${escapeHtml(item.productName || item.productId || "Product")}</td><td>${invoiceQuantityMarkup(item)}</td><td>${escapeHtml(money(invoiceUnitPrice(item), client))}</td><td>${escapeHtml(money(lineTotal, client))}</td></tr>`;
           }).join("") || '<tr><td colspan="4">No product lines recorded</td></tr>'}</tbody></table>
-          <div class="total"><div><strong>Total</strong><strong>${escapeHtml(money(total, client))}</strong></div></div>
+          <div class="total"><div><strong>${isDepositReceipt ? "Stock deposit" : isTransferNote ? "Stock value" : isPurchaseReceipt ? "Purchase total" : "Total"}</strong><strong>${escapeHtml(money(total, client))}</strong></div></div>
           <footer><span>Generated by DistroIQ</span><span>${escapeHtml(companyName)}</span></footer>
         </main>
       </body>
@@ -321,7 +410,7 @@ export function downloadInvoice(invoice, state) {
 }
 
 export function buildInvoiceQuickViewMarkup(invoice, state, options = {}) {
-  const isSalesReceipt = isRepresentativeSellThroughInvoice(invoice, state);
+  const documentLabel = invoiceDocumentLabel(invoice, state);
   const downloadLabel = options.downloadLabel || "Download invoice";
   const downloadIconName = options.downloadIconName || "download";
 
@@ -329,7 +418,7 @@ export function buildInvoiceQuickViewMarkup(invoice, state, options = {}) {
     <section class="stock-modal invoice-preview-modal" role="dialog" aria-modal="true" aria-labelledby="invoice-preview-title">
       <header class="stock-modal-header">
         <div>
-          <span class="eyebrow">${isSalesReceipt ? "Sales receipt" : "Invoice quick view"}</span>
+          <span class="eyebrow">${escapeHtml(documentLabel)}</span>
           <h2 id="invoice-preview-title">${escapeHtml(invoice.id)}</h2>
         </div>
         <div class="invoice-preview-actions">

@@ -1,5 +1,5 @@
 import seedData from "../data/seed-data.js?v=20260801d";
-import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260801d";
+import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260804e";
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
@@ -9,7 +9,7 @@ import {
   isRepresentativeSellThroughTransaction,
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260802h";
+} from "../services/calculations.js?v=20260804i";
 import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260801d";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js?v=20260801d";
@@ -254,7 +254,7 @@ function orderFromSaleTransaction(transaction, state) {
   const customer = (state.retailers || []).find((item) => item.id === transaction.customerId);
   const product = (state.products || []).find((item) => item.id === transaction.productId);
   const representativeSellThrough = isRepresentativeSellThroughTransaction(transaction);
-  const paymentType = representativeSellThrough ? "not_tracked" : transaction.paymentType || "cash";
+  const paymentType = transaction.paymentType || "cash";
   const paymentLabel = String(paymentType).toLowerCase();
   const date = String(transaction.date || transaction.createdAt || todayISO()).slice(0, 10);
   const quantity = Number(transaction.quantity || 0);
@@ -267,7 +267,9 @@ function orderFromSaleTransaction(transaction, state) {
     source: "quick_sale",
     financialImpact: !representativeSellThrough,
     accountingTreatment: representativeSellThrough ? "sell_through_only" : "factory_revenue",
-    documentType: representativeSellThrough ? "sales_receipt" : "invoice",
+    documentType: representativeSellThrough
+      ? (paymentLabel.includes("credit") ? INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE : INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT)
+      : INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE,
     transactionId: transaction.id,
     retailerId: customer?.id || transaction.customerId || "",
     customerName: customer?.name || transaction.partyName || "Walk-in customer",
@@ -276,8 +278,8 @@ function orderFromSaleTransaction(transaction, state) {
     priority: "Normal",
     status: "delivered",
     paymentType,
-    paymentStatus: representativeSellThrough ? "recorded" : paymentLabel.includes("credit") ? "open" : "paid",
-    dueAt: date,
+    paymentStatus: paymentLabel.includes("credit") ? "open" : "paid",
+    dueAt: dateOnly(transaction.dueAt) || date,
     createdAt: date,
     updatedAt: date,
     repName: transaction.recordedBy || "Sales Representative",
@@ -441,11 +443,40 @@ function canManageOrderFlow(state) {
   return currentUserRole(state) === "ceo";
 }
 
-function nextInvoiceId(state) {
+const INVOICE_TYPES = {
+  FACTORY_CUSTOMER_INVOICE: "factory_customer_invoice",
+  REPRESENTATIVE_CUSTOMER_RECEIPT: "representative_customer_receipt",
+  REPRESENTATIVE_CUSTOMER_INVOICE: "representative_customer_invoice",
+  REPRESENTATIVE_DISPATCH_NOTE: "representative_dispatch_note",
+  REPRESENTATIVE_PURCHASE_RECEIPT: "representative_purchase_receipt",
+  REPRESENTATIVE_DEPOSIT_RECEIPT: "representative_deposit_receipt",
+  REPRESENTATIVE_STOCK_TRANSFER_NOTE: "representative_stock_transfer_note"
+};
+
+function nextInvoiceId(state, documentType = INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE) {
+  const formats = {
+    [INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE]: state.client?.factoryInvoiceFormat || state.client?.invoiceFormat || "FAC-INV-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT]: state.client?.representativeReceiptFormat || "REP-REC-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE]: state.client?.representativeCreditInvoiceFormat || "REP-INV-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_DISPATCH_NOTE]: state.client?.representativeDispatchFormat || "DSP-NOTE-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT]: state.client?.representativePurchaseReceiptFormat || "SRP-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT]: state.client?.representativeDepositReceiptFormat || "DEP-REC-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE]: state.client?.representativeStockTransferFormat || "STK-TRF-{0000}"
+  };
+  const prefixes = {
+    [INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE]: "FAC-INV",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT]: "REP-REC",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE]: "REP-INV",
+    [INVOICE_TYPES.REPRESENTATIVE_DISPATCH_NOTE]: "DSP-NOTE",
+    [INVOICE_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT]: "SRP",
+    [INVOICE_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT]: "DEP-REC",
+    [INVOICE_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE]: "STK-TRF"
+  };
+
   return nextFormattedId(
-    state.client?.invoiceFormat || "INV-{0000}",
+    formats[documentType] || state.client?.invoiceFormat || "INV-{0000}",
     (state.invoices || []).map((invoice) => invoice.id),
-    "INV"
+    prefixes[documentType] || "INV"
   );
 }
 
@@ -773,12 +804,17 @@ function createQuickSaleOrder(state, {
   items = [],
   transactionIds = []
 }) {
-  const recordedPaymentType = financialImpact ? String(paymentType || "cash") : "not_tracked";
+  const recordedPaymentType = String(paymentType || "cash").toLowerCase().includes("credit") ? "credit" : "cash";
   const paymentLabel = recordedPaymentType.toLowerCase();
   const today = dateOnly(saleDate) || todayISO();
   const orderId = createId("ORD");
-  const invoiceId = nextInvoiceId(state);
   const isCreditSale = paymentLabel.includes("credit");
+  const documentType = financialImpact
+    ? INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE
+    : isCreditSale
+      ? INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE
+      : INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT;
+  const invoiceId = nextInvoiceId(state, documentType);
   const customerLimit = (state.creditLimits || []).find((limit) => (
     normalized(limit.partyName) === normalized(customer?.name || customerName)
   ));
@@ -816,7 +852,7 @@ function createQuickSaleOrder(state, {
       source: "quick_sale",
       financialImpact,
       accountingTreatment: financialImpact ? "factory_revenue" : "sell_through_only",
-      documentType: financialImpact ? "invoice" : "sales_receipt",
+      documentType,
       transactionId,
       transactionIds: resolvedTransactionIds,
       invoiceId,
@@ -827,7 +863,7 @@ function createQuickSaleOrder(state, {
       priority: "Normal",
       status: "delivered",
       paymentType: recordedPaymentType,
-      paymentStatus: financialImpact ? (isCreditSale ? "open" : "paid") : "recorded",
+      paymentStatus: isCreditSale ? "open" : "paid",
       dueAt: isCreditSale ? dueAt : today,
       createdAt: today,
       updatedAt: today,
@@ -852,11 +888,11 @@ function createQuickSaleOrder(state, {
       issuedAt: today,
       dueAt: isCreditSale ? dueAt : today,
       amount,
-      status: financialImpact ? (isCreditSale ? "open" : "paid") : "recorded",
+      status: isCreditSale ? "open" : "paid",
       paymentType: recordedPaymentType,
       financialImpact,
       accountingTreatment: financialImpact ? "factory_revenue" : "sell_through_only",
-      documentType: financialImpact ? "invoice" : "sales_receipt",
+      documentType,
       repName,
       repUserId: state.user?.id || "",
       items: invoiceItems
@@ -887,21 +923,36 @@ function createDispatchSalesOrder(state, {
   dispatchDate,
   expectedDeliveryAt,
   paymentType,
+  dispatchArrangement = "stock_transfer",
+  depositAmount = 0,
   staffName,
   repUserId = ""
 }) {
   const customer = findRetailerByName(state, recipientName);
   const dispatchesToRepresentative = String(recipientType || "").toLowerCase().includes("representative");
   const orderId = createId("ORD");
-  const invoiceId = nextInvoiceId(state);
-  const isCredit = String(paymentType || "").toLowerCase().includes("credit");
+  const representativeArrangement = dispatchesToRepresentative && ["rep_purchase", "refundable_deposit", "stock_transfer"].includes(dispatchArrangement)
+    ? dispatchArrangement
+    : dispatchesToRepresentative ? "stock_transfer" : "";
+  const documentType = !dispatchesToRepresentative
+    ? INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE
+    : representativeArrangement === "rep_purchase"
+      ? INVOICE_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT
+      : representativeArrangement === "refundable_deposit"
+        ? INVOICE_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT
+        : INVOICE_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE;
+  const invoiceId = nextInvoiceId(state, documentType);
+  const isCredit = !dispatchesToRepresentative && String(paymentType || "").toLowerCase().includes("credit");
   const creditLimit = (state.creditLimits || []).find((limit) => (
     normalized(limit.partyName) === normalized(customer?.name || recipientName)
   ));
   const dueDate = new Date(`${dispatchDate}T12:00:00`);
   dueDate.setDate(dueDate.getDate() + Number(creditLimit?.paymentPeriodDays ?? 14));
   const dueAt = isCredit ? dueDate.toISOString().slice(0, 10) : dispatchDate;
-  const amount = items.reduce((total, item) => total + Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0);
+  const stockValue = items.reduce((total, item) => total + Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0);
+  const refundableDeposit = representativeArrangement === "refundable_deposit" ? Math.max(0, Number(depositAmount || 0)) : 0;
+  const amount = representativeArrangement === "refundable_deposit" ? refundableDeposit : stockValue;
+  const isFactorySale = !dispatchesToRepresentative || representativeArrangement === "rep_purchase";
   const invoiceItems = items.map((item) => ({
     transactionId: item.transactionId || "",
     productId: item.product.id,
@@ -920,6 +971,12 @@ function createDispatchSalesOrder(state, {
       id: orderId,
       clientId: state.client?.id || "",
       source: "factory_dispatch",
+      documentType,
+      dispatchArrangement: representativeArrangement,
+      depositAmount: refundableDeposit,
+      stockValue,
+      financialImpact: isFactorySale,
+      accountingTreatment: isFactorySale ? "factory_revenue" : representativeArrangement === "refundable_deposit" ? "refundable_deposit" : "representative_custody",
       dispatchId,
       transactionId: transactionIds[0] || "",
       transactionIds,
@@ -931,7 +988,7 @@ function createDispatchSalesOrder(state, {
       priority: "Normal",
       status: "in_transit",
       paymentType,
-      paymentStatus: isCredit ? "open" : "paid",
+      paymentStatus: representativeArrangement === "stock_transfer" ? "recorded" : isCredit ? "open" : "paid",
       creditApplied: isCredit,
       dueAt: expectedDeliveryAt || dispatchDate,
       expectedDeliveryAt: expectedDeliveryAt || dispatchDate,
@@ -960,8 +1017,14 @@ function createDispatchSalesOrder(state, {
       issuedAt: dispatchDate,
       dueAt,
       amount,
-      status: isCredit ? "open" : "paid",
+      stockValue,
+      depositAmount: refundableDeposit,
+      status: representativeArrangement === "stock_transfer" ? "recorded" : isCredit ? "open" : "paid",
       paymentType,
+      documentType,
+      dispatchArrangement: representativeArrangement,
+      financialImpact: isFactorySale,
+      accountingTreatment: isFactorySale ? "factory_revenue" : representativeArrangement === "refundable_deposit" ? "refundable_deposit" : "representative_custody",
       collectedBy: recipientName,
       repName: dispatchesToRepresentative ? recipientName : staffName,
       repUserId: dispatchesToRepresentative ? repUserId : state.user?.id || "",
@@ -1456,9 +1519,15 @@ function reducer(currentState, action) {
         return state;
       }
       if (scope === "invoices") {
+        const linkedOrderIds = new Set((state.invoices || [])
+          .filter((invoice) => selected.has(String(invoice.id || "")))
+          .map((invoice) => String(invoice.orderId || ""))
+          .filter(Boolean));
         state.invoices = (state.invoices || []).filter((invoice) => !selected.has(String(invoice.id || "")));
         state.orders = (state.orders || []).map((order) => (
-          selected.has(`INV-${order.id}`) ? { ...order, invoiceDeleted: true } : order
+          linkedOrderIds.has(String(order.id || "")) || selected.has(`INV-${order.id}`)
+            ? { ...order, invoiceDeleted: true }
+            : order
         ));
         return state;
       }
@@ -2609,7 +2678,7 @@ function reducer(currentState, action) {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const customerName = customer?.name || action.customerName || "Walk-in customer";
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
-      const paymentType = "not_tracked";
+      const paymentType = String(action.paymentType || "cash").toLowerCase().includes("credit") ? "credit" : "cash";
       const requestedItems = Array.isArray(action.items) ? action.items : [];
       const saleItems = requestedItems.map((item) => {
         const product = state.products.find((candidate) => candidate.id === item.productId);
@@ -2702,6 +2771,7 @@ function reducer(currentState, action) {
       });
       transactions.forEach((transaction) => { transaction.orderId = orderId; });
       state.stockTransactions = [...transactions, ...(state.stockTransactions || [])];
+      if (paymentType === "credit") updateCreditBalance(state, customerName, totalAmount);
 
       if (action.offline) {
         state.offlineSalesQueue = [
@@ -2722,7 +2792,7 @@ function reducer(currentState, action) {
         actionType: "updated",
         recordType: "customer_supply",
         recordLabel: orderId,
-        summary: `${repName} recorded sell-through of ${transactions.reduce((total, transaction) => total + transaction.quantity, 0)} pieces across ${transactions.length} line${transactions.length === 1 ? "" : "s"} to ${customerName}; factory revenue unchanged`
+        summary: `${repName} recorded customer sales of ${transactions.reduce((total, transaction) => total + transaction.quantity, 0)} pieces across ${transactions.length} line${transactions.length === 1 ? "" : "s"} to ${customerName}`
       });
       const invoice = state.invoices.find((item) => item.orderId === orderId);
       if (invoice) appendActivityLog(state, {
@@ -2730,7 +2800,7 @@ function reducer(currentState, action) {
         actionType: "created",
         recordType: "customer_supply",
         recordLabel: invoice.id,
-        summary: `${invoice.id} customer receipt created for ${customerName} by ${repName}`
+        summary: `${invoice.id} ${paymentType === "credit" ? "customer credit invoice" : "customer receipt"} created for ${customerName} by ${repName}`
       });
       return state;
     }
@@ -2739,7 +2809,7 @@ function reducer(currentState, action) {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const quantity = Math.max(0, Number(action.quantity || 0));
       const transactionType = action.transactionType === "return" ? "return" : "sale";
-      const paymentType = "not_tracked";
+      const paymentType = transactionType === "sale" && String(action.paymentType || "cash").toLowerCase().includes("credit") ? "credit" : "cash";
       const returnDisposition = transactionType === "return"
         ? (action.returnDisposition === "to_store" ? "to_store" : "held_by_rep")
         : "";
@@ -2884,6 +2954,10 @@ function reducer(currentState, action) {
         ...(state.stockTransactions || [])
       ];
 
+      if (transactionType === "sale" && paymentType === "credit") {
+        updateCreditBalance(state, customerName, amount);
+      }
+
       if (transactionType === "sale" && action.offline) {
         state.offlineSalesQueue = [
           ...(state.offlineSalesQueue || []).filter((entry) => entry.transactionId !== transactionId),
@@ -2904,7 +2978,7 @@ function reducer(currentState, action) {
         recordType: "customer_supply",
         recordLabel: product.name,
         summary: transactionType === "sale"
-          ? `${repName} recorded sell-through of ${quantity} ${product.name} to ${customerName}; factory revenue unchanged`
+          ? `${repName} recorded a customer sale of ${quantity} ${product.name} to ${customerName}`
           : `${repName} recorded ${quantity} ${product.name} returned by ${customerName} - ${returnDisposition === "to_store" ? "to store stock" : "held for resale"}`
       });
 
@@ -2916,7 +2990,7 @@ function reducer(currentState, action) {
             actionType: "created",
             recordType: "customer_supply",
             recordLabel: invoice.id,
-            summary: `${invoice.id} customer receipt created for ${customerName} by ${repName}`
+            summary: `${invoice.id} ${paymentType === "credit" ? "customer credit invoice" : "customer receipt"} created for ${customerName} by ${repName}`
           });
         }
       }
@@ -3478,7 +3552,20 @@ function reducer(currentState, action) {
       const isInternalDispatch = normalizedRecipientType.includes("internal");
       const isWalkInDispatch = normalizedRecipientType.includes("walk-in") || normalizedRecipientType.includes("walk in");
       const isRepresentativeDispatch = normalizedRecipientType.includes("representative");
-      const paymentType = isInternalDispatch ? "none" : isWalkInDispatch ? "cash" : normalized(action.paymentType || "cash");
+      const requestedArrangement = normalized(action.dispatchArrangement || "stock_transfer").replaceAll("-", "_");
+      const dispatchArrangement = isRepresentativeDispatch && ["rep_purchase", "refundable_deposit", "stock_transfer"].includes(requestedArrangement)
+        ? requestedArrangement
+        : isRepresentativeDispatch ? "stock_transfer" : "";
+      const depositAmount = dispatchArrangement === "refundable_deposit"
+        ? Math.max(0, Number(action.depositAmount || 0))
+        : 0;
+      const paymentType = isInternalDispatch
+        ? "none"
+        : isWalkInDispatch
+          ? "cash"
+          : isRepresentativeDispatch
+            ? dispatchArrangement === "rep_purchase" ? "cash" : dispatchArrangement === "refundable_deposit" ? "deposit" : "none"
+            : normalized(action.paymentType || "cash");
       const destination = String(action.destination || "").trim();
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
@@ -3511,6 +3598,7 @@ function reducer(currentState, action) {
       });
       const lineKeys = dispatchItems.map((item) => `${item.product?.id || ""}:${item.packagingType}`);
       const hasDuplicateLines = new Set(lineKeys).size !== lineKeys.length;
+      const dispatchStockValue = dispatchItems.reduce((total, item) => total + Number(item.amount || 0), 0);
       const requestedByProduct = dispatchItems.reduce((totals, item) => {
         if (item.product) totals.set(item.product.id, Number(totals.get(item.product.id) || 0) + item.quantity);
         return totals;
@@ -3533,7 +3621,8 @@ function reducer(currentState, action) {
         !isValidISODate(dispatchDate) ||
         (!isInternalDispatch && !isValidISODate(expectedDeliveryAt)) ||
         (!isInternalDispatch && expectedDeliveryAt < dispatchDate) ||
-        (!isInternalDispatch && !["cash", "credit"].includes(paymentType)) ||
+        (!isInternalDispatch && !isRepresentativeDispatch && !["cash", "credit"].includes(paymentType)) ||
+        (dispatchArrangement === "refundable_deposit" && (!Number.isFinite(depositAmount) || depositAmount <= 0)) ||
         !recipientName
       ) {
         return state;
@@ -3554,6 +3643,8 @@ function reducer(currentState, action) {
           dispatchDate,
           expectedDeliveryAt,
           paymentType,
+          dispatchArrangement,
+          depositAmount,
           staffName,
           repUserId: representativeAccount?.userId || ""
         });
@@ -3580,6 +3671,10 @@ function reducer(currentState, action) {
               transactionId,
               invoiceId,
               paymentType,
+              dispatchArrangement,
+              depositAmount: dispatchArrangement === "refundable_deposit" && dispatchStockValue > 0
+                ? depositAmount * (Number(amount || 0) / dispatchStockValue)
+                : 0,
               assigned: quantity,
               sold: 0,
               returned: 0,
@@ -3607,6 +3702,14 @@ function reducer(currentState, action) {
           unitPrice,
           unitCost: Number(product.unitCost || 0),
           paymentType,
+          dispatchArrangement,
+          depositAmount: dispatchArrangement === "refundable_deposit" && dispatchStockValue > 0
+            ? depositAmount * (Number(amount || 0) / dispatchStockValue)
+            : 0,
+          financialImpact: !isRepresentativeDispatch || dispatchArrangement === "rep_purchase",
+          accountingTreatment: !isRepresentativeDispatch || dispatchArrangement === "rep_purchase"
+            ? "factory_revenue"
+            : dispatchArrangement === "refundable_deposit" ? "refundable_deposit" : "representative_custody",
           partyType: recipientType,
           partyName: recipientName,
           recipientName,
@@ -3636,19 +3739,24 @@ function reducer(currentState, action) {
       });
 
       if (orderId) {
+        const dispatchRecordDescription = isRepresentativeDispatch
+          ? dispatchArrangement === "rep_purchase"
+            ? "sales rep purchase"
+            : dispatchArrangement === "refundable_deposit" ? "stock deposit" : "stock transfer"
+          : "factory sale";
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "created",
           recordType: "order",
           recordLabel: orderId,
-          summary: `${orderId} created from factory dispatch to ${recipientName}`
+          summary: `${orderId} recorded as ${dispatchRecordDescription} for ${recipientName}`
         });
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "created",
-          recordType: "invoice",
+          recordType: isRepresentativeDispatch && dispatchArrangement === "stock_transfer" ? "stock_transfer_note" : "receipt",
           recordLabel: invoiceId,
-          summary: `${invoiceId} created for ${recipientName} (${paymentType})`
+          summary: `${invoiceId} created for ${recipientName} (${dispatchRecordDescription})`
         });
       }
 
@@ -4561,10 +4669,56 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "UPDATE_REP_CREDIT_INVOICE": {
+      if (currentUserRole(state) !== "sales_rep") return state;
+      const invoice = state.invoices.find((item) => item.id === action.invoiceId);
+      const account = (state.accounts || []).find((item) => item.userId === state.user?.id);
+      const isOwnedByRepresentative = invoice && (
+        (invoice.repUserId && invoice.repUserId === state.user?.id) ||
+        (!invoice.repUserId && normalized(invoice.repName) === normalized(account?.name || currentActorName(state)))
+      );
+      const isRepresentativeCreditInvoice = (
+        isOwnedByRepresentative &&
+        invoice.documentType === INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE &&
+        normalized(invoice.paymentType).includes("credit")
+      );
+      const nextStatus = action.status === "paid" ? "paid" : "open";
+      const nextDueAt = dateOnly(action.dueAt);
+
+      if (!isRepresentativeCreditInvoice || !isValidISODate(nextDueAt)) return state;
+
+      const wasPaid = normalized(invoice.status) === "paid";
+      const willBePaid = nextStatus === "paid";
+      const order = state.orders.find((item) => item.id === invoice.orderId);
+      invoice.status = nextStatus;
+      invoice.dueAt = nextDueAt;
+      invoice.paymentNote = String(action.paymentNote || "").trim();
+      invoice.paidAt = willBePaid ? (invoice.paidAt || todayISO()) : "";
+      invoice.updatedAt = new Date().toISOString();
+      if (order) {
+        order.paymentStatus = nextStatus;
+        order.dueAt = nextDueAt;
+        order.paymentNote = invoice.paymentNote;
+        order.updatedAt = todayISO();
+      }
+      if (wasPaid !== willBePaid) {
+        updateCreditBalance(state, invoice.customerName, willBePaid ? -Number(invoice.amount || 0) : Number(invoice.amount || 0));
+      }
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: willBePaid ? "paid" : "updated",
+        recordType: "invoice",
+        recordLabel: invoice.id,
+        summary: `${invoice.id} customer credit invoice ${willBePaid ? "marked paid" : "updated by the sales representative"}`
+      });
+      return state;
+    }
+
     case "MARK_INVOICE_PAID": {
       const invoice = state.invoices.find((item) => item.id === action.invoiceId);
-      if (invoice) {
-        const order = state.orders.find((item) => item.id === invoice.orderId);
+      const order = state.orders.find((item) => item.id === invoice?.orderId);
+      const isCreditInvoice = String(invoice?.paymentType || order?.paymentType || "").toLowerCase().includes("credit");
+      if (invoice && currentUserRole(state) === "ceo" && isCreditInvoice) {
         const creditLimit = state.creditLimits.find((item) => normalized(item.partyName) === normalized(invoice.customerName));
         invoice.status = "paid";
         invoice.paidAt = todayISO();

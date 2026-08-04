@@ -1,6 +1,6 @@
 import { formatDate, formatNumber, formatPercent } from "../services/formatters.js";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260801d";
-import { stockCategoryIdForProduct } from "../services/calculations.js?v=20260722";
+import { stockCategoryIdForProduct } from "../services/calculations.js?v=20260804i";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js?v=20260722";

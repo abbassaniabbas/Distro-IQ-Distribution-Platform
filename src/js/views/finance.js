@@ -6,8 +6,9 @@ import {
   getInvoiceAging,
   getRetailerMap,
   isFactoryDispatchToRepresentative,
+  representativeDispatchArrangement,
   summarizeSalesLines
-} from "../services/calculations.js?v=20260802h";
+} from "../services/calculations.js?v=20260804i";
 import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
 import {
   currentUserPermissions,
@@ -15,10 +16,17 @@ import {
   salesRepresentativeAccounts,
   salesRepresentativeNames
 } from "../services/rbac.js?v=20260801d";
-import { isModuleEnabled } from "../services/features.js";
+import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { saveRepresentativeCreditLimit } from "../services/backend.js";
 import { dateIsWithinRange, normalizeDateRange } from "../services/filtering.js";
-import { downloadInvoice, getFinancialInvoiceRecords, openInvoiceQuickView, printInvoice } from "../services/invoices.js?v=20260722d";
+import {
+  downloadInvoice,
+  getFinancialInvoiceRecords,
+  getInvoiceRecords,
+  invoiceDocumentLabel,
+  openInvoiceQuickView,
+  printInvoice
+} from "../services/invoices.js?v=20260804i";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js";
@@ -122,16 +130,19 @@ function renderInvoiceRows(state, permissions) {
   const retailerMap = getRetailerMap(state.retailers);
   const canUpdateCredit = permissions.canSetCreditLimits;
 
-  return getFinancialInvoiceRecords(state).map((invoice, index) => {
+  return getInvoiceRecords(state).map((invoice, index) => {
     const retailer = retailerMap.get(invoice.retailerId);
     const searchIndex = [
       invoice.id,
       retailer?.name,
       invoice.status,
-      invoice.dueAt
+      invoice.dueAt,
+      invoiceDocumentLabel(invoice, state)
     ]
       .join(" ")
       .toLowerCase();
+    const isCreditDocument = String(invoice.paymentType || "").toLowerCase().includes("credit");
+    const canMarkPaid = isCreditDocument && invoice.status !== "paid" && canUpdateCredit && !invoice.derived;
 
     return `
       <tr ${index >= FINANCE_PAGE_SIZE ? "hidden " : ""}data-finance-page-row="invoices" data-search-index="${escapeHtml(searchIndex)}">
@@ -141,6 +152,7 @@ function renderInvoiceRows(state, permissions) {
           <div class="muted">Issued ${formatDate(invoice.issuedAt)}</div>
         </td>
         <td>${escapeHtml(retailer?.name || invoice.customerName || "Customer")}</td>
+        <td><strong>${escapeHtml(invoiceDocumentLabel(invoice, state))}</strong><div class="muted">${escapeHtml(String(invoice.paymentType || "cash").replaceAll("_", " "))}</div></td>
         <td>${statusPill(invoice.status)}</td>
         <td>${formatDate(invoice.dueAt)}</td>
         <td>${formatCurrency(invoice.amount)}</td>
@@ -166,9 +178,9 @@ function renderInvoiceRows(state, permissions) {
             })}
             ${iconButton({
               iconName: "check",
-              label: invoice.status === "paid" ? "Paid" : "Mark paid",
-              className: `invoice-paid-action${invoice.status === "paid" ? " is-paid" : " js-mark-paid"}`,
-              disabled: invoice.status === "paid" || !canUpdateCredit || invoice.derived,
+              label: invoice.status === "paid" ? "Paid" : isCreditDocument ? "Mark paid" : "No payment update",
+              className: `invoice-paid-action${invoice.status === "paid" ? " is-paid" : canMarkPaid ? " js-mark-paid" : ""}`,
+              disabled: !canMarkPaid,
               data: { "invoice-id": invoice.id }
             })}
           </div>
@@ -483,16 +495,14 @@ function getAccountantSummary(state) {
   const cost = salesLines.reduce((total, line) => total + line.cost, 0);
   const profit = salesLines.reduce((total, line) => total + line.profit, 0);
   const cashSalesReceived = salesLines.reduce((total, line) => total + Number(line.cashAmount || 0), 0);
-  const representativeDispatchCash = (state.orders || [])
+  const refundableDepositsReceived = (state.orders || [])
     .filter((order) => isFactoryDispatchToRepresentative(order, state))
-    .filter((order) => !String(order.paymentType || "").toLowerCase().includes("credit"))
-    .reduce((total, order) => total + (order.items || []).reduce((lineTotal, item) => (
-      lineTotal + Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice || item.unitPriceAtSale || 0)))
-    ), 0), 0);
-  const collectedCredit = getFinancialInvoiceRecords(state)
+    .filter((order) => representativeDispatchArrangement(order, state) === "refundable_deposit")
+    .reduce((total, order) => total + Number(order.depositAmount || 0), 0);
+  const collectedCredit = getInvoiceRecords(state)
     .filter((invoice) => invoice.status === "paid" && String(invoice.paymentType || "").toLowerCase().includes("credit") && invoice.paidAt)
     .reduce((total, invoice) => total + Number(invoice.amount || 0), 0);
-  const cashIn = cashSalesReceived + representativeDispatchCash + collectedCredit;
+  const cashIn = cashSalesReceived + refundableDepositsReceived + collectedCredit;
   const creditOwed = (state.creditLimits || []).reduce((total, limit) => total + Number(limit.balance || 0), 0);
   const returns = salesLines.reduce((total, line) => total + Number(line.returnAmount || 0), 0);
   const productMap = new Map((state.products || []).map((product) => [product.id, product]));
@@ -971,12 +981,12 @@ function renderAccountantFinanceTab(activeTabId, state, summary) {
     const canDelete = currentUserRole(state) === "ceo";
     return `
       <section class="panel accountant-invoices-panel">
-        ${panelHeader("Invoices", "Download, print, and confirm customer payments")}
+        ${panelHeader("Invoices and dispatch notes", "Review each document type, download records, and confirm credit payments")}
         ${canDelete ? ceoDeleteControls({
           scope: "invoices"
         }) : ""}
         ${table(
-          ["Invoice", "Customer", "Status", "Due", "Amount", "Actions"],
+          ["Document", "Customer / recipient", "Document type", "Status", "Due", "Amount", "Actions"],
           renderInvoiceRows(state, currentUserPermissions(state)),
           "No invoices available",
           { selectionScope: canDelete ? "invoices" : "" }
@@ -1608,7 +1618,7 @@ export function bindFinance({ root, store, signal }) {
   qsa(".js-view-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getFinancialInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) openInvoiceQuickView(invoice, state);
     });
   });
@@ -1616,7 +1626,7 @@ export function bindFinance({ root, store, signal }) {
   qsa(".js-download-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getFinancialInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) downloadInvoice(invoice, state);
     });
   });
@@ -1624,7 +1634,7 @@ export function bindFinance({ root, store, signal }) {
   qsa(".js-print-invoice", root).forEach((button) => {
     button.addEventListener("click", () => {
       const state = store.getState();
-      const invoice = getFinancialInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
+      const invoice = getInvoiceRecords(state).find((item) => item.id === button.dataset.invoiceId);
       if (invoice) printInvoice(invoice, state);
     });
   });
