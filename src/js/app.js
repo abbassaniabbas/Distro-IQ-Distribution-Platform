@@ -14,7 +14,7 @@ import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=2
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
-import { createModalRenderGuard } from "./ui/modal-render-guard.js?v=20260729a";
+import { createModalRenderGuard } from "./ui/modal-render-guard.js?v=20260805a";
 import {
   bindTopbarCommunications,
   getTopbarNotificationItems,
@@ -45,7 +45,7 @@ import { renderProduction, bindProduction } from "./views/production.js?v=202608
 import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260804f";
 import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260804e";
 import { renderSettings, bindSettings } from "./views/settings.js?v=20260801d";
-import { renderTeam, bindTeam } from "./views/team.js?v=20260804m";
+import { renderTeam, bindTeam } from "./views/team.js?v=20260805a";
 
 const routes = {
   loading: {

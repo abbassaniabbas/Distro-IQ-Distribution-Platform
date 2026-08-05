@@ -18,7 +18,7 @@ import { INACTIVITY_TIMEOUT_MS, remainingInactivityMs, requiresInactivityLogout 
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { REQUIRED_FORM_ALERT_MESSAGE } from "../src/js/ui/form-validation.js";
-import { MODAL_SAFE_BACKGROUND_ACTIONS, hasOpenWorkspaceModal, shouldDeferRenderForModal } from "../src/js/ui/modal-render-guard.js";
+import { FORM_SAFE_BACKGROUND_ACTIONS, MODAL_SAFE_BACKGROUND_ACTIONS, hasActiveWorkspaceForm, hasOpenWorkspaceModal, shouldDeferRenderForModal } from "../src/js/ui/modal-render-guard.js";
 import { renderAuth, renderForgotPassword } from "../src/js/views/auth.js";
 import { renderBackendSetup } from "../src/js/views/backend-setup.js";
 import { renderActivityLog } from "../src/js/views/activity-log.js";
@@ -382,6 +382,20 @@ assert.equal(hasOpenWorkspaceModal(openModalRoot), true, "the shared modal guard
 assert.equal(shouldDeferRenderForModal({ type: "SET_OPERATIONAL_RECORDS" }, openModalRoot), true, "backend refreshes must not rebuild a portal while its modal is open");
 assert.equal(shouldDeferRenderForModal({ type: "SET_OPERATIONAL_RECORDS" }, closedModalRoot), false, "backend refreshes should render normally when no modal is open");
 assert.equal(shouldDeferRenderForModal({ type: "RECORD_STOCK_DISPATCH" }, openModalRoot), false, "a completed modal action must still render its saved result immediately");
+const focusedStaffForm = { dataset: {}, closest(selector) { return selector === "form" ? this : null; } };
+const activeStaffFormRoot = {
+  ownerDocument: { activeElement: focusedStaffForm },
+  contains(element) { return element === focusedStaffForm; },
+  querySelector() { return null; }
+};
+assert.equal(hasActiveWorkspaceForm(activeStaffFormRoot), true, "the render guard must detect a staff form while the user is typing");
+assert.equal(shouldDeferRenderForModal({ type: "SET_OPERATIONAL_RECORDS" }, activeStaffFormRoot), true, "backend refreshes must not rebuild an actively edited form");
+assert.equal(shouldDeferRenderForModal({ type: "SET_WORKSPACE" }, activeStaffFormRoot), false, "a completed staff action must still render its saved workspace result");
+assert.deepEqual(
+  [...FORM_SAFE_BACKGROUND_ACTIONS],
+  ["SET_OPERATIONAL_RECORDS", "SET_FEATURE_MODULES", "SET_PACKAGING_WORKSPACE_STATE", "HYDRATE_PRODUCT_IMAGES", "AUTO_UPDATE_DELAYED_ORDERS"],
+  "only background refresh actions may wait for active form editing to finish"
+);
 assert.deepEqual(
   [...MODAL_SAFE_BACKGROUND_ACTIONS],
   ["SET_WORKSPACE", "SET_OPERATIONAL_RECORDS", "SET_FEATURE_MODULES", "SET_PACKAGING_WORKSPACE_STATE", "HYDRATE_PRODUCT_IMAGES", "AUTO_UPDATE_DELAYED_ORDERS"],

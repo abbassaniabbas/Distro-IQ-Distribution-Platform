@@ -439,12 +439,12 @@ export function renderTeam({ state }) {
               <div class="staff-create-fields">
                 <label class="field">
                   <span>Full name</span>
-                  <input name="name" autocomplete="name" placeholder="Ada Okonkwo">
+                  <input name="name" autocomplete="name" placeholder="Ada Okonkwo" required>
                   ${renderFieldError("name")}
                 </label>
                 <label class="field">
                   <span>Email</span>
-                  <input name="email" type="email" autocomplete="email" placeholder="ada@example.com">
+                  <input name="email" type="email" autocomplete="email" placeholder="ada@example.com" required>
                   ${renderFieldError("email")}
                 </label>
                 <label class="field">
@@ -454,7 +454,7 @@ export function renderTeam({ state }) {
                 </label>
                 <label class="field">
                   <span>Role assignment</span>
-                  <select name="role">
+                  <select name="role" required>
                     ${renderRoleOptions(state)}
                   </select>
                   ${renderFieldError("role")}
