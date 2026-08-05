@@ -368,6 +368,12 @@
   max-width: 100%;
   padding: 12px 10px;
   border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.topbar-notification-row:focus-visible {
+  outline: 3px solid rgba(25, 169, 116, 0.3);
+  outline-offset: -2px;
 }
 
 .topbar-notification-row > div:nth-child(2) {

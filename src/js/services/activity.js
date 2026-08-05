@@ -1,5 +1,5 @@
-import { createId } from "./tenant.js?v=20260801d";
-import { currentUserRole } from "./rbac.js?v=20260801d";
+import { createId } from "./tenant.js?v=20260804m";
+import { currentUserRole } from "./rbac.js?v=20260804m";
 import { formatCurrency, formatNumber } from "./formatters.js";
 import { isRepresentativeSellThroughTransaction } from "./calculations.js?v=20260804i";
 
@@ -62,6 +62,7 @@ export const RECORD_LABELS = {
   production_plan: "Production Plan",
   production_qc: "Quality Control",
   production_transfer: "Finished-goods Transfer",
+  production_output: "Finished Product Output",
   production_issue: "Production Issue"
 };
 
@@ -93,7 +94,8 @@ export function createActivityLog({
   recordLabel = "",
   actor,
   summary,
-  details = []
+  details = [],
+  notificationRoles = []
 }) {
   return {
     id: createId("LOG"),
@@ -106,6 +108,7 @@ export function createActivityLog({
     actorEmail: actor?.email || "",
     summary,
     details,
+    notificationRoles: Array.isArray(notificationRoles) ? notificationRoles : [],
     createdAt: new Date().toISOString()
   };
 }
@@ -174,6 +177,7 @@ function stockMovementActivityLogs(state, existingLogs) {
   const productMap = new Map((state.products || []).map((product) => [product.id, product]));
 
   return (state.stockTransactions || [])
+    .filter((transaction) => !transaction.productionSupervisorEntry)
     .map((transaction) => {
       const product = productMap.get(transaction.productId);
       const productName = transaction.productName || product?.name || transaction.productId || "Stock item";
@@ -248,7 +252,7 @@ function financialTransactionActivityLogs(state) {
 
 export function isProductionActivityEntry(entry, state) {
   if (!entry) return false;
-  if (["production_plan", "production_batch", "production_qc", "production_transfer", "production_issue"].includes(entry.recordType)) return true;
+  if (["production_plan", "production_batch", "production_qc", "production_transfer", "production_output", "production_issue"].includes(entry.recordType)) return true;
 
   if (entry.recordType === "stock_movement") {
     const movementType = String(entry.stockMovementType || "").trim().toLowerCase();

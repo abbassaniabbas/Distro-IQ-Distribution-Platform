@@ -1,5 +1,5 @@
 import { loadOperationalWorkspace, syncOperationalWorkspace } from "./backend.js";
-import { currentUserRole } from "./rbac.js?v=20260801d";
+import { currentUserRole } from "./rbac.js?v=20260804m";
 
 export const OPERATIONAL_COLLECTIONS = [
   "products",
@@ -60,6 +60,9 @@ const ROLE_COLLECTIONS = {
   production_manager: new Set([
     "products", "stockTransactions", "productionBatches", "productionPlans", "retailers",
     "productionIssues", "activityLogs"
+  ]),
+  production_supervisor: new Set([
+    "products", "stockTransactions", "activityLogs"
   ])
 };
 

@@ -1,5 +1,5 @@
 export const INACTIVITY_TIMEOUT_MS = 30 * 60 * 1000;
-export const INACTIVITY_LOGOUT_ROLES = new Set(["ceo", "admin", "store_keeper", "production_manager"]);
+export const INACTIVITY_LOGOUT_ROLES = new Set(["ceo", "admin", "store_keeper", "production_manager", "production_supervisor"]);
 
 export function requiresInactivityLogout(role) {
   return INACTIVITY_LOGOUT_ROLES.has(String(role || "").toLowerCase());

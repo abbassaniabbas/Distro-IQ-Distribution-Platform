@@ -1,5 +1,5 @@
 import seedData from "../data/seed-data.js?v=20260801d";
-import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260804e";
+import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260804m";
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
@@ -10,9 +10,9 @@ import {
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
 } from "../services/calculations.js?v=20260804i";
-import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260801d";
+import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260804m";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
-import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js?v=20260801d";
+import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js?v=20260804m";
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../services/packaging.js";
 
 function clone(value) {
@@ -1656,7 +1656,7 @@ function reducer(currentState, action) {
     }
 
     case "CREATE_ACCOUNT": {
-      if (!state.client?.id || !["sales_rep", "store_keeper", "production_manager", "admin"].includes(action.payload?.role)) return state;
+      if (!state.client?.id || !["sales_rep", "store_keeper", "production_manager", "production_supervisor", "admin"].includes(action.payload?.role)) return state;
       const { account, invite } = createAccountInvite({
         client: state.client,
         ...action.payload
@@ -1700,7 +1700,7 @@ function reducer(currentState, action) {
         !account ||
         account.userId === state.user?.id ||
         normalizeRole(account.role) === "ceo" ||
-        !["sales_rep", "store_keeper", "production_manager", "admin"].includes(nextRole)
+        !["sales_rep", "store_keeper", "production_manager", "production_supervisor", "admin"].includes(nextRole)
       ) return state;
 
       const previousRole = normalizeRole(account.role);
@@ -4295,16 +4295,19 @@ function reducer(currentState, action) {
     case "FLAG_SALES_REPORT": {
       if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const report = state.salesReports.find((item) => item.id === action.reportId);
-      if (report) {
+      const flagReason = String(action.note || "").trim().slice(0, 500);
+      if (report && flagReason) {
         report.status = "flagged";
-        report.reviewNote = String(action.note || "Needs correction").trim();
+        report.reviewNote = flagReason;
+        report.flagReason = flagReason;
         report.flaggedAt = new Date().toISOString();
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "flagged",
           recordType: "report",
           recordLabel: report.id,
-          summary: `${report.repName} report flagged for correction`
+          summary: `${report.repName} report flagged for correction`,
+          details: flagReason
         });
       }
       return state;
@@ -4349,6 +4352,58 @@ function reducer(currentState, action) {
           summary: `${product.name} restocked by ${quantity}`
         });
       }
+      return state;
+    }
+
+    case "RECORD_SUPERVISOR_FINISHED_PRODUCT": {
+      if (currentUserRole(state) !== "production_supervisor") return state;
+      const product = state.products.find((item) => item.id === action.productId);
+      const quantity = Number(action.quantity || 0);
+      if (
+        !product ||
+        product.status === "inactive" ||
+        stockCategoryIdForProduct(product) !== "finished_products" ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isInteger(quantity)
+      ) return state;
+
+      const recordedAt = new Date().toISOString();
+      const recordedBy = currentActorName(state);
+      product.stock = Number(product.stock || 0) + quantity;
+      product.updatedAt = todayISO();
+      product.soldOutAt = "";
+      state.stockTransactions = [{
+        id: createId("TXN"),
+        clientId: state.client?.id || "",
+        type: "production output",
+        productId: product.id,
+        productName: product.name,
+        quantity,
+        unit: product.unit || "unit",
+        amount: 0,
+        unitPrice: Number(product.unitPrice || 0),
+        unitCost: Number(product.unitCost || 0),
+        paymentType: "none",
+        partyType: "Production",
+        partyName: "Finished production",
+        date: todayISO(),
+        createdAt: recordedAt,
+        recordedBy,
+        recordedByUserId: state.user?.id || "",
+        movementDirection: "in",
+        purpose: "Finished product output",
+        productionSupervisorEntry: true
+      }, ...(state.stockTransactions || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "recorded",
+        recordType: "production_output",
+        recordLabel: product.id,
+        summary: `${recordedBy} added ${quantity} ${product.name} to finished-product stock`,
+        details: [`New stock balance: ${product.stock} ${product.unit || "units"}`],
+        notificationRoles: ["ceo", "admin"]
+      });
       return state;
     }
 

@@ -17,6 +17,11 @@ export const ROLE_OPTIONS = [
     description: "Production plans, work assignments, batches, quality control, finished-goods transfer, issues, and reports"
   },
   {
+    value: "production_supervisor",
+    label: "Production Supervisor",
+    description: "Record completed finished products"
+  },
+  {
     value: "admin",
     label: "Admin",
     description: "Sales documentation, representative stock requests, and Purchase Order coordination"
@@ -113,6 +118,30 @@ const ROLE_PERMISSIONS = {
     canTransferFinishedGoods: true,
     canReportProductionIssues: true,
     canViewProductionReports: true
+  },
+  production_supervisor: {
+    nav: ["dashboard"],
+    canViewCompanyWide: false,
+    canLogSalesReturns: false,
+    canManageProducts: false,
+    canAddStock: false,
+    canAssignStock: false,
+    canReconcileStock: false,
+    canSetCreditLimits: false,
+    canAddCustomers: false,
+    canManageCustomers: false,
+    canReviewReports: false,
+    canManageStockMovements: false,
+    canDispatchStock: false,
+    canViewFinancialReports: false,
+    canExportReports: false,
+    canManageUsers: false,
+    canConfigureFactory: false,
+    canAuditRecords: false,
+    canRequestStock: false,
+    canCoordinateStockRequests: false,
+    canFulfillPurchaseOrders: false,
+    canRecordFinishedProducts: true
   },
   admin: {
     nav: ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"],
@@ -219,7 +248,11 @@ export function canAccessRoute(state, routeId) {
 
   if (setupRoutes.includes(routeId)) return true;
   if (routeId === "platform-console") return Boolean(state.platformAdmin);
-  if (routeId === "messages") return Boolean(state.session && state.client?.id);
+  if (routeId === "messages") return Boolean(
+    state.session &&
+    state.client?.id &&
+    currentUserRole(state) !== "production_supervisor"
+  );
   if (!state.session || !state.client?.id) return true;
   if (!isClientRouteEnabled(state, routeId)) return false;
 

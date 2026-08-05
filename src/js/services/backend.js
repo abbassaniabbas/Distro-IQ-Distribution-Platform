@@ -1153,8 +1153,9 @@ export async function inviteAccount({ client, name, email, phoneNumber, role, st
   }
 
   if (data?.error) {
-    if (role === "production_manager" && /choose a valid role/i.test(String(data.error))) {
-      throw new Error("Backend update required: deploy the latest invite-user function before creating a Production Line Manager.");
+    if (["production_manager", "production_supervisor"].includes(role) && /choose a valid role/i.test(String(data.error))) {
+      const roleName = role === "production_supervisor" ? "Production Supervisor" : "Production Line Manager";
+      throw new Error(`Backend update required: deploy the latest invite-user function before creating a ${roleName}.`);
     }
     throw new Error(friendlyEdgeFunctionMessage(data.error, undefined, { serviceLabel: "staff invitation service" }));
   }

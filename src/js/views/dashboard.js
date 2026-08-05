@@ -21,17 +21,17 @@ import {
   stockCategoryIdForProduct
 } from "../services/calculations.js?v=20260804i";
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
-import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260801d";
+import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260804m";
 import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js?v=20260722";
-import { requestNumberDialog } from "../ui/action-dialog.js";
+import { requestNumberDialog, requestTextDialog } from "../ui/action-dialog.js";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 import { effectivePiecePrice, packagingLineAmount, packagingMultiplier, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260802a";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260804l";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -78,6 +78,7 @@ function dashboardIdentity(state, role = currentUserRole(state)) {
     admin: "Admin",
     store_keeper: "Store Keeper",
     production_manager: "Production Line Manager",
+    production_supervisor: "Production Supervisor",
     sales_rep: "Sales Representative"
   };
 
@@ -1846,6 +1847,49 @@ function renderProductionManagerDashboard(state) {
   `;
 }
 
+function renderProductionSupervisorDashboard(state) {
+  const finishedProducts = activeStockProducts(state.products || [])
+    .filter((product) => stockCategoryIdForProduct(product) === "finished_products")
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
+  const productOptions = finishedProducts
+    .map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`)
+    .join("");
+
+  return `
+    <section class="view dashboard-view production-supervisor-dashboard">
+      ${dashboardIdentity(state, "production_supervisor")}
+      <section class="ceo-command-strip storekeeper-command-strip">
+        <div>
+          <span class="eyebrow">Production Supervisor portal</span>
+          <h2>Record finished products</h2>
+          <p>Add completed output directly to finished-product stock.</p>
+        </div>
+      </section>
+      <section class="panel">
+        ${panelHeader("Finished product output", "CEO and Admin will be notified after the stock is added")}
+        ${finishedProducts.length ? `
+          <form id="production-supervisor-output-form" class="form-grid" novalidate>
+            <label class="field">
+              <span>Finished product *</span>
+              <select name="productId" required>
+                <option value="">Choose a finished product</option>
+                ${productOptions}
+              </select>
+            </label>
+            <label class="field">
+              <span>Quantity completed *</span>
+              <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
+            </label>
+            <div class="form-actions span-full">
+              <button class="button primary" type="submit"><span>Add finished product</span></button>
+            </div>
+          </form>
+        ` : `<div class="empty-state">No finished products are available. Ask the CEO or Admin to create a finished product first.</div>`}
+      </section>
+    </section>
+  `;
+}
+
 function renderRegionalSummary(state) {
   return buildRegionalSummary(state)
     .map(
@@ -2159,7 +2203,7 @@ function renderManagerReportRows(state, { readOnly = false } = {}) {
             ${readOnly ? "" : `
               ${textButton({
                 iconName: "alert",
-                label: "Flag",
+                label: "Reject",
                 className: "js-flag-report",
                 disabled: report.status === "flagged",
                 data: { "report-id": report.id }
@@ -2309,7 +2353,7 @@ function renderReportDetails(report, state) {
       </table>
     </div>
     <div class="report-detail-note">
-      <span class="eyebrow">Review note</span>
+      <span class="eyebrow">${report.status === "flagged" ? "Flag reason" : "Review note"}</span>
       <p>${escapeHtml(report.reviewNote || "No review query has been added.")}</p>
     </div>
   `;
@@ -3415,6 +3459,10 @@ export function renderDashboard({ state }) {
     return renderProductionManagerDashboard(state);
   }
 
+  if (state.session && state.client?.id && role === "production_supervisor") {
+    return renderProductionSupervisorDashboard(state);
+  }
+
   return `
     <section class="view dashboard-view">
       ${dashboardIdentity(state, role)}
@@ -3530,14 +3578,24 @@ export function bindManagerActivitySections({ root, store }) {
   });
 
   qsa(".js-flag-report", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      store.dispatch({
-        type: "FLAG_SALES_REPORT",
-        reportId: button.dataset.reportId,
-        note: "CEO query raised",
-        message: "Report flagged"
-      });
-    });
+    button.addEventListener("click", () => flagSalesReportWithReason(store, button.dataset.reportId));
+  });
+}
+
+async function flagSalesReportWithReason(store, reportId) {
+  const reason = await requestTextDialog({
+    title: "Reject sales report",
+    message: "Explain why this sales report is being flagged. The sales representative and reviewers will see this message.",
+    label: "Reason the report is flagged",
+    placeholder: "Describe the incorrect, missing, or unclear information",
+    confirmLabel: "Reject report"
+  });
+  if (!reason?.trim()) return;
+  store.dispatch({
+    type: "FLAG_SALES_REPORT",
+    reportId,
+    note: reason,
+    message: "Sales report rejected and reason attached"
   });
 }
 
@@ -3583,6 +3641,38 @@ function bindManagerTableExports(root) {
 
 export function bindDashboard({ root, store, signal }) {
   bindSubmittedReportDetails({ root, store });
+
+  const productionSupervisorForm = qs("#production-supervisor-output-form", root);
+  if (productionSupervisorForm) {
+    productionSupervisorForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const data = new FormData(productionSupervisorForm);
+      const productId = String(data.get("productId") || "").trim();
+      const quantity = Number(data.get("quantity") || 0);
+      const state = store.getState();
+      const product = (state.products || []).find((item) => item.id === productId);
+
+      if (
+        !product ||
+        product.status === "inactive" ||
+        stockCategoryIdForProduct(product) !== "finished_products" ||
+        !Number.isFinite(quantity) ||
+        quantity <= 0 ||
+        !Number.isInteger(quantity)
+      ) {
+        return;
+      }
+
+      store.dispatch({
+        type: "RECORD_SUPERVISOR_FINISHED_PRODUCT",
+        productId,
+        quantity,
+        message: `${product.name} finished-product stock updated`
+      });
+      productionSupervisorForm.reset();
+    }, { signal });
+    return;
+  }
 
   if (root.querySelector(".sales-rep-portal")) {
     bindSalesRepDashboard({ root, store });
@@ -3646,14 +3736,7 @@ export function bindDashboard({ root, store, signal }) {
   });
 
   qsa(".js-flag-report", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      store.dispatch({
-        type: "FLAG_SALES_REPORT",
-        reportId: button.dataset.reportId,
-        note: "CEO query raised",
-        message: "Report flagged"
-      });
-    });
+    button.addEventListener("click", () => flagSalesReportWithReason(store, button.dataset.reportId));
   });
 }
 

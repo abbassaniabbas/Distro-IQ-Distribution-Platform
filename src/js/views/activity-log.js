@@ -15,7 +15,7 @@ import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
   renderManagerReportReview
-} from "./dashboard.js?v=20260804e";
+} from "./dashboard.js?v=20260804l";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
 
@@ -182,9 +182,12 @@ function repRecentActivityRows(state) {
       title: report.tripLabel || "Daily report",
       customerName: "CEO review",
       amount: formatCurrency(report.salesAmount),
-      details: `${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned`,
+      details: [
+        `${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned`,
+        report.status === "flagged" && report.reviewNote ? `Flag reason: ${report.reviewNote}` : ""
+      ].filter(Boolean).join(" - "),
       when: report.submittedAt || report.reportDate,
-      search: `report submitted ${report.tripLabel || ""} ${report.status || ""}`
+      search: `report submitted ${report.tripLabel || ""} ${report.status || ""} ${report.reviewNote || ""}`
     }));
 
   return [...transactions, ...reports]
@@ -203,6 +206,7 @@ function renderRepActionOptions(rows) {
 function renderRepRecentRows(rows) {
   return rows.map((row) => {
     const searchIndex = [
+      row.id,
       row.actionLabel,
       row.title,
       row.customerName,
@@ -333,10 +337,12 @@ function renderRows(logs, canDelete = false) {
     const searchIndex = [
       actionLabel,
       recordLabel,
+      entry.id,
       entry.recordLabel,
       entry.actorName,
       entry.actorEmail,
-      entry.summary
+      entry.summary,
+      entry.details
     ]
       .join(" ")
       .toLowerCase();
@@ -362,6 +368,7 @@ function renderRows(logs, canDelete = false) {
         </td>
         <td>
           ${escapeHtml(entry.summary || "Record updated")}
+          ${entry.details ? `<div class="muted">${escapeHtml(entry.details)}</div>` : ""}
         </td>
       </tr>
     `;
@@ -491,6 +498,8 @@ export function bindActivityLog({ root, store, signal }) {
   const previousButton = qs('[data-activity-page="prev"]', root);
   const nextButton = qs('[data-activity-page="next"]', root);
   const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter, recordFilter].filter(Boolean);
+  const notificationFocus = activityRouteParams().get("focus") || "";
+  if (searchFilter && notificationFocus) searchFilter.value = notificationFocus;
 
   function exportActivityTable(mode) {
     const section = tableSectionFromElement(qs("[data-activity-export-table] table", root), "Activity log");

@@ -1,15 +1,20 @@
-import { actionTypeLabel, getScopedActivityLogs, isProductionActivityEntry } from "../services/activity.js?v=20260804e";
+import { actionTypeLabel, getScopedActivityLogs, isProductionActivityEntry } from "../services/activity.js?v=20260804m";
 import {
   accountForCurrentUser,
   initials,
   normalized,
   relativeTime
 } from "../services/messages.js";
-import { currentUserRole } from "../services/rbac.js?v=20260801d";
+import { currentUserRole } from "../services/rbac.js?v=20260804m";
 import { escapeHtml } from "./dom.js";
 
 let activeNotificationPopover = null;
 const NOTIFICATION_DISMISS_DURATION_MS = 260;
+
+function activityNotificationHref(entry) {
+  const focus = String(entry.recordLabel || entry.id || entry.summary || "").trim();
+  return `#/activity-log?tab=activity&focus=${encodeURIComponent(focus)}`;
+}
 
 function emptyNotificationsMarkup(isProductionManager = false) {
   return `<div class="topbar-empty-state">${isProductionManager ? "No production notifications yet" : "No notifications yet"}</div>`;
@@ -27,6 +32,7 @@ export function getTopbarNotificationItems(state) {
   const role = currentUserRole(state);
   const activityItems = getScopedActivityLogs(state)
     .filter((entry) => entry.clientId === state.client.id)
+    .filter((entry) => !Array.isArray(entry.notificationRoles) || !entry.notificationRoles.length || entry.notificationRoles.includes(role))
     .filter((entry) => !(
       entry.recordType === "packaging_settings" &&
       entry.actionType === "requested" &&
@@ -44,6 +50,7 @@ export function getTopbarNotificationItems(state) {
       body: entry.summary || "Workspace activity updated",
       avatar: initials(entry.actorName),
       createdAt: entry.createdAt,
+      href: activityNotificationHref(entry),
       unread: new Date(entry.createdAt || 0).getTime() > readAt
     }))
     .filter((item) => !dismissedIds.has(item.id));
@@ -78,7 +85,7 @@ function positionPopover(popover, trigger) {
 
 function notificationRow(item) {
   return `
-    <article class="topbar-notification-row ${item.unread ? "is-unread" : ""}" data-notification-id="${escapeHtml(item.id)}">
+    <article class="topbar-notification-row ${item.unread ? "is-unread" : ""}" data-notification-id="${escapeHtml(item.id)}" data-notification-href="${escapeHtml(item.href)}" role="link" tabindex="0" aria-label="Open this notification in the activity log">
       <div class="communication-avatar">${escapeHtml(item.avatar)}</div>
       <div>
         <strong>${escapeHtml(item.title)}</strong>
@@ -181,6 +188,24 @@ function openNotificationPopover({ store, trigger }) {
         row.remove();
         if (!popover.querySelector("[data-notification-id]")) showEmptyNotifications(popover, isProductionManager);
       });
+    });
+  });
+
+  popover.querySelectorAll("[data-notification-href]").forEach((row) => {
+    const openActivity = () => {
+      const href = row.dataset.notificationHref;
+      if (!href || row.classList.contains("is-dismissing")) return;
+      closeNotificationPopover();
+      window.location.hash = href;
+    };
+    row.addEventListener("click", (event) => {
+      if (event.target.closest(".topbar-dismiss-notification")) return;
+      openActivity();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      openActivity();
     });
   });
 }

@@ -68,7 +68,7 @@ assert.match(responsiveViewCss, /\.product-finance-records \.data-table tbody \.
 assert.doesNotMatch(responsiveViewCss, /content: "(?:View|Hide) details"/, "Product Revenue must not show View details or Hide details comments");
 assert.match(financeSource, /\[data-product-finance-row\][\s\S]*row\.addEventListener\("click"[\s\S]*toggle\(\)/, "clicking anywhere on a Product Revenue summary must expand or collapse it");
 assert.match(backendSource, /export async function loadWorkspacePackagingState[\s\S]*packaging_change_requests/, "background configuration refresh must load packaging approval requests");
-assert.match(backendSource, /role === "production_manager"[\s\S]*choose a valid role[\s\S]*deploy the latest invite-user function/, "a stale invitation function must report the required backend update instead of rejecting the selected role as invalid");
+assert.match(backendSource, /production_manager", "production_supervisor"[\s\S]*choose a valid role[\s\S]*deploy the latest invite-user function/, "a stale invitation function must report the required backend update instead of rejecting a production role as invalid");
 assert.match(appSource, /loadWorkspacePackagingState\([\s\S]*SET_PACKAGING_WORKSPACE_STATE/, "active portals must receive packaging requests and approved settings without a new sign-in");
 assert.match(messageManagementSql, /workspace_message_deletions[\s\S]*membership_id/, "message deletion must be stored per staff member");
 assert.match(messageManagementSql, /delete_my_workspace_messages[\s\S]*p_unsend[\s\S]*messages\.from_membership_id = v_current_membership_id/, "only a message sender may unsend it for everyone");
@@ -89,6 +89,7 @@ assert.equal(requiresInactivityLogout("ceo"), true);
 assert.equal(requiresInactivityLogout("admin"), true);
 assert.equal(requiresInactivityLogout("store_keeper"), true);
 assert.equal(requiresInactivityLogout("production_manager"), true);
+assert.equal(requiresInactivityLogout("production_supervisor"), true);
 assert.equal(requiresInactivityLogout("sales_rep"), false, "sales representatives must keep their offline field sessions");
 assert.equal(remainingInactivityMs(1_000, 1_000), INACTIVITY_TIMEOUT_MS);
 
@@ -116,6 +117,7 @@ const accounts = [
   { id: "membership-ceo", clientId: client.id, userId: "user-ceo", name: "Chioma CEO", email: "chioma@example.com", role: "ceo", status: "active" },
   { id: "membership-store", clientId: client.id, userId: "user-store", name: "Tola Store", email: "tola@example.com", role: "store_keeper", status: "active" },
   { id: "membership-production", clientId: client.id, userId: "user-production", name: "Bello Production", email: "bello@example.com", role: "production_manager", status: "active" },
+  { id: "membership-production-supervisor", clientId: client.id, userId: "user-production-supervisor", name: "Sadiya Supervisor", email: "sadiya@example.com", role: "production_supervisor", status: "active" },
   { id: "membership-admin", clientId: client.id, userId: "user-admin", name: "Ada Admin", email: "ada@example.com", role: "admin", status: "active" }
 ];
 
@@ -258,9 +260,10 @@ assert.match(grossNetFinanceView, /Other deductions[\s\S]*₦50/, "Finance overv
 assert.match(grossNetFinanceView, /Net sales[\s\S]*₦650/, "Finance overview must show final net sales");
 
 const loginHtml = renderAuth({ routeId: "login" });
-assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 5, "login must show the five supported role cards");
+assert.equal((loginHtml.match(/type="radio" name="role"/g) || []).length, 6, "login must show the six supported role cards");
 assert.match(loginHtml, /value="admin"/, "Admin must be available as a distinct sign-in role");
 assert.match(loginHtml, /value="production_manager"/, "Production Line Manager must be available as a distinct sign-in role");
+assert.match(loginHtml, /value="production_supervisor"/, "Production Supervisor must be available as a distinct sign-in role");
 assert.match(loginHtml, /href="#\/forgot-password"/);
 const forgotPasswordHtml = renderForgotPassword();
 assert.match(forgotPasswordHtml, /id="forgot-password-form"/);
@@ -332,6 +335,7 @@ assert.deepEqual(synchronizedChanges.touchedCollections, ["products", "stockTran
 assert.equal(synchronizedChanges.records.length, 2, "a stock change and its movement must both be synchronized");
 assert.equal(synchronizedChanges.records.find((record) => record.collection === "products").data.imageUrl, "", "large stock image data must remain in the dedicated shared-image path");
 const operationalMigrationSql = readFileSync(new URL("../supabase/operational-persistence-migration.sql", import.meta.url), "utf8");
+const productionSupervisorRoleSql = readFileSync(new URL("../supabase/production-supervisor-role.sql", import.meta.url), "utf8");
 assert.match(operationalMigrationSql, /unique \(client_id, operation_id\)/, "operation retries must be idempotent");
 assert.match(operationalMigrationSql, /workspace_operation_events/, "every synchronized action must have an append-only event record");
 assert.match(operationalMigrationSql, /public\.is_client_member\(client_id\)/, "operational records must remain tenant isolated");
@@ -341,8 +345,12 @@ assert.match(operationalMigrationSql, /stockAdditionRequests'[\s\S]*status'[\s\S
 for (const role of ["ceo", "admin", "store_keeper", "sales_rep", "production_manager"]) {
   assert.ok(operationalCollectionsForRole(role).includes("retailers"), `${role} must load the shared company customer directory`);
 }
+assert.deepEqual(operationalCollectionsForRole("production_supervisor"), ["products", "stockTransactions", "activityLogs"], "Production Supervisors must synchronize only finished-stock output records");
 assert.match(operationalMigrationSql, /when 'store_keeper' then array\[[\s\S]*?'productionBatches', 'retailers', 'orders'/, "Store Keepers must receive shared customers for dispatch choices");
 assert.match(operationalMigrationSql, /when 'production_manager' then array\[[\s\S]*?'productionPlans', 'retailers'/, "the shared customer collection must be available across every company portal");
+assert.match(operationalMigrationSql, /v_role = 'production_supervisor'[\s\S]*RECORD_SUPERVISOR_FINISHED_PRODUCT[\s\S]*when 'production_supervisor' then array\[[\s\S]*'products', 'stockTransactions', 'activityLogs'/, "backend sync must restrict Production Supervisors to finished-product output records");
+assert.match(productionSupervisorRoleSql, /memberships_role_check[\s\S]*production_supervisor[\s\S]*invites_role_check/, "the Supabase role migration must allow Production Supervisor memberships and invitations");
+assert.match(productionSupervisorRoleSql, /set_membership_role[\s\S]*production_supervisor/, "the CEO must be able to assign the Production Supervisor role in Supabase");
 const workspaceResetSql = readFileSync(new URL("../supabase/workspace-data-reset.sql", import.meta.url), "utf8");
 assert.match(workspaceResetSql, /security definer/, "workspace resets must run through a protected server function");
 assert.match(workspaceResetSql, /v_role <> 'ceo'/, "only the active CEO may reset workspace data");
@@ -386,11 +394,31 @@ const notificationFixture = {
   notificationReadAt: "",
   notificationClearedAt: "",
   dismissedNotificationIds: [],
-  activityLogs: [{ id: "notice-1", clientId: client.id, actorUserId: "user-rep", actorName: "Amina Rep", actorEmail: "amina@example.com", actionType: "created", summary: "New sale", createdAt: "2026-07-13T09:00:00.000Z" }]
+  activityLogs: [{ id: "notice-1", clientId: client.id, actorUserId: "user-rep", actorName: "Amina Rep", actorEmail: "amina@example.com", actionType: "created", recordType: "report", recordLabel: "RPT-0001", summary: "New sale", createdAt: "2026-07-13T09:00:00.000Z" }]
 };
 assert.equal(getTopbarNotificationItems(notificationFixture).length, 1);
+assert.equal(getTopbarNotificationItems(notificationFixture)[0].href, "#/activity-log?tab=activity&focus=RPT-0001", "clickable notifications must target the matching activity record");
 assert.equal(getTopbarNotificationItems({ ...notificationFixture, dismissedNotificationIds: ["activity-notice-1"] }).length, 0);
 assert.equal(getTopbarNotificationItems({ ...notificationFixture, notificationClearedAt: "2026-07-13T10:00:00.000Z" }).length, 0);
+const reportReviewStore = createStore();
+reportReviewStore.dispatch({
+  type: "SET_AUTHENTICATED_WORKSPACE",
+  session: { user: { id: "review-ceo-user" } },
+  user: { id: "review-ceo-user", email: "review-ceo@example.com" },
+  client,
+  accounts: [{ id: "review-ceo", clientId: client.id, userId: "review-ceo-user", name: "Review CEO", email: "review-ceo@example.com", role: "ceo", status: "active" }],
+  invites: [],
+  featureModules: [],
+  messages: [],
+  activityLogs: []
+});
+reportReviewStore.dispatch({ type: "SET_OPERATIONAL_RECORDS", collections: { salesReports: [{ id: "RPT-FLAG-1", repName: "Amina Rep", reportDate: "2026-07-13", status: "submitted", reviewNote: "" }], activityLogs: [] } });
+reportReviewStore.dispatch({ type: "FLAG_SALES_REPORT", reportId: "RPT-FLAG-1", note: "" });
+assert.equal(reportReviewStore.getState().salesReports[0].status, "submitted", "a CEO must provide a reason before rejecting a report");
+reportReviewStore.dispatch({ type: "FLAG_SALES_REPORT", reportId: "RPT-FLAG-1", note: "Customer return was omitted" });
+assert.equal(reportReviewStore.getState().salesReports[0].status, "flagged");
+assert.equal(reportReviewStore.getState().salesReports[0].flagReason, "Customer return was omitted", "the rejection reason must remain attached to the flagged report");
+assert.equal(reportReviewStore.getState().activityLogs[0].details, "Customer return was omitted", "the report rejection reason must also appear in activity details");
 const productionActivityFixture = {
   client,
   user: { id: "user-production", email: "bello@example.com" },
@@ -917,6 +945,8 @@ assert.match(backendSource, /select\("sku, image_url"\)[\s\S]*single\(\)/, "remo
 assert.match(backendSource, /purgeSharedProductImages[\s\S]*update\(\{ image_url: ""[\s\S]*\.delete\(\)/, "stock deletion must erase shared picture data before removing its compatibility row");
 assert.match(backendSource, /operationalActivityInitialized[\s\S]*activityLogs:[\s\S]*operationalActivityRows/, "initialized synchronized activity must remain authoritative over legacy activity rows");
 const inventorySource = readFileSync(new URL("../src/js/views/inventory.js", import.meta.url), "utf8");
+assert.match(inventorySource, /closeStockModal\(\);[\s\S]*type: "SUBMIT_STOCK_ADDITION_REQUEST"[\s\S]*message: "Stock request sent for approval"/, "a Store Keeper stock request must close its modal before showing the sent confirmation");
+assert.match(inventorySource, /closeRestockModal\(\);[\s\S]*type: "SUBMIT_STOCK_ADDITION_REQUEST"[\s\S]*message: "Stock request sent for approval"/, "a Store Keeper restock request must also close its modal before confirmation");
 assert.match(inventorySource, /!existingProduct\?\.imageRemoteSynced/, "saving a stock item must retry any picture that has not reached Supabase");
 assert.match(inventorySource, /sharedImageChanged = !existingProductId \|\| shouldStoreImage/, "a newly created stock item must explicitly replace any past image saved under the same SKU");
 assert.match(inventorySource, /await purgeSharedProductImages\([\s\S]*await Promise\.all\(deletedProducts/, "deleting stock must clear its Supabase and browser picture traces before removing the row");
@@ -1736,6 +1766,7 @@ assert.match(ceoSubmittedReports, /js-view-report-details/, "CEO must be able to
 assert.match(ceoSubmittedReports, /title="Download submitted sales report"/);
 assert.match(ceoSubmittedReports, /title="Print submitted sales report"/);
 assert.match(ceoSubmittedReports, /js-review-report/, "CEO must inherit report review controls from the former Manager role");
+assert.match(ceoSubmittedReports, /js-flag-report[\s\S]*Reject/, "CEO submitted reports must include a rejection action");
 
 authenticate("user-store");
 const storeKeeperDashboard = renderDashboard({ state: store.getState() });
@@ -1819,6 +1850,54 @@ globalThis.window.location.hash = "#/inventory?tab=movement-history";
 const productionManagerInventory = renderInventory({ state: store.getState() });
 assert.equal((productionManagerInventory.match(/class="subtab-link/g) || []).length, 1, "Production Line Managers must only receive Stock Health in inventory");
 assert.doesNotMatch(productionManagerInventory, /js-open-stock-modal|js-restock-product|Factory dispatch/);
+
+const productionSupervisorStore = createStore();
+function authenticateProductionSupervisorFixture(account) {
+  productionSupervisorStore.dispatch({
+    type: "SET_AUTHENTICATED_WORKSPACE",
+    session: { user: { id: account.userId } },
+    user: { id: account.userId, email: account.email, user_metadata: { full_name: account.name } },
+    client,
+    accounts,
+    invites: [],
+    featureModules: [],
+    messages: [],
+    activityLogs: productionSupervisorStore.getState().activityLogs
+  });
+}
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_supervisor"));
+productionSupervisorStore.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: {
+    products: [
+      { id: "SUP-FIN", name: "Supervisor Chips", stockCategory: "finished_products", category: "Finished Products", stock: 12, unit: "pieces", unitCost: 50, unitPrice: 100, status: "active" },
+      { id: "SUP-RAW", name: "Supervisor Potatoes", stockCategory: "raw_materials", category: "Raw Materials", stock: 30, unit: "kg", unitCost: 10, unitPrice: 0, status: "active" }
+    ],
+    stockTransactions: [],
+    activityLogs: []
+  }
+});
+const productionSupervisorDashboard = renderDashboard({ state: productionSupervisorStore.getState() });
+assert.match(productionSupervisorDashboard, /Production Supervisor portal[\s\S]*Record finished products/);
+assert.match(productionSupervisorDashboard, /id="production-supervisor-output-form"/);
+assert.match(productionSupervisorDashboard, /value="SUP-FIN"[\s\S]*Supervisor Chips/, "Production Supervisors must be able to select an existing finished product");
+assert.doesNotMatch(productionSupervisorDashboard, /SUP-RAW|Supervisor Potatoes/, "raw materials must never appear in the Production Supervisor form");
+assert.doesNotMatch(productionSupervisorDashboard, /production plan|quality control|dispatch|finance|sales|staff/i, "the Production Supervisor portal must contain no extra operational areas");
+assert.deepEqual(currentUserPermissions(productionSupervisorStore.getState()).nav, ["dashboard"]);
+assert.equal(currentUserPermissions(productionSupervisorStore.getState()).canRecordFinishedProducts, true);
+productionSupervisorStore.dispatch({ type: "RECORD_SUPERVISOR_FINISHED_PRODUCT", productId: "SUP-FIN", quantity: 8 });
+assert.equal(productionSupervisorStore.getState().products.find((product) => product.id === "SUP-FIN")?.stock, 20, "recorded finished output must increase factory finished-product stock");
+assert.equal(productionSupervisorStore.getState().stockTransactions.some((transaction) => transaction.productionSupervisorEntry && transaction.productId === "SUP-FIN" && transaction.quantity === 8), true, "finished output must create a backend-synchronized stock audit record");
+const productionSupervisorActivity = productionSupervisorStore.getState().activityLogs.find((entry) => entry.recordType === "production_output");
+assert.deepEqual(productionSupervisorActivity?.notificationRoles, ["ceo", "admin"], "finished-output notifications must be addressed only to CEO and Admin");
+productionSupervisorStore.dispatch({ type: "RECORD_SUPERVISOR_FINISHED_PRODUCT", productId: "SUP-RAW", quantity: 4 });
+assert.equal(productionSupervisorStore.getState().products.find((product) => product.id === "SUP-RAW")?.stock, 30, "Production Supervisors must not alter raw-material stock");
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "ceo"));
+assert.equal(getTopbarNotificationItems(productionSupervisorStore.getState()).some((item) => item.body.includes("Supervisor Chips")), true, "CEO must receive the finished-output notification");
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "admin"));
+assert.equal(getTopbarNotificationItems(productionSupervisorStore.getState()).some((item) => item.body.includes("Supervisor Chips")), true, "Admin must receive the finished-output notification");
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "sales_rep"));
+assert.equal(getTopbarNotificationItems(productionSupervisorStore.getState()).some((item) => item.body.includes("Supervisor Chips")), false, "finished-output notifications must not alert unrelated roles");
 
 const productionWorkflowStore = createStore();
 productionWorkflowStore.dispatch({

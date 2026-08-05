@@ -157,6 +157,40 @@ begin
     raise exception 'Production Line Manager access is limited to production workflows';
   end if;
 
+  if v_role = 'production_supervisor'
+    and upper(trim(p_action_type)) <> 'RECORD_SUPERVISOR_FINISHED_PRODUCT' then
+    raise exception 'Production Supervisor access is limited to finished-product output';
+  end if;
+
+  if v_role = 'production_supervisor'
+    and exists (
+      select 1
+      from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as supervisor_item(value)
+      where (
+        supervisor_item.value ->> 'collection' = 'products'
+        and lower(coalesce(
+          supervisor_item.value -> 'data' ->> 'stockCategory',
+          supervisor_item.value -> 'data' ->> 'category',
+          ''
+        )) ~ '(raw|packaging|equipment)'
+      ) or (
+        supervisor_item.value ->> 'collection' = 'stockTransactions'
+        and (
+          coalesce((supervisor_item.value -> 'data' ->> 'productionSupervisorEntry')::boolean, false) is not true
+          or lower(coalesce(supervisor_item.value -> 'data' ->> 'type', '')) <> 'production output'
+          or lower(coalesce(supervisor_item.value -> 'data' ->> 'movementDirection', '')) <> 'in'
+        )
+      ) or (
+        supervisor_item.value ->> 'collection' = 'activityLogs'
+        and (
+          coalesce(supervisor_item.value -> 'data' ->> 'recordType', '') <> 'production_output'
+          or not (coalesce(supervisor_item.value -> 'data' -> 'notificationRoles', '[]'::jsonb) @> '["ceo", "admin"]'::jsonb)
+        )
+      )
+    ) then
+    raise exception 'Production Supervisor may add finished-product output only';
+  end if;
+
   v_allowed_collections := case v_role
     when 'ceo' then array[
       'products', 'stockCategories', 'stockAssignments', 'stockTransactions',
@@ -183,6 +217,9 @@ begin
     when 'production_manager' then array[
       'products', 'stockTransactions', 'productionBatches', 'productionPlans', 'retailers',
       'productionIssues', 'activityLogs'
+    ]
+    when 'production_supervisor' then array[
+      'products', 'stockTransactions', 'activityLogs'
     ]
     else array[]::text[]
   end;

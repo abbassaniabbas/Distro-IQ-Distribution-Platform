@@ -3653,6 +3653,13 @@ export function bindInventory({ root, store, signal }) {
 
     if (currentUserRole(state) === "store_keeper" && !existingProductId) {
       const stockCategory = String(formData.get("stockCategory") || FINISHED_PRODUCTS_CATEGORY);
+      const hasPendingRequest = (state.stockAdditionRequests || []).some((request) => (
+        request.status === "pending" && request.kind === "new_product" && request.productId === sku
+      ));
+      if (hasPendingRequest) {
+        if (productMessage) productMessage.textContent = "This stock request is already awaiting approval.";
+        return;
+      }
       const product = {
         id: sku,
         name: primaryProductName,
@@ -3681,16 +3688,15 @@ export function bindInventory({ root, store, signal }) {
         equipmentStatus: stockCategory === "equipment" ? "in_stock" : undefined,
         updatedAt: todayISO()
       };
+      closeStockModal();
       store.dispatch({
         type: "SUBMIT_STOCK_ADDITION_REQUEST",
         kind: "new_product",
         productId: sku,
         quantity: factoryStockInPieces,
         product,
-        message: "Stock addition sent for approval"
+        message: "Stock request sent for approval"
       });
-      stockEntrySession.open = false;
-      closeStockModal();
       return;
     }
 
@@ -3939,19 +3945,26 @@ export function bindInventory({ root, store, signal }) {
     }
 
     const requiresApproval = currentUserRole(store.getState()) === "store_keeper";
+    const hasPendingRequest = requiresApproval && (store.getState().stockAdditionRequests || []).some((request) => (
+      request.status === "pending" && request.kind === "restock" && request.productId === productId
+    ));
+    if (hasPendingRequest) {
+      if (restockMessage) restockMessage.textContent = "This stock request is already awaiting approval.";
+      return;
+    }
+    closeRestockModal();
     store.dispatch(requiresApproval ? {
       type: "SUBMIT_STOCK_ADDITION_REQUEST",
       kind: "restock",
       productId,
       quantity,
-      message: "Stock addition sent for approval"
+      message: "Stock request sent for approval"
     } : {
       type: "RESTOCK_PRODUCT",
       productId,
       quantity,
       message: "Stock quantity added"
     });
-    closeRestockModal();
   });
 
   reduceStockForm?.addEventListener("submit", (event) => {
