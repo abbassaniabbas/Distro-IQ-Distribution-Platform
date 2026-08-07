@@ -1,5 +1,5 @@
 import { createId } from "./tenant.js?v=20260804m";
-import { currentUserRole } from "./rbac.js?v=20260804m";
+import { currentUserRole } from "./rbac.js?v=20260805b";
 import { formatCurrency, formatNumber } from "./formatters.js";
 import { isRepresentativeSellThroughTransaction } from "./calculations.js?v=20260804i";
 
@@ -32,6 +32,7 @@ export const ACTION_LABELS = {
   requested: "Requested",
   used: "Used",
   planned: "Planned",
+  started: "Started",
   recorded: "Recorded",
   passed: "Passed",
   failed: "Failed",
@@ -95,7 +96,10 @@ export function createActivityLog({
   actor,
   summary,
   details = [],
-  notificationRoles = []
+  notificationRoles = [],
+  notificationUserIds = [],
+  relatedUserIds = [],
+  planId = ""
 }) {
   return {
     id: createId("LOG"),
@@ -109,6 +113,9 @@ export function createActivityLog({
     summary,
     details,
     notificationRoles: Array.isArray(notificationRoles) ? notificationRoles : [],
+    notificationUserIds: Array.isArray(notificationUserIds) ? notificationUserIds : [],
+    relatedUserIds: Array.isArray(relatedUserIds) ? relatedUserIds : [],
+    planId: String(planId || ""),
     createdAt: new Date().toISOString()
   };
 }
@@ -292,6 +299,27 @@ export function getScopedActivityLogs(state) {
 
   if (role === "production_manager") {
     return logs
+      .filter((entry) => isProductionActivityEntry(entry, state))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  if (role === "production_supervisor") {
+    const userId = String(state.user?.id || "");
+    const account = (state.accounts || []).find((item) => item.userId === userId);
+    const accountName = String(account?.name || "").trim().toLowerCase();
+    const assignedPlanIds = new Set((state.productionPlans || [])
+      .filter((plan) => (
+        String(plan.assignedSupervisorUserId || "") === userId ||
+        (accountName && String(plan.assignedSupervisorName || "").trim().toLowerCase() === accountName)
+      ))
+      .map((plan) => plan.id));
+    return logs
+      .filter((entry) => (
+        entry.actorUserId === userId ||
+        (entry.relatedUserIds || []).includes(userId) ||
+        assignedPlanIds.has(entry.planId) ||
+        assignedPlanIds.has(entry.recordLabel)
+      ))
       .filter((entry) => isProductionActivityEntry(entry, state))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }

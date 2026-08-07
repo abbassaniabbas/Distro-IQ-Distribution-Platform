@@ -9,7 +9,7 @@ import {
   representativeDispatchArrangement,
   summarizeSalesLines
 } from "../services/calculations.js?v=20260804i";
-import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent } from "../services/formatters.js";
+import { currencySymbolFor, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, productSelectionLabel } from "../services/formatters.js?v=20260805h";
 import {
   currentUserPermissions,
   currentUserRole,
@@ -635,7 +635,7 @@ function renderAccountantFilters(state) {
           <span>Product</span>
           <select id="accountant-product-filter">
             <option value="all">All products</option>
-            ${products.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`).join("")}
+            ${products.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(productSelectionLabel(product))}</option>`).join("")}
           </select>
         </label>
         <label class="field">

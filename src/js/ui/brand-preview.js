@@ -1,5 +1,5 @@
 import { getBrandColor } from "../services/branding.js";
-import { formatCurrency } from "../services/formatters.js";
+import { formatCurrency } from "../services/formatters.js?v=20260805h";
 import { escapeHtml } from "./dom.js";
 
 function companyInitials(companyName) {

@@ -7,11 +7,12 @@ import { buildInvoiceDocument, buildInvoicePreviewContent, buildInvoiceQuickView
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../src/js/services/packaging.js";
 import { scopeStateForEnabledModules } from "../src/js/services/features.js";
 import { currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../src/js/services/rbac.js";
-import { nextFormattedId } from "../src/js/services/tenant.js";
+import { descriptiveProductSku, nextFormattedId } from "../src/js/services/tenant.js";
+import { productSelectionLabel } from "../src/js/services/formatters.js";
 import { classifyAppFailure } from "../src/js/services/error-classification.js";
 import { friendlyEdgeFunctionMessage } from "../src/js/services/backend.js";
 import { getScopedActivityLogs } from "../src/js/services/activity.js";
-import { OPERATIONAL_COLLECTIONS, collectionsFromRemote, operationalChanges, operationalCollectionsForRole, operationalSnapshot } from "../src/js/services/operational-sync.js";
+import { OPERATIONAL_COLLECTIONS, collectionsFromRemote, operationalChanges, operationalCollectionsForRole, operationalSnapshot, recoverLocalSupervisorProduction, sanitizePersistedOperationalQueue } from "../src/js/services/operational-sync.js";
 import { dateIsWithinRange, normalizeDateRange } from "../src/js/services/filtering.js";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "../src/js/services/global-search.js";
 import { INACTIVITY_TIMEOUT_MS, remainingInactivityMs, requiresInactivityLogout } from "../src/js/services/inactivity-session.js";
@@ -23,7 +24,7 @@ import { renderAuth, renderForgotPassword } from "../src/js/views/auth.js";
 import { renderBackendSetup } from "../src/js/views/backend-setup.js";
 import { renderActivityLog } from "../src/js/views/activity-log.js";
 import { renderAdjustments } from "../src/js/views/adjustments.js";
-import { ceoActualSalesRevenue, renderDashboard } from "../src/js/views/dashboard.js";
+import { ceoActualSalesRevenue, renderDashboard, renderManagerReportReview } from "../src/js/views/dashboard.js";
 import { renderFinance } from "../src/js/views/finance.js";
 import { renderInventory, renderRecordCorrectionModal } from "../src/js/views/inventory.js";
 import { renderInvoices } from "../src/js/views/invoices.js";
@@ -46,6 +47,11 @@ const ceoPasswordVerificationSource = readFileSync(new URL("../src/js/ui/ceo-pas
 const appSource = readFileSync(new URL("../src/js/app.js", import.meta.url), "utf8");
 const backendSource = readFileSync(new URL("../src/js/services/backend.js", import.meta.url), "utf8");
 const financeSource = readFileSync(new URL("../src/js/views/finance.js", import.meta.url), "utf8");
+const operationalSyncAwaitSource = readFileSync(new URL("../src/js/services/operational-sync.js", import.meta.url), "utf8");
+const productionSource = readFileSync(new URL("../src/js/views/production.js", import.meta.url), "utf8");
+const inventorySelectionSource = readFileSync(new URL("../src/js/views/inventory.js", import.meta.url), "utf8");
+const dashboardSource = readFileSync(new URL("../src/js/views/dashboard.js", import.meta.url), "utf8");
+const adminOperationsSource = readFileSync(new URL("../src/js/views/admin-operations.js", import.meta.url), "utf8");
 const messageManagementSql = readFileSync(new URL("../supabase/message-management.sql", import.meta.url), "utf8");
 assert.match(responsiveLayoutCss, /@media \(max-width: 640px\)[\s\S]*\.view-root,[\s\S]*padding: 14px 12px 24px/, "phone layouts must use compact page padding");
 assert.match(responsiveComponentCss, /@media \(max-width: 720px\)[\s\S]*\.icon-button[\s\S]*width: 44px;[\s\S]*height: 44px/, "phone and tablet controls must retain touch-friendly targets");
@@ -70,6 +76,14 @@ assert.match(financeSource, /\[data-product-finance-row\][\s\S]*row\.addEventLis
 assert.match(backendSource, /export async function loadWorkspacePackagingState[\s\S]*packaging_change_requests/, "background configuration refresh must load packaging approval requests");
 assert.match(backendSource, /production_manager", "production_supervisor"[\s\S]*choose a valid role[\s\S]*deploy the latest invite-user function/, "a stale invitation function must report the required backend update instead of rejecting a production role as invalid");
 assert.match(appSource, /loadWorkspacePackagingState\([\s\S]*SET_PACKAGING_WORKSPACE_STATE/, "active portals must receive packaging requests and approved settings without a new sign-in");
+assert.match(appSource, /deferRenderUntilSaved/, "backend-confirmed production actions must keep the active form mounted while saving");
+assert.match(operationalSyncAwaitSource, /async function flush\(actionType[\s\S]*throw lastSyncError/, "production actions must expose backend synchronization failures to the user");
+assert.match(productionSource, /await operationalSync\?\.flush\?\.\(action\.type\)/, "production buttons must wait for backend confirmation before showing success");
+assert.match(productionSource, /productSelectionLabel\(product\)/, "production planning must show the product type in product choices");
+assert.match(financeSource, /productSelectionLabel\(product\)/, "finance product choices must show the product type");
+assert.match(inventorySelectionSource, /productSelectionLabel\(product\)/, "stock product choices must show the product type");
+assert.match(dashboardSource, /productSelectionLabel\((?:row\.product|assignment\.product)\)/, "dashboard product choices must show the product type");
+assert.match(adminOperationsSource, /productSelectionLabel\(product\)/, "admin product choices must show the product type");
 assert.match(messageManagementSql, /workspace_message_deletions[\s\S]*membership_id/, "message deletion must be stored per staff member");
 assert.match(messageManagementSql, /delete_my_workspace_messages[\s\S]*p_unsend[\s\S]*messages\.from_membership_id = v_current_membership_id/, "only a message sender may unsend it for everyone");
 assert.match(messageManagementSql, /clear_my_workspace_conversation[\s\S]*p_peer_membership_id[\s\S]*on conflict \(message_id, membership_id\) do nothing/, "conversation clearing must remain scoped to the current staff member and selected conversation");
@@ -92,6 +106,11 @@ assert.equal(requiresInactivityLogout("production_manager"), true);
 assert.equal(requiresInactivityLogout("production_supervisor"), true);
 assert.equal(requiresInactivityLogout("sales_rep"), false, "sales representatives must keep their offline field sessions");
 assert.equal(remainingInactivityMs(1_000, 1_000), INACTIVITY_TIMEOUT_MS);
+assert.equal(
+  productSelectionLabel({ name: "Plantain Chips", productType: "Original", sizeValue: "120", sizeUnit: "g" }),
+  "Plantain Chips — Original — 120g",
+  "product selectors must identify the name, product type, and size"
+);
 
 const globalSearchFixture = buildGlobalSearchIndex({
   state: {
@@ -174,6 +193,9 @@ assert.equal(
 );
 assert.equal(nextFormattedId("SKU-{0000}", ["SKU-0001", "SKU-0008"], "SKU"), "SKU-0009");
 assert.equal(nextFormattedId("INV-{000}", ["INV-001"], "INV"), "INV-002");
+assert.equal(descriptiveProductSku({ name: "Plantain chips", sizeValue: 120, sizeUnit: "g" }), "PC-120G");
+assert.equal(descriptiveProductSku({ name: "Peanut burger", sizeValue: 220, sizeUnit: "g" }), "PB-220G");
+assert.equal(descriptiveProductSku({ name: "Plantain chips", sizeValue: 120, sizeUnit: "g" }, ["PC-120G"]), "PC-120G-2");
 assert.equal(quantityInPieces({ packagingConversions: { carton: 24 } }, 2, "carton"), 48);
 assert.equal(packagingQuantityLabel(2, "carton"), "2 cartons");
 const packagePriceFixture = { unitPrice: 200, packagingConversions: { carton: 10 }, packagingPrices: { carton: 1800 } };
@@ -319,6 +341,17 @@ assert.deepEqual(
   { products: [{ id: "PROD-VISIBLE" }], productionPlans: [{ id: "PLAN-VISIBLE" }] },
   "remote workspace hydration must exclude collections that the current role cannot access"
 );
+assert.deepEqual(
+  collectionsFromRemote({
+    initializedCollections: ["orders"],
+    records: [
+      { collection: "orders", data: { id: "ORDER-OLD", createdAt: "2026-08-01T10:00:00.000Z" } },
+      { collection: "orders", data: { id: "ORDER-NEW", createdAt: "2026-08-05T10:00:00.000Z" } }
+    ]
+  }, ["orders"]).orders.map((order) => order.id),
+  ["ORDER-NEW", "ORDER-OLD"],
+  "remote-backed record lists must hydrate most recent first"
+);
 const previousOperationalSnapshot = operationalSnapshot({
   products: [{ id: "SYNC-PRODUCT", stock: 10, imageUrl: "data:image/png;base64,LOCAL" }],
   stockTransactions: [{ id: "SYNC-TX-1", type: "restock", quantity: 10 }]
@@ -335,6 +368,52 @@ assert.deepEqual(synchronizedChanges.touchedCollections, ["products", "stockTran
 assert.equal(synchronizedChanges.records.length, 2, "a stock change and its movement must both be synchronized");
 assert.equal(synchronizedChanges.records.find((record) => record.collection === "products").data.imageUrl, "", "large stock image data must remain in the dedicated shared-image path");
 const operationalMigrationSql = readFileSync(new URL("../supabase/operational-persistence-migration.sql", import.meta.url), "utf8");
+const operationalSyncSource = readFileSync(new URL("../src/js/services/operational-sync.js", import.meta.url), "utf8");
+assert.match(operationalSyncSource, /if \(queue\.length \|\| !connected\) return;/, "an in-flight remote refresh must never overwrite a newer queued local action");
+assert.match(operationalSyncSource, /while \(queue\.length\)[\s\S]*await drain\(\)[\s\S]*loadOperationalWorkspace/, "actions recorded during initial connection must be flushed before remote hydration replaces local state");
+const sanitizedSupervisorQueue = sanitizePersistedOperationalQueue([
+  {
+    operationId: "obsolete-output",
+    actionType: "RECORD_SUPERVISOR_FINISHED_PRODUCT",
+    records: [{ collection: "products", id: "SKU-OLD", data: { id: "SKU-OLD", stock: 12 } }],
+    deleted: [],
+    touchedCollections: ["products"]
+  },
+  {
+    operationId: "valid-plan-start",
+    actionType: "START_ASSIGNED_PRODUCTION_PLAN",
+    records: [
+      { collection: "productionPlans", id: "PLAN-1", data: { id: "PLAN-1", assignedSupervisorUserId: "user-production-supervisor", status: "in_progress" } },
+      { collection: "activityLogs", id: "LOG-1", data: { id: "LOG-1", actorUserId: "user-production-supervisor", actionType: "started" } }
+    ],
+    deleted: [],
+    touchedCollections: ["productionPlans", "activityLogs"]
+  }
+], "production_supervisor", "user-production-supervisor");
+assert.deepEqual(sanitizedSupervisorQueue.map((operation) => operation.operationId), ["valid-plan-start"], "obsolete supervisor stock-output queue items must not block an assigned plan start");
+const sanitizedManagerQueue = sanitizePersistedOperationalQueue([
+  {
+    operationId: "obsolete-manager-action",
+    actionType: "WORKSPACE_UPDATE",
+    records: [{ collection: "productionPlans", id: "PLAN-1", data: { id: "PLAN-1" } }],
+    deleted: [],
+    touchedCollections: ["productionPlans"]
+  },
+  {
+    operationId: "valid-manager-approval",
+    actionType: "APPROVE_SUPERVISOR_BATCH_REPORT",
+    records: [
+      { collection: "productionBatches", id: "BATCH-1", data: { id: "BATCH-1", status: "approved" } },
+      { collection: "productionPlans", id: "PLAN-1", data: { id: "PLAN-1", status: "completed" } },
+      { collection: "products", id: "SKU-1", data: { id: "SKU-1", stock: 50 } },
+      { collection: "stockTransactions", id: "TXN-1", data: { id: "TXN-1", quantity: 10 } },
+      { collection: "activityLogs", id: "LOG-1", data: { id: "LOG-1" } }
+    ],
+    deleted: [],
+    touchedCollections: ["productionBatches", "productionPlans", "products", "stockTransactions", "activityLogs"]
+  }
+], "production_manager", "user-production-manager");
+assert.deepEqual(sanitizedManagerQueue.map((operation) => operation.operationId), ["valid-manager-approval"], "obsolete manager queue items must not block a submitted batch approval");
 const productionSupervisorRoleSql = readFileSync(new URL("../supabase/production-supervisor-role.sql", import.meta.url), "utf8");
 assert.match(operationalMigrationSql, /unique \(client_id, operation_id\)/, "operation retries must be idempotent");
 assert.match(operationalMigrationSql, /workspace_operation_events/, "every synchronized action must have an append-only event record");
@@ -345,10 +424,11 @@ assert.match(operationalMigrationSql, /stockAdditionRequests'[\s\S]*status'[\s\S
 for (const role of ["ceo", "admin", "store_keeper", "sales_rep", "production_manager"]) {
   assert.ok(operationalCollectionsForRole(role).includes("retailers"), `${role} must load the shared company customer directory`);
 }
-assert.deepEqual(operationalCollectionsForRole("production_supervisor"), ["products", "stockTransactions", "activityLogs"], "Production Supervisors must synchronize only finished-stock output records");
+assert.deepEqual(operationalCollectionsForRole("production_supervisor"), ["products", "productionBatches", "productionPlans", "productionIssues", "activityLogs"], "Production Supervisors must synchronize stock visibility and their assigned production workflow records");
 assert.match(operationalMigrationSql, /when 'store_keeper' then array\[[\s\S]*?'productionBatches', 'retailers', 'orders'/, "Store Keepers must receive shared customers for dispatch choices");
 assert.match(operationalMigrationSql, /when 'production_manager' then array\[[\s\S]*?'productionPlans', 'retailers'/, "the shared customer collection must be available across every company portal");
-assert.match(operationalMigrationSql, /v_role = 'production_supervisor'[\s\S]*RECORD_SUPERVISOR_FINISHED_PRODUCT[\s\S]*when 'production_supervisor' then array\[[\s\S]*'products', 'stockTransactions', 'activityLogs'/, "backend sync must restrict Production Supervisors to finished-product output records");
+assert.match(operationalMigrationSql, /v_role = 'production_supervisor'[\s\S]*START_ASSIGNED_PRODUCTION_PLAN[\s\S]*SUBMIT_SUPERVISOR_BATCH_REPORT[\s\S]*when 'production_supervisor' then array\[[\s\S]*'products', 'productionBatches', 'productionPlans', 'productionIssues', 'activityLogs'/, "backend sync must restrict Production Supervisors to assigned plan, batch report, and issue records");
+assert.match(operationalMigrationSql, /SUBMIT_SUPERVISOR_BATCH_REPORT'[\s\S]*quantityProduced[\s\S]*targetQuantity[\s\S]*Good quantity cannot exceed/, "backend sync must reject good output above the saved plan target");
 assert.match(productionSupervisorRoleSql, /memberships_role_check[\s\S]*production_supervisor[\s\S]*invites_role_check/, "the Supabase role migration must allow Production Supervisor memberships and invitations");
 assert.match(productionSupervisorRoleSql, /set_membership_role[\s\S]*production_supervisor/, "the CEO must be able to assign the Production Supervisor role in Supabase");
 const workspaceResetSql = readFileSync(new URL("../supabase/workspace-data-reset.sql", import.meta.url), "utf8");
@@ -391,6 +471,15 @@ const activeStaffFormRoot = {
 assert.equal(hasActiveWorkspaceForm(activeStaffFormRoot), true, "the render guard must detect a staff form while the user is typing");
 assert.equal(shouldDeferRenderForModal({ type: "SET_OPERATIONAL_RECORDS" }, activeStaffFormRoot), true, "backend refreshes must not rebuild an actively edited form");
 assert.equal(shouldDeferRenderForModal({ type: "SET_WORKSPACE" }, activeStaffFormRoot), false, "a completed staff action must still render its saved workspace result");
+assert.equal(shouldDeferRenderForModal({ type: "SET_WORKSPACE", backgroundRefresh: true }, activeStaffFormRoot), true, "background workspace refreshes must not replace a form while it is being edited");
+const dirtyForm = { dataset: { liveEditing: "true" }, closest() { return null; } };
+const dirtyFormRoot = {
+  ownerDocument: { activeElement: null },
+  contains() { return false; },
+  querySelector() { return null; },
+  querySelectorAll(selector) { return selector.includes("data-live-editing") ? [dirtyForm] : []; }
+};
+assert.equal(hasActiveWorkspaceForm(dirtyFormRoot), true, "edited forms must remain protected even after focus moves to another control");
 assert.deepEqual(
   [...FORM_SAFE_BACKGROUND_ACTIONS],
   ["SET_OPERATIONAL_RECORDS", "SET_FEATURE_MODULES", "SET_PACKAGING_WORKSPACE_STATE", "HYDRATE_PRODUCT_IMAGES", "AUTO_UPDATE_DELAYED_ORDERS"],
@@ -433,6 +522,12 @@ reportReviewStore.dispatch({ type: "FLAG_SALES_REPORT", reportId: "RPT-FLAG-1", 
 assert.equal(reportReviewStore.getState().salesReports[0].status, "flagged");
 assert.equal(reportReviewStore.getState().salesReports[0].flagReason, "Customer return was omitted", "the rejection reason must remain attached to the flagged report");
 assert.equal(reportReviewStore.getState().activityLogs[0].details, "Customer return was omitted", "the report rejection reason must also appear in activity details");
+reportReviewStore.dispatch({ type: "REVIEW_SALES_REPORT", reportId: "RPT-FLAG-1" });
+assert.equal(reportReviewStore.getState().salesReports[0].status, "reviewed");
+assert.equal(reportReviewStore.getState().salesReports[0].reviewHistory.some((entry) => entry.note === "Customer return was omitted"), true, "flag reasons must remain in permanent review history after the report is reviewed");
+assert.match(renderManagerReportReview(reportReviewStore.getState()), /View permanent review notes/, "submitted report rows must expose their permanent review history from an icon");
+reportReviewStore.dispatch({ type: "SUBMIT_REP_REPORT", repName: "Amina Rep", reportDate: "2026-07-13", salesAmount: 15000, unitsSold: 3 });
+assert.equal(reportReviewStore.getState().salesReports[0].reviewHistory.some((entry) => entry.note === "Customer return was omitted"), true, "correcting and resubmitting the same daily report must not erase its earlier rejection notes");
 const productionActivityFixture = {
   client,
   user: { id: "user-production", email: "bello@example.com" },
@@ -1404,7 +1499,7 @@ globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
 assert.doesNotMatch(storeKeeperInventory, /<dt>Region<\/dt>/, "stock product details must not show Region");
-assert.match(storeKeeperInventory, /name="sku" value="SKU-\d+" readonly/, "new products must receive an automatic SKU");
+assert.match(storeKeeperInventory, /name="sku" value="PRD-\d+" readonly/, "new products must receive an automatic SKU before the descriptive fields are entered");
 assert.match(storeKeeperInventory, /field stock-sku-field/, "SKU field must have its own spacing hook");
 assert.match(storeKeeperInventory, /name="productType"/);
 assert.match(storeKeeperInventory, /name="sizeValue" type="number"/);
@@ -1879,39 +1974,168 @@ function authenticateProductionSupervisorFixture(account) {
     activityLogs: productionSupervisorStore.getState().activityLogs
   });
 }
-authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_supervisor"));
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_manager"));
 productionSupervisorStore.dispatch({
   type: "SET_OPERATIONAL_RECORDS",
   collections: {
     products: [
-      { id: "SUP-FIN", name: "Supervisor Chips", stockCategory: "finished_products", category: "Finished Products", stock: 12, unit: "pieces", unitCost: 50, unitPrice: 100, status: "active" },
+      { id: "SUP-FIN", name: "Supervisor Chips", productType: "Original", size: "120g", stockCategory: "finished_products", category: "Finished Products", stock: 12, unit: "pieces", unitCost: 50, unitPrice: 100, status: "active" },
       { id: "SUP-RAW", name: "Supervisor Potatoes", stockCategory: "raw_materials", category: "Raw Materials", stock: 30, unit: "kg", unitCost: 10, unitPrice: 0, status: "active" }
     ],
+    productionPlans: [],
+    productionBatches: [],
+    productionIssues: [],
     stockTransactions: [],
     activityLogs: []
   }
 });
-const productionSupervisorDashboard = renderDashboard({ state: productionSupervisorStore.getState() });
-assert.match(productionSupervisorDashboard, /Production Supervisor portal[\s\S]*Record finished products/);
-assert.match(productionSupervisorDashboard, /id="production-supervisor-output-form"/);
-assert.match(productionSupervisorDashboard, /value="SUP-FIN"[\s\S]*Supervisor Chips/, "Production Supervisors must be able to select an existing finished product");
-assert.doesNotMatch(productionSupervisorDashboard, /SUP-RAW|Supervisor Potatoes/, "raw materials must never appear in the Production Supervisor form");
-assert.doesNotMatch(productionSupervisorDashboard, /production plan|quality control|dispatch|finance|sales|staff/i, "the Production Supervisor portal must contain no extra operational areas");
-assert.deepEqual(currentUserPermissions(productionSupervisorStore.getState()).nav, ["dashboard"]);
-assert.equal(currentUserPermissions(productionSupervisorStore.getState()).canRecordFinishedProducts, true);
-productionSupervisorStore.dispatch({ type: "RECORD_SUPERVISOR_FINISHED_PRODUCT", productId: "SUP-FIN", quantity: 8 });
-assert.equal(productionSupervisorStore.getState().products.find((product) => product.id === "SUP-FIN")?.stock, 20, "recorded finished output must increase factory finished-product stock");
-assert.equal(productionSupervisorStore.getState().stockTransactions.some((transaction) => transaction.productionSupervisorEntry && transaction.productId === "SUP-FIN" && transaction.quantity === 8), true, "finished output must create a backend-synchronized stock audit record");
-const productionSupervisorActivity = productionSupervisorStore.getState().activityLogs.find((entry) => entry.recordType === "production_output");
-assert.deepEqual(productionSupervisorActivity?.notificationRoles, ["ceo", "admin"], "finished-output notifications must be addressed only to CEO and Admin");
-productionSupervisorStore.dispatch({ type: "RECORD_SUPERVISOR_FINISHED_PRODUCT", productId: "SUP-RAW", quantity: 4 });
-assert.equal(productionSupervisorStore.getState().products.find((product) => product.id === "SUP-RAW")?.stock, 30, "Production Supervisors must not alter raw-material stock");
-authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "ceo"));
-assert.equal(getTopbarNotificationItems(productionSupervisorStore.getState()).some((item) => item.body.includes("Supervisor Chips")), true, "CEO must receive the finished-output notification");
+globalThis.window.location.hash = "#/production?tab=plans";
+const assignedPlanManagerPage = renderProduction({ state: productionSupervisorStore.getState() });
+assert.match(assignedPlanManagerPage, /Create and assign production plan[\s\S]*Product[\s\S]*Target quantity[\s\S]*Production date[\s\S]*Production Supervisor/);
+assert.match(assignedPlanManagerPage, /Supervisor Chips — Original — 120g/, "production planning must identify the selected product by name, type, and size");
+assert.doesNotMatch(assignedPlanManagerPage, /Record completed production|Raw materials issued|Confirm batch quality/, "the manager must no longer enter supervisor batch output");
+productionSupervisorStore.dispatch({
+  type: "CREATE_ASSIGNED_PRODUCTION_PLAN",
+  productId: "SUP-FIN",
+  targetQuantity: 100,
+  productionDate: "2026-08-05",
+  supervisorId: "membership-production-supervisor",
+  notes: "Morning production"
+});
+const assignedSupervisorPlan = productionSupervisorStore.getState().productionPlans[0];
+assert.equal(assignedSupervisorPlan.assignedSupervisorUserId, "user-production-supervisor");
+assert.equal(assignedSupervisorPlan.targetQuantity, 100);
+assert.equal(assignedSupervisorPlan.productionDate, "2026-08-05");
+assert.equal(assignedSupervisorPlan.status, "planned");
+
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_supervisor"));
+const scopedSupervisorState = scopeStateForCurrentRole(productionSupervisorStore.getState());
+const productionSupervisorDashboard = renderDashboard({ state: scopedSupervisorState });
+assert.match(productionSupervisorDashboard, /Production Supervisor portal[\s\S]*Assigned production overview[\s\S]*Supervisor Chips/);
+assert.doesNotMatch(productionSupervisorDashboard, /production-supervisor-output-form|Add finished product/, "supervisors must not add sellable stock before manager approval");
+assert.deepEqual(currentUserPermissions(productionSupervisorStore.getState()).nav, ["dashboard", "production", "inventory", "activity-log", "settings"]);
+assert.equal(currentUserPermissions(productionSupervisorStore.getState()).canStartAssignedProduction, true);
+globalThis.window.location.hash = "#/production?tab=plans";
+const productionSupervisorPage = renderProduction({ state: scopedSupervisorState });
+assert.match(productionSupervisorPage, /My assigned production plans[\s\S]*Supervisor Chips[\s\S]*Start plan/);
+assert.doesNotMatch(productionSupervisorPage, /Create and assign production plan|Approve and transfer/, "supervisors must not receive manager planning or approval controls");
+const productionSupervisorSettings = renderSettings({ state: scopedSupervisorState });
+assert.match(productionSupervisorSettings, /My profile/, "Production Supervisors must have access to their profile settings");
+assert.doesNotMatch(productionSupervisorSettings, /Factory Settings/, "Production Supervisors must not receive factory configuration controls");
+const productionSupervisorActivityPage = renderActivityLog({ state: scopedSupervisorState });
+assert.match(productionSupervisorActivityPage, /My production activity[\s\S]*Only your assigned plans, submitted batches, and reported production issues/);
+globalThis.window.location.hash = "#/inventory?tab=movement-history";
+const productionSupervisorInventory = renderInventory({ state: scopedSupervisorState });
+assert.equal((productionSupervisorInventory.match(/class="subtab-link/g) || []).length, 1, "Production Supervisors must receive read-only Stock Health only");
+assert.doesNotMatch(productionSupervisorInventory, /js-open-stock-modal|js-restock-product|Factory dispatch/);
+
+productionSupervisorStore.dispatch({ type: "START_ASSIGNED_PRODUCTION_PLAN", planId: assignedSupervisorPlan.id });
+let supervisorWorkflowState = productionSupervisorStore.getState();
+assert.equal(supervisorWorkflowState.productionPlans[0].status, "in_progress");
+assert.match(supervisorWorkflowState.productionPlans[0].batchReference, /^BAT-\d{4}$/i, "the system must generate the batch number automatically when production starts");
+assert.ok(supervisorWorkflowState.productionPlans[0].startedAt, "the system must record the production start time");
+productionSupervisorStore.dispatch({ type: "SUBMIT_SUPERVISOR_BATCH_REPORT", planId: assignedSupervisorPlan.id, goodQuantity: 101, damagedQuantity: 0, rejectedQuantity: 0 });
+assert.equal(productionSupervisorStore.getState().productionBatches.some((batch) => batch.planId === assignedSupervisorPlan.id), false, "good output above the planned quantity must be rejected by the saved production action");
+productionSupervisorStore.dispatch({ type: "REPORT_PRODUCTION_ISSUE", planId: assignedSupervisorPlan.id, issueType: "machine_downtime", severity: "high", downtimeMinutes: 20, description: "Sealing machine stopped" });
+assert.equal(productionSupervisorStore.getState().productionIssues[0]?.reportedByUserId, "user-production-supervisor");
+assert.deepEqual(productionSupervisorStore.getState().activityLogs[0]?.notificationRoles, ["production_manager", "admin", "ceo"], "supervisor issues must notify the Production Line Manager, Admin, and CEO");
+productionSupervisorStore.dispatch({ type: "SUBMIT_SUPERVISOR_BATCH_REPORT", planId: assignedSupervisorPlan.id, goodQuantity: 92, damagedQuantity: 3, rejectedQuantity: 5, notes: "Production completed" });
+supervisorWorkflowState = productionSupervisorStore.getState();
+const submittedSupervisorBatch = supervisorWorkflowState.productionBatches.find((batch) => batch.planId === assignedSupervisorPlan.id);
+assert.equal(submittedSupervisorBatch.status, "submitted");
+assert.equal(submittedSupervisorBatch.variance, -8, "production variance must be calculated automatically from good output versus plan");
+assert.ok(submittedSupervisorBatch.completedAt && submittedSupervisorBatch.submittedAt, "completion and submission times must be recorded automatically");
+assert.equal(supervisorWorkflowState.products.find((product) => product.id === "SUP-FIN")?.stock, 12, "submitted good output must remain outside sellable stock until manager approval");
+assert.equal(supervisorWorkflowState.stockTransactions.some((transaction) => transaction.supervisorBatchReport), false, "submission alone must not create a finished-stock movement");
+assert.deepEqual(supervisorWorkflowState.activityLogs[0]?.notificationRoles, ["production_manager", "admin", "ceo"], "submitted batch reports must notify the Production Line Manager, Admin, and CEO");
+const recoveredSupervisorSubmission = recoverLocalSupervisorProduction(supervisorWorkflowState, {
+  productionPlans: [{ ...assignedSupervisorPlan, status: "planned", updatedAt: assignedSupervisorPlan.createdAt }],
+  productionBatches: [],
+  productionIssues: [],
+  activityLogs: []
+});
+assert.equal(recoveredSupervisorSubmission.actionType, "SUBMIT_SUPERVISOR_BATCH_REPORT", "a locally submitted supervisor report must be retried when the shared plan is still older");
+assert.equal(recoveredSupervisorSubmission.collections.productionPlans[0].status, "submitted");
+assert.equal(recoveredSupervisorSubmission.collections.productionBatches[0].id, submittedSupervisorBatch.id, "the recovered manager queue must include the submitted batch record");
+assert.equal(recoveredSupervisorSubmission.collections.productionIssues[0].reportedByUserId, "user-production-supervisor", "locally reported production issues must be recovered into the shared workflow");
+const issueOnlyRecovery = recoverLocalSupervisorProduction(supervisorWorkflowState, {
+  productionPlans: supervisorWorkflowState.productionPlans.map((plan) => ({ ...plan })),
+  productionBatches: supervisorWorkflowState.productionBatches.map((batch) => ({ ...batch })),
+  productionIssues: [],
+  activityLogs: []
+});
+assert.equal(issueOnlyRecovery.actionType, "REPORT_PRODUCTION_ISSUE", "a missing supervisor issue must be retried even when its plan and batch are already synchronized");
+const invalidLegacyBatchRecovery = recoverLocalSupervisorProduction({
+  ...supervisorWorkflowState,
+  productionPlans: [{ ...assignedSupervisorPlan, status: "submitted", updatedAt: "2026-08-06T10:00:00.000Z" }],
+  productionBatches: [{ ...submittedSupervisorBatch, quantityProduced: 101, status: "submitted", updatedAt: "2026-08-06T10:00:00.000Z" }],
+  productionIssues: [],
+  activityLogs: []
+}, {
+  productionPlans: [{ ...assignedSupervisorPlan, status: "in_progress", updatedAt: assignedSupervisorPlan.startedAt }],
+  productionBatches: [],
+  productionIssues: [],
+  activityLogs: []
+});
+assert.equal(invalidLegacyBatchRecovery.actionType, "", "an obsolete batch above its plan target must not be replayed ahead of the current valid report");
+assert.equal(invalidLegacyBatchRecovery.collections.productionBatches.length, 0);
+const supervisorOwnActivity = getScopedActivityLogs(supervisorWorkflowState);
+assert.equal(supervisorOwnActivity.every((entry) => entry.actorUserId === "user-production-supervisor" || (entry.relatedUserIds || []).includes("user-production-supervisor") || entry.planId === assignedSupervisorPlan.id), true, "the supervisor activity log must remain tailored to that staff member and assigned plan");
+
 authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "admin"));
-assert.equal(getTopbarNotificationItems(productionSupervisorStore.getState()).some((item) => item.body.includes("Supervisor Chips")), true, "Admin must receive the finished-output notification");
-authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "sales_rep"));
-assert.equal(getTopbarNotificationItems(productionSupervisorStore.getState()).some((item) => item.body.includes("Supervisor Chips")), false, "finished-output notifications must not alert unrelated roles");
+assert.equal(getTopbarNotificationItems(productionSupervisorStore.getState()).some((item) => item.body.includes(submittedSupervisorBatch.reference)), true, "Admin must be notified when a supervisor submits a batch report");
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "ceo"));
+const ceoSubmissionNotification = getTopbarNotificationItems(productionSupervisorStore.getState()).find((item) => item.body.includes(submittedSupervisorBatch.reference));
+assert.ok(ceoSubmissionNotification, "the CEO must be notified when a supervisor submits a batch report");
+assert.equal(ceoSubmissionNotification.href, "#/production?tab=reports", "the CEO submission notification must open production review");
+const ceoIssueNotification = getTopbarNotificationItems(productionSupervisorStore.getState()).find((item) => item.href === "#/production?tab=issues");
+assert.ok(ceoIssueNotification, "the CEO must receive production issue notifications linked to the issue screen");
+assert.ok(currentUserPermissions(productionSupervisorStore.getState()).nav.includes("production"), "the CEO must have direct Production navigation");
+globalThis.window.location.hash = "#/production?tab=reports";
+assert.match(renderProduction({ state: productionSupervisorStore.getState() }), /CEO production oversight[\s\S]*Approve[\s\S]*Flag[\s\S]*Reject/, "the CEO must receive the Production Line Manager report-review controls");
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_manager"));
+const managerSubmissionNotification = getTopbarNotificationItems(productionSupervisorStore.getState()).find((item) => item.body.includes(submittedSupervisorBatch.reference));
+assert.ok(managerSubmissionNotification, "the Production Line Manager must be notified when a supervisor submits a batch report");
+assert.equal(managerSubmissionNotification.href, "#/production?tab=reports", "the manager submission notification must open the actual report review screen");
+assert.match(renderDashboard({ state: productionSupervisorStore.getState() }), /Review submitted reports \(1\)/, "the manager dashboard must provide a direct report-review action");
+globalThis.window.location.hash = "#/production?tab=plans";
+assert.match(renderProduction({ state: productionSupervisorStore.getState() }), /Review report/, "a submitted plan must link the manager directly to its report decision screen");
+globalThis.window.location.hash = "#/production?tab=reports";
+const submittedReportManagerPage = renderProduction({ state: productionSupervisorStore.getState() });
+assert.match(submittedReportManagerPage, /Submitted batch reports[\s\S]*Approve[\s\S]*Flag[\s\S]*Reject/);
+productionSupervisorStore.dispatch({ type: "FLAG_SUPERVISOR_BATCH_REPORT", batchId: submittedSupervisorBatch.id, note: "Confirm the damaged quantity" });
+assert.equal(productionSupervisorStore.getState().productionBatches.find((batch) => batch.id === submittedSupervisorBatch.id)?.status, "flagged");
+
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_supervisor"));
+const flaggedSupervisorPage = renderProduction({ state: scopeStateForCurrentRole(productionSupervisorStore.getState()) });
+assert.match(flaggedSupervisorPage, /Confirm the damaged quantity[\s\S]*Correct and resubmit/);
+productionSupervisorStore.dispatch({ type: "SUBMIT_SUPERVISOR_BATCH_REPORT", planId: assignedSupervisorPlan.id, goodQuantity: 94, damagedQuantity: 2, rejectedQuantity: 4, notes: "Corrected totals" });
+
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_manager"));
+productionSupervisorStore.dispatch({ type: "APPROVE_SUPERVISOR_BATCH_REPORT", batchId: submittedSupervisorBatch.id });
+supervisorWorkflowState = productionSupervisorStore.getState();
+assert.equal(supervisorWorkflowState.products.find((product) => product.id === "SUP-FIN")?.stock, 106, "manager approval must automatically transfer only the 94 good units into finished stock");
+assert.equal(supervisorWorkflowState.productionPlans.find((plan) => plan.id === assignedSupervisorPlan.id)?.status, "completed");
+assert.equal(supervisorWorkflowState.stockTransactions.find((transaction) => transaction.supervisorBatchReport)?.quantity, 94);
+assert.equal(supervisorWorkflowState.stockTransactions.some((transaction) => transaction.quantity === 2 || transaction.quantity === 4), false, "damaged and rejected quantities must never enter sellable finished stock");
+productionSupervisorStore.dispatch({ type: "CLOSE_PRODUCTION_PLAN", planId: assignedSupervisorPlan.id });
+assert.equal(productionSupervisorStore.getState().productionPlans.find((plan) => plan.id === assignedSupervisorPlan.id)?.status, "completed", "plans with open production issues must not close");
+const supervisorIssue = productionSupervisorStore.getState().productionIssues[0];
+productionSupervisorStore.dispatch({ type: "RESOLVE_PRODUCTION_ISSUE", issueId: supervisorIssue.id, resolution: "Sealing machine restarted" });
+productionSupervisorStore.dispatch({ type: "CLOSE_PRODUCTION_PLAN", planId: assignedSupervisorPlan.id });
+assert.equal(productionSupervisorStore.getState().productionPlans.find((plan) => plan.id === assignedSupervisorPlan.id)?.status, "closed", "the manager may close a completed plan after its issues are resolved");
+
+productionSupervisorStore.dispatch({ type: "CREATE_ASSIGNED_PRODUCTION_PLAN", productId: "SUP-FIN", targetQuantity: 10, productionDate: "2026-08-06", supervisorId: "membership-production-supervisor" });
+const rejectedPlan = productionSupervisorStore.getState().productionPlans.find((plan) => plan.status === "planned");
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_supervisor"));
+productionSupervisorStore.dispatch({ type: "START_ASSIGNED_PRODUCTION_PLAN", planId: rejectedPlan.id });
+productionSupervisorStore.dispatch({ type: "SUBMIT_SUPERVISOR_BATCH_REPORT", planId: rejectedPlan.id, goodQuantity: 10, damagedQuantity: 0, rejectedQuantity: 0 });
+const batchToReject = productionSupervisorStore.getState().productionBatches.find((batch) => batch.planId === rejectedPlan.id);
+authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_manager"));
+productionSupervisorStore.dispatch({ type: "REJECT_SUPERVISOR_BATCH_REPORT", batchId: batchToReject.id, note: "Batch evidence is incomplete" });
+assert.equal(productionSupervisorStore.getState().productionBatches.find((batch) => batch.id === batchToReject.id)?.status, "rejected");
+assert.equal(productionSupervisorStore.getState().productionPlans.find((plan) => plan.id === rejectedPlan.id)?.status, "rejected");
+assert.equal(productionSupervisorStore.getState().products.find((product) => product.id === "SUP-FIN")?.stock, 106, "rejecting a report must not add its reported output to finished stock");
 
 const productionWorkflowStore = createStore();
 productionWorkflowStore.dispatch({
@@ -1941,17 +2165,10 @@ productionWorkflowStore.dispatch({
 });
 globalThis.window.location.hash = "#/production?tab=plans";
 const productionPlanPage = renderProduction({ state: productionWorkflowStore.getState() });
-assert.match(productionPlanPage, /Create production plan/);
-assert.match(productionPlanPage, /Daily[\s\S]*Weekly/);
-assert.match(productionPlanPage, /Products and target quantities/);
-assert.match(productionPlanPage, /Team[\s\S]*Shift[\s\S]*Machine or production line/);
-assert.match(productionPlanPage, /Raw materials issued for this batch/);
-assert.match(productionPlanPage, /Raw materials issued for this batch[\s\S]*optional/);
-assert.match(productionPlanPage, /name="materialName"[\s\S]*Fresh ginger/);
-assert.match(productionPlanPage, /Quality control \(QC\)[\s\S]*appearance, measurement, packaging, and safety standards/);
-assert.match(productionPlanPage, /Rejected quantity[\s\S]*Damaged quantity[\s\S]*Wasted quantity/);
-assert.match(productionPlanPage, /Confirm batch quality/);
-assert.match(productionPlanPage, /Report production issue/);
+assert.match(productionPlanPage, /Create and assign production plan/);
+assert.match(productionPlanPage, /Product[\s\S]*Target quantity[\s\S]*Production date[\s\S]*Production Supervisor/);
+assert.match(productionPlanPage, /Monitor target quantity against completed good output/);
+assert.doesNotMatch(productionPlanPage, /Raw materials issued for this batch|Confirm batch quality|Record completed production/);
 
 productionWorkflowStore.dispatch({
   type: "CREATE_PRODUCTION_PLAN",
@@ -2010,9 +2227,8 @@ assert.equal(productionWorkflowStore.getState().productionIssues.find((issue) =>
 
 globalThis.window.location.hash = "#/production?tab=reports";
 const productionReportPage = renderProduction({ state: productionWorkflowStore.getState() });
-assert.match(productionReportPage, /Production efficiency, wastage, and output/);
-assert.match(productionReportPage, /Planned[\s\S]*Actual[\s\S]*Variance[\s\S]*Plan efficiency[\s\S]*Losses[\s\S]*Yield/);
-assert.match(productionReportPage, /Daily chips plan[\s\S]*Production Chips[\s\S]*80[\s\S]*75/);
+assert.match(productionReportPage, /Submitted batch reports/);
+assert.match(productionReportPage, /approval automatically transfers good output into finished stock/);
 assert.equal(getScopedActivityLogs(productionWorkflowStore.getState()).some((entry) => entry.recordType === "production_transfer"), true, "Production Line Manager activity must include finished-goods transfers");
 
 productionWorkflowStore.dispatch({

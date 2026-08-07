@@ -20,8 +20,8 @@ import {
   getStockHealth,
   stockCategoryIdForProduct
 } from "../services/calculations.js?v=20260804i";
-import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
-import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260804m";
+import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, productSelectionLabel, statusText } from "../services/formatters.js?v=20260805h";
+import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260805b";
 import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
@@ -31,7 +31,7 @@ import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog, requestTextDialog } from "../ui/action-dialog.js";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 import { effectivePiecePrice, packagingLineAmount, packagingMultiplier, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260804l";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260805b";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -575,7 +575,7 @@ function renderCeoFilterPanel(state, productRows, repRows, supermarketRows) {
           <span>Product</span>
           <select data-ceo-filter="product">
             <option value="">All products</option>
-            ${finishedProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.product.name)}</option>`).join("")}
+            ${finishedProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(productSelectionLabel(row.product))}</option>`).join("")}
           </select>
         </label>
         <label class="field">
@@ -1805,8 +1805,9 @@ function renderProductionManagerDashboard(state) {
     .reduce((total, batch) => total + Number(batch.quantityProduced || 0), 0);
   const activeProducts = activeStockProducts(state.products || []);
   const lowStock = getLowStockProducts(activeProducts);
-  const activePlans = (state.productionPlans || []).filter((plan) => ["planned", "in_progress"].includes(plan.status));
-  const awaitingQuality = batches.filter((batch) => ["awaiting_qc", "qc_failed", "qc_passed"].includes(batch.status));
+  const activePlans = (state.productionPlans || []).filter((plan) => ["planned", "in_progress", "submitted", "flagged"].includes(plan.status));
+  const awaitingQuality = batches.filter((batch) => ["awaiting_qc", "qc_failed", "qc_passed", "submitted"].includes(batch.status));
+  const submittedSupervisorReports = batches.filter((batch) => batch.supervisorWorkflow && batch.status === "submitted");
   const openIssues = (state.productionIssues || []).filter((issue) => issue.status === "open");
   const recentBatchRows = batches.slice(0, 8).map((batch) => `
     <tr data-search-index="${escapeHtml(`${batch.reference} ${batch.finishedProductName} ${batch.recordedBy}`.toLowerCase())}">
@@ -1823,12 +1824,15 @@ function renderProductionManagerDashboard(state) {
       ${dashboardIdentity(state, "production_manager")}
       <section class="ceo-command-strip storekeeper-command-strip">
         <div><span class="eyebrow">Production Line Manager portal</span><h2>Production overview</h2></div>
-        <a class="button primary" href="#/production"><span>Manage production</span></a>
+        <div class="row-actions">
+          ${submittedSupervisorReports.length ? `<a class="button primary" href="#/production?tab=reports"><span>Review submitted reports (${formatNumber(submittedSupervisorReports.length)})</span></a>` : ""}
+          <a class="button ${submittedSupervisorReports.length ? "" : "primary"}" href="#/production"><span>Manage production</span></a>
+        </div>
       </section>
       <div class="metric-grid">
         ${metricCard({ label: "Today's output", value: formatNumber(todayOutput), meta: "Finished units recorded today", iconName: "package" })}
         ${metricCard({ label: "Active plans", value: formatNumber(activePlans.length), meta: "Daily or weekly plans in progress", iconName: "orders" })}
-        ${metricCard({ label: "Awaiting QC or approval", value: formatNumber(awaitingQuality.length), meta: "Batches not yet transferred", iconName: "check" })}
+        ${metricCard({ label: "Reports to review", value: formatNumber(awaitingQuality.length), meta: "Submitted or legacy batches awaiting review", iconName: "check" })}
         ${metricCard({ label: "Open issues", value: formatNumber(openIssues.length), meta: `${formatNumber(lowStock.length)} stock items also need attention`, iconName: "alert" })}
       </div>
       <section class="panel">
@@ -1848,12 +1852,22 @@ function renderProductionManagerDashboard(state) {
 }
 
 function renderProductionSupervisorDashboard(state) {
-  const finishedProducts = activeStockProducts(state.products || [])
-    .filter((product) => stockCategoryIdForProduct(product) === "finished_products")
-    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || "")));
-  const productOptions = finishedProducts
-    .map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)}</option>`)
-    .join("");
+  const plans = [...(state.productionPlans || [])]
+    .sort((a, b) => String(b.productionDate || b.startDate || "").localeCompare(String(a.productionDate || a.startDate || "")));
+  const activePlans = plans.filter((plan) => ["planned", "in_progress", "flagged"].includes(plan.status));
+  const awaitingReview = plans.filter((plan) => plan.status === "submitted");
+  const completed = plans.filter((plan) => ["completed", "closed"].includes(plan.status));
+  const openIssues = (state.productionIssues || []).filter((issue) => issue.status === "open");
+  const rows = plans.slice(0, 6).map((plan) => {
+    const line = plan.lines?.[0] || {};
+    return `<tr>
+      <td><strong>${escapeHtml(plan.name || "Production plan")}</strong><div class="muted">${escapeHtml(plan.batchReference || "Batch generated when started")}</div></td>
+      <td>${escapeHtml(line.productName || plan.productName || "Finished product")}</td>
+      <td>${formatNumber(plan.targetQuantity || line.quantity || 0)}</td>
+      <td>${formatDate(plan.productionDate || plan.startDate)}</td>
+      <td>${statusPill(plan.status || "planned")}</td>
+    </tr>`;
+  });
 
   return `
     <section class="view dashboard-view production-supervisor-dashboard">
@@ -1861,30 +1875,20 @@ function renderProductionSupervisorDashboard(state) {
       <section class="ceo-command-strip storekeeper-command-strip">
         <div>
           <span class="eyebrow">Production Supervisor portal</span>
-          <h2>Record finished products</h2>
-          <p>Add completed output directly to finished-product stock.</p>
+          <h2>Assigned production overview</h2>
+          <p>Start assigned plans, record batch results, and submit reports for manager review.</p>
         </div>
+        <div class="row-actions"><a class="button primary" href="#/production"><span>Open assigned plans</span></a><a class="button" href="#/inventory"><span>View stock</span></a></div>
       </section>
+      <div class="metric-grid">
+        ${metricCard({ label: "Active plans", value: formatNumber(activePlans.length), meta: "Planned, in progress, or flagged", iconName: "orders" })}
+        ${metricCard({ label: "Awaiting review", value: formatNumber(awaitingReview.length), meta: "Reports submitted to your manager", iconName: "check" })}
+        ${metricCard({ label: "Completed", value: formatNumber(completed.length), meta: "Approved production plans", iconName: "package" })}
+        ${metricCard({ label: "Open issues", value: formatNumber(openIssues.length), meta: "Issues reported from your work", iconName: "alert" })}
+      </div>
       <section class="panel">
-        ${panelHeader("Finished product output", "CEO and Admin will be notified after the stock is added")}
-        ${finishedProducts.length ? `
-          <form id="production-supervisor-output-form" class="form-grid" novalidate>
-            <label class="field">
-              <span>Finished product *</span>
-              <select name="productId" required>
-                <option value="">Choose a finished product</option>
-                ${productOptions}
-              </select>
-            </label>
-            <label class="field">
-              <span>Quantity completed *</span>
-              <input name="quantity" type="number" min="1" step="1" inputmode="numeric" placeholder="0" required>
-            </label>
-            <div class="form-actions span-full">
-              <button class="button primary" type="submit"><span>Add finished product</span></button>
-            </div>
-          </form>
-        ` : `<div class="empty-state">No finished products are available. Ask the CEO or Admin to create a finished product first.</div>`}
+        ${panelHeader("Recent assigned plans", "Only production plans assigned to you are shown")}
+        ${table(["Plan / batch", "Product", "Target", "Production date", "Status"], rows, "No production plans are assigned to you")}
       </section>
     </section>
   `;
@@ -2162,8 +2166,11 @@ function reportLinesFor(report, state) {
 
 function renderManagerReportRows(state, { readOnly = false } = {}) {
   const canDelete = currentUserRole(state) === "ceo";
-  return (state.salesReports || []).map((report) => {
+  return [...(state.salesReports || [])]
+    .sort((a, b) => String(b.submittedAt || b.updatedAt || b.reportDate || "").localeCompare(String(a.submittedAt || a.updatedAt || a.reportDate || "")))
+    .map((report) => {
     const reportLines = reportLinesFor(report, state);
+    const reviewHistory = reportReviewHistory(report);
     const linePreview = reportLines
       .slice(0, 2)
       .map((line) => [line.customerName, line.productName, line.returnDisposition].filter(Boolean).join(" - "))
@@ -2189,7 +2196,15 @@ function renderManagerReportRows(state, { readOnly = false } = {}) {
           <div class="muted">${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned</div>
         </td>
         <td>
-          ${escapeHtml(report.reviewNote || "No query")}
+          <div class="row-actions">
+            <span>${escapeHtml(reviewHistory[0]?.note || "No query")}</span>
+            ${reviewHistory.length ? iconButton({
+              iconName: "alert",
+              label: "View permanent review notes",
+              className: "js-view-report-notes",
+              data: { "report-id": report.id }
+            }) : ""}
+          </div>
           <div class="muted">${linePreview ? escapeHtml(linePreview) : `${formatNumber((report.transactionIds || []).length)} linked record${(report.transactionIds || []).length === 1 ? "" : "s"}`}</div>
         </td>
         <td>
@@ -2314,8 +2329,25 @@ export function renderManagerSalesOperations(state) {
   `;
 }
 
+function reportReviewHistory(report) {
+  if (Array.isArray(report.reviewHistory) && report.reviewHistory.length) {
+    return [...report.reviewHistory]
+      .sort((a, b) => String(b.recordedAt || "").localeCompare(String(a.recordedAt || "")));
+  }
+  const legacyNote = String(report.flagReason || report.reviewNote || "").trim();
+  if (!legacyNote) return [];
+  return [{
+    id: `legacy-${report.id}`,
+    status: report.flagReason ? "flagged" : (report.status || "reviewed"),
+    note: legacyNote,
+    recordedBy: report.reviewedBy || "Reviewer",
+    recordedAt: report.flaggedAt || report.reviewedAt || report.submittedAt || report.reportDate || ""
+  }];
+}
+
 function renderReportDetails(report, state) {
   const lines = reportLinesFor(report, state);
+  const reviewHistory = reportReviewHistory(report);
 
   return `
     <div class="report-detail-summary">
@@ -2352,9 +2384,14 @@ function renderReportDetails(report, state) {
         </tbody>
       </table>
     </div>
-    <div class="report-detail-note">
-      <span class="eyebrow">${report.status === "flagged" ? "Flag reason" : "Review note"}</span>
-      <p>${escapeHtml(report.reviewNote || "No review query has been added.")}</p>
+    <div class="report-detail-note report-review-history" data-report-review-history>
+      <span class="eyebrow">Permanent review notes</span>
+      ${reviewHistory.length ? reviewHistory.map((entry) => `
+        <article class="report-review-note">
+          <div><strong>${escapeHtml(statusText(entry.status || "reviewed"))}</strong><span class="muted">${entry.recordedAt ? formatDateTime(entry.recordedAt) : "Date unavailable"} · ${escapeHtml(entry.recordedBy || "Reviewer")}</span></div>
+          <p>${escapeHtml(entry.note)}</p>
+        </article>
+      `).join("") : "<p>No review query has been added.</p>"}
     </div>
   `;
 }
@@ -2695,6 +2732,7 @@ function repProductChoices(assignments, mode = "sale") {
     const existing = choices.get(assignment.productId) || {
       productId: assignment.productId,
       productName: assignment.product.name,
+      productLabel: productSelectionLabel(assignment.product),
       available: 0,
       assignmentIds: []
     };
@@ -2712,7 +2750,7 @@ function renderRepAssignmentOptions(assignments, mode = "sale") {
 
   return repProductChoices(assignments, mode).map((choice) => `
     <option value="${escapeHtml(choice.productId)}" data-assignment-ids="${escapeHtml(choice.assignmentIds.join(","))}">
-      ${escapeHtml(choice.productName)} (${formatNumber(choice.available)} ${unitLabel})
+      ${escapeHtml(choice.productLabel || choice.productName)} (${formatNumber(choice.available)} ${unitLabel})
     </option>
   `).join("");
 }
@@ -3642,38 +3680,6 @@ function bindManagerTableExports(root) {
 export function bindDashboard({ root, store, signal }) {
   bindSubmittedReportDetails({ root, store });
 
-  const productionSupervisorForm = qs("#production-supervisor-output-form", root);
-  if (productionSupervisorForm) {
-    productionSupervisorForm.addEventListener("submit", (event) => {
-      event.preventDefault();
-      const data = new FormData(productionSupervisorForm);
-      const productId = String(data.get("productId") || "").trim();
-      const quantity = Number(data.get("quantity") || 0);
-      const state = store.getState();
-      const product = (state.products || []).find((item) => item.id === productId);
-
-      if (
-        !product ||
-        product.status === "inactive" ||
-        stockCategoryIdForProduct(product) !== "finished_products" ||
-        !Number.isFinite(quantity) ||
-        quantity <= 0 ||
-        !Number.isInteger(quantity)
-      ) {
-        return;
-      }
-
-      store.dispatch({
-        type: "RECORD_SUPERVISOR_FINISHED_PRODUCT",
-        productId,
-        quantity,
-        message: `${product.name} finished-product stock updated`
-      });
-      productionSupervisorForm.reset();
-    }, { signal });
-    return;
-  }
-
   if (root.querySelector(".sales-rep-portal")) {
     bindSalesRepDashboard({ root, store });
     return;
@@ -3752,7 +3758,7 @@ function bindSubmittedReportDetails({ root, store }) {
     modal.hidden = true;
   }
 
-  qsa(".js-view-report-details", root).forEach((button) => {
+  qsa(".js-view-report-details, .js-view-report-notes", root).forEach((button) => {
     button.addEventListener("click", () => {
       const report = (store.getState().salesReports || []).find((item) => item.id === button.dataset.reportId);
       if (!report) return;
@@ -3762,6 +3768,9 @@ function bindSubmittedReportDetails({ root, store }) {
       if (title) title.textContent = `${report.repName || "Representative"} - ${formatDate(report.reportDate)}`;
       modal.hidden = false;
       modal.focus();
+      if (button.classList.contains("js-view-report-notes")) {
+        qs("[data-report-review-history]", content)?.scrollIntoView({ block: "start" });
+      }
     });
   });
 

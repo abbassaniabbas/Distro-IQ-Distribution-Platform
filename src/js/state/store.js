@@ -1,5 +1,5 @@
 import seedData from "../data/seed-data.js?v=20260801d";
-import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260804m";
+import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260805b";
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
@@ -10,9 +10,9 @@ import {
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
 } from "../services/calculations.js?v=20260804i";
-import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260804m";
+import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260805g";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
-import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js?v=20260804m";
+import { createAccountInvite, createClientProfile, createId, descriptiveProductSku, nextFormattedId } from "../services/tenant.js?v=20260805c";
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../services/packaging.js";
 
 function clone(value) {
@@ -441,6 +441,10 @@ function applySharedProductImages(products, images) {
 
 function canManageOrderFlow(state) {
   return currentUserRole(state) === "ceo";
+}
+
+function canManageProductionFlow(state) {
+  return ["production_manager", "ceo"].includes(currentUserRole(state));
 }
 
 const INVOICE_TYPES = {
@@ -2187,7 +2191,7 @@ function reducer(currentState, action) {
     }
 
     case "CREATE_PRODUCTION_PLAN": {
-      if (currentUserRole(state) !== "production_manager") return state;
+      if (!canManageProductionFlow(state)) return state;
       const cadence = action.cadence === "weekly" ? "weekly" : "daily";
       const startDate = dateOnly(action.startDate);
       const endDate = dateOnly(action.endDate || action.startDate);
@@ -2238,8 +2242,299 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "CREATE_ASSIGNED_PRODUCTION_PLAN": {
+      if (!canManageProductionFlow(state)) return state;
+      const product = state.products.find((item) => item.id === action.productId);
+      const supervisor = (state.accounts || []).find((account) => (
+        account.id === action.supervisorId &&
+        normalizeRole(account.role) === "production_supervisor" &&
+        String(account.status || "").toLowerCase() === "active"
+      ));
+      const productionDate = dateOnly(action.productionDate);
+      const targetQuantity = Number(action.targetQuantity || 0);
+      if (
+        !product ||
+        product.status === "inactive" ||
+        stockCategoryIdForProduct(product) !== "finished_products" ||
+        !supervisor ||
+        !isValidISODate(productionDate) ||
+        !Number.isInteger(targetQuantity) ||
+        targetQuantity <= 0
+      ) return state;
+
+      const createdAt = new Date().toISOString();
+      const plan = {
+        id: createId("PLAN"),
+        clientId: state.client?.id || "",
+        name: String(action.name || `${product.name} production`).trim().slice(0, 120),
+        cadence: "daily",
+        productionDate,
+        startDate: productionDate,
+        endDate: productionDate,
+        lines: [{ productId: product.id, productName: product.name, quantity: targetQuantity }],
+        productId: product.id,
+        productName: product.name,
+        targetQuantity,
+        assignedSupervisorId: supervisor.id,
+        assignedSupervisorUserId: supervisor.userId || "",
+        assignedSupervisorName: supervisor.name,
+        notes: String(action.notes || "").trim().slice(0, 500),
+        status: "planned",
+        batchReference: "",
+        startedAt: "",
+        completedAt: "",
+        submittedAt: "",
+        approvedAt: "",
+        closedAt: "",
+        actualGoodQuantity: 0,
+        quantityDamaged: 0,
+        quantityRejected: 0,
+        variance: -targetQuantity,
+        createdBy: currentActorName(state),
+        createdAt,
+        updatedAt: createdAt
+      };
+      state.productionPlans = [plan, ...(state.productionPlans || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "assigned",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        planId: plan.id,
+        summary: `${plan.createdBy} assigned ${targetQuantity} ${product.name} to ${supervisor.name} for ${productionDate}`,
+        notificationRoles: ["production_supervisor"],
+        notificationUserIds: supervisor.userId ? [supervisor.userId] : [],
+        relatedUserIds: supervisor.userId ? [supervisor.userId] : []
+      });
+      return state;
+    }
+
+    case "START_ASSIGNED_PRODUCTION_PLAN": {
+      if (currentUserRole(state) !== "production_supervisor") return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const actor = getCurrentActor(state);
+      const assignedToActor = plan && (
+        String(plan.assignedSupervisorUserId || "") === String(actor.userId || "") ||
+        normalized(plan.assignedSupervisorName) === normalized(actor.name)
+      );
+      if (!assignedToActor || plan.status !== "planned") return state;
+      const existingReferences = [
+        ...(state.productionBatches || []).map((batch) => batch.reference),
+        ...(state.productionPlans || []).map((item) => item.batchReference)
+      ].filter(Boolean);
+      const startedAt = new Date().toISOString();
+      plan.status = "in_progress";
+      plan.batchReference = nextFormattedId("BAT-{0000}", existingReferences, "BAT");
+      plan.startedAt = startedAt;
+      plan.updatedAt = startedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "started",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        planId: plan.id,
+        summary: `${actor.name} started ${plan.name} as ${plan.batchReference}`,
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
+    case "SUBMIT_SUPERVISOR_BATCH_REPORT": {
+      if (currentUserRole(state) !== "production_supervisor") return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const actor = getCurrentActor(state);
+      const assignedToActor = plan && (
+        String(plan.assignedSupervisorUserId || "") === String(actor.userId || "") ||
+        normalized(plan.assignedSupervisorName) === normalized(actor.name)
+      );
+      const goodQuantity = Number(action.goodQuantity || 0);
+      const damagedQuantity = Number(action.damagedQuantity || 0);
+      const rejectedQuantity = Number(action.rejectedQuantity || 0);
+      const quantities = [goodQuantity, damagedQuantity, rejectedQuantity];
+      const planLine = plan?.lines?.[0];
+      const targetQuantity = Number(plan?.targetQuantity || planLine?.quantity || 0);
+      if (
+        !assignedToActor ||
+        !["in_progress", "flagged"].includes(plan.status) ||
+        quantities.some((quantity) => !Number.isInteger(quantity) || quantity < 0) ||
+        goodQuantity > targetQuantity ||
+        goodQuantity + damagedQuantity + rejectedQuantity <= 0
+      ) return state;
+      const product = state.products.find((item) => item.id === (plan.productId || planLine?.productId));
+      if (!product || stockCategoryIdForProduct(product) !== "finished_products") return state;
+
+      const submittedAt = new Date().toISOString();
+      const variance = goodQuantity - targetQuantity;
+      let batch = (state.productionBatches || []).find((item) => item.planId === plan.id && item.supervisorWorkflow);
+      if (!batch) {
+        batch = {
+          id: createId("BATCH"),
+          clientId: state.client?.id || "",
+          planId: plan.id,
+          reference: plan.batchReference || nextFormattedId("BAT-{0000}", (state.productionBatches || []).map((item) => item.reference), "BAT"),
+          batchDate: plan.productionDate || plan.startDate || todayISO(),
+          finishedProductId: product.id,
+          finishedProductName: product.name,
+          plannedQuantity: targetQuantity,
+          outputUnit: product.unit || "unit",
+          materials: [],
+          supervisorWorkflow: true,
+          recordedBy: actor.name,
+          recordedByUserId: actor.userId || "",
+          createdAt: submittedAt,
+          startedAt: plan.startedAt || submittedAt,
+          transferredAt: ""
+        };
+        state.productionBatches = [batch, ...(state.productionBatches || [])];
+      }
+      batch.quantityProduced = goodQuantity;
+      batch.quantityDamaged = damagedQuantity;
+      batch.quantityRejected = rejectedQuantity;
+      batch.quantityWasted = 0;
+      batch.variance = variance;
+      batch.notes = String(action.notes || "").trim().slice(0, 500);
+      batch.status = "submitted";
+      batch.completedAt = batch.completedAt || submittedAt;
+      batch.submittedAt = submittedAt;
+      batch.resubmittedAt = batch.reviewNote ? submittedAt : batch.resubmittedAt || "";
+      batch.reviewNote = "";
+      batch.reviewedAt = "";
+      batch.reviewedBy = "";
+
+      plan.status = "submitted";
+      plan.batchReference = batch.reference;
+      plan.actualGoodQuantity = goodQuantity;
+      plan.quantityDamaged = damagedQuantity;
+      plan.quantityRejected = rejectedQuantity;
+      plan.variance = variance;
+      plan.completedAt = plan.completedAt || submittedAt;
+      plan.submittedAt = submittedAt;
+      plan.updatedAt = submittedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "submitted",
+        recordType: "production_batch",
+        recordLabel: batch.reference,
+        planId: plan.id,
+        summary: `${actor.name} submitted ${batch.reference}: ${goodQuantity} good, ${damagedQuantity} damaged, ${rejectedQuantity} rejected`,
+        details: [`Variance against plan: ${variance}`],
+        notificationRoles: ["production_manager", "admin", "ceo"],
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
+    case "APPROVE_SUPERVISOR_BATCH_REPORT": {
+      if (!canManageProductionFlow(state)) return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId && item.supervisorWorkflow);
+      const plan = (state.productionPlans || []).find((item) => item.id === batch?.planId);
+      const product = state.products.find((item) => item.id === batch?.finishedProductId);
+      if (!batch || batch.status !== "submitted" || !plan || !product || batch.transferredAt) return state;
+      const approvedAt = new Date().toISOString();
+      const goodQuantity = Math.max(0, Number(batch.quantityProduced || 0));
+      if (goodQuantity > 0) {
+        product.stock = Number(product.stock || 0) + goodQuantity;
+        product.updatedAt = todayISO();
+        product.soldOutAt = "";
+        state.stockTransactions = [{
+          id: createId("TXN"),
+          clientId: state.client?.id || "",
+          type: "production output",
+          productId: product.id,
+          productName: product.name,
+          quantity: goodQuantity,
+          unit: product.unit || "unit",
+          amount: 0,
+          partyType: "Production batch",
+          partyName: batch.reference,
+          date: todayISO(),
+          createdAt: approvedAt,
+          recordedBy: currentActorName(state),
+          movementDirection: "in",
+          batchId: batch.id,
+          batchReference: batch.reference,
+          purpose: "Approved supervisor batch report",
+          supervisorBatchReport: true
+        }, ...(state.stockTransactions || [])];
+      }
+      batch.status = "approved";
+      batch.approvedBy = currentActorName(state);
+      batch.approvedAt = approvedAt;
+      batch.transferredBy = currentActorName(state);
+      batch.transferredAt = approvedAt;
+      batch.transferredQuantity = goodQuantity;
+      batch.reviewNote = String(action.note || "").trim().slice(0, 500);
+      plan.status = "completed";
+      plan.approvedAt = approvedAt;
+      plan.updatedAt = approvedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "production_transfer",
+        recordLabel: batch.reference,
+        planId: plan.id,
+        summary: `${batch.reference} approved; ${goodQuantity} good ${product.name} added to finished stock while ${Number(batch.quantityDamaged || 0)} damaged and ${Number(batch.quantityRejected || 0)} rejected stayed out`,
+        notificationRoles: ["production_supervisor"],
+        notificationUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : [],
+        relatedUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : []
+      });
+      return state;
+    }
+
+    case "FLAG_SUPERVISOR_BATCH_REPORT":
+    case "REJECT_SUPERVISOR_BATCH_REPORT": {
+      if (!canManageProductionFlow(state)) return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId && item.supervisorWorkflow);
+      const plan = (state.productionPlans || []).find((item) => item.id === batch?.planId);
+      const note = String(action.note || "").trim().slice(0, 500);
+      if (!batch || batch.status !== "submitted" || !plan || !note) return state;
+      const rejected = action.type === "REJECT_SUPERVISOR_BATCH_REPORT";
+      const status = rejected ? "rejected" : "flagged";
+      const reviewedAt = new Date().toISOString();
+      batch.status = status;
+      batch.reviewNote = note;
+      batch.reviewedAt = reviewedAt;
+      batch.reviewedBy = currentActorName(state);
+      plan.status = status;
+      plan.reviewNote = note;
+      plan.updatedAt = reviewedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: rejected ? "rejected" : "flagged",
+        recordType: "production_batch",
+        recordLabel: batch.reference,
+        planId: plan.id,
+        summary: `${batch.reference} ${status}: ${note}`,
+        notificationRoles: ["production_supervisor"],
+        notificationUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : [],
+        relatedUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : []
+      });
+      return state;
+    }
+
+    case "CLOSE_PRODUCTION_PLAN": {
+      if (!canManageProductionFlow(state)) return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const hasOpenIssues = (state.productionIssues || []).some((issue) => issue.planId === plan?.id && issue.status === "open");
+      if (!plan || plan.status !== "completed" || hasOpenIssues) return state;
+      plan.status = "closed";
+      plan.closedAt = new Date().toISOString();
+      plan.closedBy = currentActorName(state);
+      plan.updatedAt = plan.closedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "completed",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        planId: plan.id,
+        summary: `${plan.name} closed after approved production was completed`,
+        relatedUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : []
+      });
+      return state;
+    }
+
     case "RECORD_MANAGED_PRODUCTION_BATCH": {
-      if (currentUserRole(state) !== "production_manager") return state;
+      if (!canManageProductionFlow(state)) return state;
       const plan = (state.productionPlans || []).find((item) => item.id === action.planId && !["cancelled", "completed"].includes(item.status));
       const finishedProduct = state.products.find((item) => item.id === action.finishedProductId);
       const planLine = plan?.lines?.find((line) => line.productId === action.finishedProductId);
@@ -2357,7 +2652,7 @@ function reducer(currentState, action) {
     }
 
     case "RECORD_PRODUCTION_QC": {
-      if (currentUserRole(state) !== "production_manager") return state;
+      if (!canManageProductionFlow(state)) return state;
       const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
       const outcome = action.outcome === "passed" ? "passed" : action.outcome === "failed" ? "failed" : "";
       const checks = action.checks && typeof action.checks === "object" ? {
@@ -2389,7 +2684,7 @@ function reducer(currentState, action) {
     }
 
     case "APPROVE_PRODUCTION_BATCH": {
-      if (currentUserRole(state) !== "production_manager") return state;
+      if (!canManageProductionFlow(state)) return state;
       const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
       if (!batch || batch.status !== "qc_passed" || batch.qualityStatus !== "passed") return state;
       batch.status = "approved";
@@ -2406,7 +2701,7 @@ function reducer(currentState, action) {
     }
 
     case "TRANSFER_PRODUCTION_BATCH": {
-      if (currentUserRole(state) !== "production_manager") return state;
+      if (!canManageProductionFlow(state)) return state;
       const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
       const product = state.products.find((item) => item.id === batch?.finishedProductId);
       if (!batch || batch.status !== "approved" || !product || batch.transferredAt) return state;
@@ -2461,7 +2756,17 @@ function reducer(currentState, action) {
     }
 
     case "REPORT_PRODUCTION_ISSUE": {
-      if (currentUserRole(state) !== "production_manager") return state;
+      const reportingRole = currentUserRole(state);
+      if (!["production_manager", "production_supervisor", "ceo"].includes(reportingRole)) return state;
+      const relatedPlan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const actor = getCurrentActor(state);
+      if (reportingRole === "production_supervisor") {
+        const assignedToActor = relatedPlan && (
+          String(relatedPlan.assignedSupervisorUserId || "") === String(actor.userId || "") ||
+          normalized(relatedPlan.assignedSupervisorName) === normalized(actor.name)
+        );
+        if (!assignedToActor || ["closed", "rejected"].includes(relatedPlan.status)) return state;
+      }
       const issueType = ["machine_downtime", "material_shortage", "delay", "quality", "other"].includes(action.issueType)
         ? action.issueType : "other";
       const description = String(action.description || "").trim();
@@ -2477,7 +2782,8 @@ function reducer(currentState, action) {
         description: description.slice(0, 500),
         downtimeMinutes,
         status: "open",
-        reportedBy: currentActorName(state),
+        reportedBy: actor.name,
+        reportedByUserId: actor.userId || "",
         reportedAt: new Date().toISOString(),
         resolvedAt: "",
         resolution: ""
@@ -2488,13 +2794,16 @@ function reducer(currentState, action) {
         actionType: "reported",
         recordType: "production_issue",
         recordLabel: issue.id,
-        summary: `${textLabel(issueType)} reported${issue.machine ? ` for ${issue.machine}` : ""}`
+        planId: issue.planId,
+        summary: `${textLabel(issueType)} reported${issue.machine ? ` for ${issue.machine}` : ""}`,
+        notificationRoles: reportingRole === "production_supervisor" ? ["production_manager", "admin", "ceo"] : [],
+        relatedUserIds: actor.userId ? [actor.userId] : []
       });
       return state;
     }
 
     case "RESOLVE_PRODUCTION_ISSUE": {
-      if (currentUserRole(state) !== "production_manager") return state;
+      if (!canManageProductionFlow(state)) return state;
       const issue = (state.productionIssues || []).find((item) => item.id === action.issueId && item.status === "open");
       const resolution = String(action.resolution || "").trim();
       if (!issue || !resolution) return state;
@@ -3108,6 +3417,13 @@ function reducer(currentState, action) {
         String(item.repName || "").toLowerCase() === String(report.repName || "").toLowerCase() &&
         item.reportDate === report.reportDate
       );
+      const existingReport = (state.salesReports || []).find(sameReport);
+      if (existingReport) {
+        report.id = action.reportId || existingReport.id;
+        report.reviewHistory = [...(existingReport.reviewHistory || [])];
+        report.flagReason = existingReport.flagReason || "";
+        report.flaggedAt = existingReport.flaggedAt || "";
+      }
 
       state.salesReports = [
         report,
@@ -3131,7 +3447,11 @@ function reducer(currentState, action) {
       const existingProduct = state.products.find((item) => item.id === productId);
       const previousProduct = existingProduct ? { ...existingProduct } : null;
       const requestedStockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
-      const nextProductId = String(action.sku || productId || "").trim() || createId(requestedStockCategory === "equipment" ? "EQP" : "PRD");
+      const nextProductId = String(action.sku || productId || "").trim() || descriptiveProductSku({
+        name: action.productFamily || action.name,
+        sizeValue: action.sizeValue,
+        sizeUnit: action.sizeUnit || action.unit
+      }, state.products.map((product) => product.id));
       const normalizedNextProductId = nextProductId.toLowerCase();
       const duplicateProductId = state.products.some((item) => (
         item.id !== productId && String(item.id || "").trim().toLowerCase() === normalizedNextProductId
@@ -4278,9 +4598,18 @@ function reducer(currentState, action) {
       if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const report = state.salesReports.find((item) => item.id === action.reportId);
       if (report) {
+        const reviewedAt = new Date().toISOString();
+        const reviewNote = String(action.note || "Reviewed by CEO").trim().slice(0, 500);
         report.status = "reviewed";
-        report.reviewedAt = new Date().toISOString();
-        report.reviewNote = String(action.note || "Reviewed by CEO").trim();
+        report.reviewedAt = reviewedAt;
+        report.reviewNote = reviewNote;
+        report.reviewHistory = [{
+          id: createId("RNOTE"),
+          status: "reviewed",
+          note: reviewNote,
+          recordedBy: currentActorName(state),
+          recordedAt: reviewedAt
+        }, ...(report.reviewHistory || [])];
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "completed",
@@ -4297,10 +4626,18 @@ function reducer(currentState, action) {
       const report = state.salesReports.find((item) => item.id === action.reportId);
       const flagReason = String(action.note || "").trim().slice(0, 500);
       if (report && flagReason) {
+        const flaggedAt = new Date().toISOString();
         report.status = "flagged";
         report.reviewNote = flagReason;
         report.flagReason = flagReason;
-        report.flaggedAt = new Date().toISOString();
+        report.flaggedAt = flaggedAt;
+        report.reviewHistory = [{
+          id: createId("RNOTE"),
+          status: "flagged",
+          note: flagReason,
+          recordedBy: currentActorName(state),
+          recordedAt: flaggedAt
+        }, ...(report.reviewHistory || [])];
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "flagged",
@@ -4352,58 +4689,6 @@ function reducer(currentState, action) {
           summary: `${product.name} restocked by ${quantity}`
         });
       }
-      return state;
-    }
-
-    case "RECORD_SUPERVISOR_FINISHED_PRODUCT": {
-      if (currentUserRole(state) !== "production_supervisor") return state;
-      const product = state.products.find((item) => item.id === action.productId);
-      const quantity = Number(action.quantity || 0);
-      if (
-        !product ||
-        product.status === "inactive" ||
-        stockCategoryIdForProduct(product) !== "finished_products" ||
-        !Number.isFinite(quantity) ||
-        quantity <= 0 ||
-        !Number.isInteger(quantity)
-      ) return state;
-
-      const recordedAt = new Date().toISOString();
-      const recordedBy = currentActorName(state);
-      product.stock = Number(product.stock || 0) + quantity;
-      product.updatedAt = todayISO();
-      product.soldOutAt = "";
-      state.stockTransactions = [{
-        id: createId("TXN"),
-        clientId: state.client?.id || "",
-        type: "production output",
-        productId: product.id,
-        productName: product.name,
-        quantity,
-        unit: product.unit || "unit",
-        amount: 0,
-        unitPrice: Number(product.unitPrice || 0),
-        unitCost: Number(product.unitCost || 0),
-        paymentType: "none",
-        partyType: "Production",
-        partyName: "Finished production",
-        date: todayISO(),
-        createdAt: recordedAt,
-        recordedBy,
-        recordedByUserId: state.user?.id || "",
-        movementDirection: "in",
-        purpose: "Finished product output",
-        productionSupervisorEntry: true
-      }, ...(state.stockTransactions || [])];
-      appendActivityLog(state, {
-        clientId: state.client?.id,
-        actionType: "recorded",
-        recordType: "production_output",
-        recordLabel: product.id,
-        summary: `${recordedBy} added ${quantity} ${product.name} to finished-product stock`,
-        details: [`New stock balance: ${product.stock} ${product.unit || "units"}`],
-        notificationRoles: ["ceo", "admin"]
-      });
       return state;
     }
 

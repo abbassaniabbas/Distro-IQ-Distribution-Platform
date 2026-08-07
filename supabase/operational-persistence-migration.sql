@@ -152,14 +152,19 @@ begin
       'CREATE_PRODUCTION_PLAN', 'RECORD_MANAGED_PRODUCTION_BATCH',
       'RECORD_PRODUCTION_QC', 'APPROVE_PRODUCTION_BATCH',
       'TRANSFER_PRODUCTION_BATCH', 'REPORT_PRODUCTION_ISSUE',
-      'RESOLVE_PRODUCTION_ISSUE'
+      'RESOLVE_PRODUCTION_ISSUE', 'CREATE_ASSIGNED_PRODUCTION_PLAN',
+      'APPROVE_SUPERVISOR_BATCH_REPORT', 'FLAG_SUPERVISOR_BATCH_REPORT',
+      'REJECT_SUPERVISOR_BATCH_REPORT', 'CLOSE_PRODUCTION_PLAN'
     ) then
     raise exception 'Production Line Manager access is limited to production workflows';
   end if;
 
   if v_role = 'production_supervisor'
-    and upper(trim(p_action_type)) <> 'RECORD_SUPERVISOR_FINISHED_PRODUCT' then
-    raise exception 'Production Supervisor access is limited to finished-product output';
+    and upper(trim(p_action_type)) not in (
+      'START_ASSIGNED_PRODUCTION_PLAN', 'SUBMIT_SUPERVISOR_BATCH_REPORT',
+      'REPORT_PRODUCTION_ISSUE'
+    ) then
+    raise exception 'Production Supervisor access is limited to assigned production work';
   end if;
 
   if v_role = 'production_supervisor'
@@ -167,28 +172,37 @@ begin
       select 1
       from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as supervisor_item(value)
       where (
-        supervisor_item.value ->> 'collection' = 'products'
-        and lower(coalesce(
-          supervisor_item.value -> 'data' ->> 'stockCategory',
-          supervisor_item.value -> 'data' ->> 'category',
-          ''
-        )) ~ '(raw|packaging|equipment)'
-      ) or (
-        supervisor_item.value ->> 'collection' = 'stockTransactions'
-        and (
-          coalesce((supervisor_item.value -> 'data' ->> 'productionSupervisorEntry')::boolean, false) is not true
-          or lower(coalesce(supervisor_item.value -> 'data' ->> 'type', '')) <> 'production output'
-          or lower(coalesce(supervisor_item.value -> 'data' ->> 'movementDirection', '')) <> 'in'
+        supervisor_item.value ->> 'collection' not in (
+          'productionPlans', 'productionBatches', 'productionIssues', 'activityLogs'
         )
       ) or (
-        supervisor_item.value ->> 'collection' = 'activityLogs'
-        and (
-          coalesce(supervisor_item.value -> 'data' ->> 'recordType', '') <> 'production_output'
-          or not (coalesce(supervisor_item.value -> 'data' -> 'notificationRoles', '[]'::jsonb) @> '["ceo", "admin"]'::jsonb)
-        )
+        supervisor_item.value ->> 'collection' = 'productionPlans'
+        and coalesce(supervisor_item.value -> 'data' ->> 'assignedSupervisorUserId', '') <> auth.uid()::text
+      ) or (
+        supervisor_item.value ->> 'collection' = 'productionBatches'
+        and coalesce(supervisor_item.value -> 'data' ->> 'recordedByUserId', '') <> auth.uid()::text
+      ) or (
+        supervisor_item.value ->> 'collection' = 'productionIssues'
+        and coalesce(supervisor_item.value -> 'data' ->> 'reportedByUserId', '') <> auth.uid()::text
       )
     ) then
-    raise exception 'Production Supervisor may add finished-product output only';
+    raise exception 'Production Supervisor may update only their assigned production records';
+  end if;
+
+  if v_role = 'production_supervisor'
+    and upper(trim(p_action_type)) = 'SUBMIT_SUPERVISOR_BATCH_REPORT'
+    and exists (
+      select 1
+      from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as batch_item(value)
+      join public.workspace_operational_records as saved_plan
+        on saved_plan.client_id = p_client_id
+        and saved_plan.collection_name = 'productionPlans'
+        and saved_plan.record_id = batch_item.value -> 'data' ->> 'planId'
+      where batch_item.value ->> 'collection' = 'productionBatches'
+        and coalesce(nullif(batch_item.value -> 'data' ->> 'quantityProduced', '')::numeric, 0)
+          > coalesce(nullif(saved_plan.record_data ->> 'targetQuantity', '')::numeric, 0)
+    ) then
+    raise exception 'Good quantity cannot exceed the planned production quantity';
   end if;
 
   v_allowed_collections := case v_role
@@ -219,7 +233,7 @@ begin
       'productionIssues', 'activityLogs'
     ]
     when 'production_supervisor' then array[
-      'products', 'stockTransactions', 'activityLogs'
+      'products', 'productionBatches', 'productionPlans', 'productionIssues', 'activityLogs'
     ]
     else array[]::text[]
   end;

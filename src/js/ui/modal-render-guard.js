@@ -27,18 +27,24 @@ export function hasOpenWorkspaceModal(root = document) {
 export function hasActiveWorkspaceForm(root = document) {
   const activeElement = root?.ownerDocument?.activeElement || globalThis.document?.activeElement;
   const activeForm = activeElement?.closest?.("form");
-  return Boolean(
+  const hasFocusedForm = Boolean(
     activeForm &&
     root?.contains?.(activeForm) &&
     activeForm.dataset.allowBackgroundRefresh !== "true"
   );
+  const dirtyForms = [...(root?.querySelectorAll?.('form[data-live-editing="true"]') || [])];
+  const hasVisibleDirtyForm = dirtyForms.some((form) => (
+    form.dataset.allowBackgroundRefresh !== "true" &&
+    !form.closest?.("[hidden]")
+  ));
+  return hasFocusedForm || hasVisibleDirtyForm;
 }
 
 export function shouldDeferRenderForModal(action, root = document) {
   const actionType = String(action?.type || "");
   return Boolean(
     (MODAL_SAFE_BACKGROUND_ACTIONS.has(actionType) && hasOpenWorkspaceModal(root)) ||
-    (FORM_SAFE_BACKGROUND_ACTIONS.has(actionType) && hasActiveWorkspaceForm(root))
+    ((FORM_SAFE_BACKGROUND_ACTIONS.has(actionType) || (actionType === "SET_WORKSPACE" && action?.backgroundRefresh === true)) && hasActiveWorkspaceForm(root))
   );
 }
 
@@ -72,6 +78,19 @@ export function createModalRenderGuard({
     attributeFilter: ["hidden", "aria-hidden", "class"]
   });
   root?.addEventListener?.("focusout", releaseWhenClosed);
+  const markEdited = (event) => {
+    const form = event.target?.closest?.("form");
+    if (!form || form.dataset.allowBackgroundRefresh === "true") return;
+    form.dataset.liveEditing = "true";
+  };
+  const clearEdited = (event) => {
+    const form = event.target?.closest?.("form") || event.target;
+    if (form?.matches?.("form")) delete form.dataset.liveEditing;
+    releaseWhenClosed();
+  };
+  root?.addEventListener?.("input", markEdited);
+  root?.addEventListener?.("change", markEdited);
+  root?.addEventListener?.("reset", clearEdited);
 
   return {
     deferIfNeeded(action) {
@@ -88,6 +107,9 @@ export function createModalRenderGuard({
       releaseScheduled = false;
       observer?.disconnect();
       root?.removeEventListener?.("focusout", releaseWhenClosed);
+      root?.removeEventListener?.("input", markEdited);
+      root?.removeEventListener?.("change", markEdited);
+      root?.removeEventListener?.("reset", clearEdited);
     },
     get pending() {
       return pending;

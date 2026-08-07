@@ -2,11 +2,11 @@ import {
   actionTypeLabel,
   getScopedActivityLogs,
   recordTypeLabel
-} from "../services/activity.js?v=20260804e";
-import { formatCurrency, formatNumber } from "../services/formatters.js";
+} from "../services/activity.js?v=20260805b";
+import { formatCurrency, formatNumber } from "../services/formatters.js?v=20260805h";
 import { dateIsWithinRange } from "../services/filtering.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
-import { accountForUser, currentUserRole } from "../services/rbac.js?v=20260801d";
+import { accountForUser, currentUserRole } from "../services/rbac.js?v=20260805b";
 import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, table } from "../ui/components.js?v=20260724b";
@@ -412,12 +412,15 @@ export function renderActivityLog({ state }) {
   const logs = getScopedActivityLogs(state);
   const isStoreKeeper = role === "store_keeper";
   const isProductionManager = role === "production_manager";
+  const isProductionSupervisor = role === "production_supervisor";
   const isAccountant = role === "accountant";
-  const title = isStoreKeeper ? "Store activity log" : isProductionManager ? "Production activity log" : isAccountant ? "Finance activity log" : "Activity log";
+  const title = isStoreKeeper ? "Store activity log" : isProductionManager ? "Production activity log" : isProductionSupervisor ? "My production activity" : isAccountant ? "Finance activity log" : "Activity log";
   const subtitle = isStoreKeeper
     ? "Permanent searchable record of stock added, reduced, dispatched, returned, and reconciled"
     : isProductionManager
       ? "Read-only record of production batches and factory stock movements"
+    : isProductionSupervisor
+      ? "Only your assigned plans, submitted batches, and reported production issues"
     : isAccountant
       ? "Permanent searchable record of sales, payments, credit balances, and submitted reports"
       : "Permanent searchable record of what changed, who changed it, and when";

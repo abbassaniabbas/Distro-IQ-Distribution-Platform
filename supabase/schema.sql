@@ -29,7 +29,7 @@ alter table public.clients
 add column if not exists credit_limit_sms_enabled boolean not null default false;
 
 alter table public.clients
-add column if not exists sku_format text not null default 'SKU-{0000}';
+add column if not exists sku_format text not null default 'AUTO-DESCRIPTIVE';
 
 alter table public.clients
 add column if not exists invoice_format text not null default 'INV-{0000}';

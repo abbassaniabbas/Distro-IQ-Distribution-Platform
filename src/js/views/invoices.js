@@ -8,7 +8,7 @@ import {
   openInvoiceQuickView,
   printInvoice
 } from "../services/invoices.js?v=20260804i";
-import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js";
+import { formatCurrency, formatDate, formatNumber, statusText } from "../services/formatters.js?v=20260805h";
 import { printTabularReport } from "../services/report-export.js";
 import { currentUserRole } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";

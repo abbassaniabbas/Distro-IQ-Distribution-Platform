@@ -11,13 +11,15 @@ import {
   formatDate,
   formatNumber,
   formatPercent,
+  productSelectionLabel,
   statusText
-} from "../services/formatters.js";
-import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js?v=20260801d";
+} from "../services/formatters.js?v=20260805h";
+import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js?v=20260805b";
 import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { loadSharedProductImages, purgeSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { productImageStorageKey, removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
+import { descriptiveProductSku } from "../services/tenant.js?v=20260805c";
 import { printTabularReport } from "../services/report-export.js";
 import { dateIsWithinRange } from "../services/filtering.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
@@ -118,7 +120,7 @@ function stockTabHref(tabId) {
 }
 
 function stockTabsForPermissions(permissions, state) {
-  if (currentUserRole(state) === "production_manager") {
+  if (["production_manager", "production_supervisor"].includes(currentUserRole(state))) {
     return [{ id: "stock-health", label: "Stock health" }];
   }
 
@@ -407,27 +409,8 @@ function duplicateProductSku(state, sku, productId = "") {
   ));
 }
 
-function nextAutomaticProductId(products = [], format = "SKU-{0000}") {
-  const tokenMatch = String(format || "").match(/\{(0{2,})\}/);
-  const token = tokenMatch?.[0] || "{0000}";
-  const width = tokenMatch?.[1].length || 4;
-  const [prefix = "SKU-", suffix = ""] = String(format || "SKU-{0000}").split(token);
-  const escapePattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const idPattern = new RegExp(`^${escapePattern(prefix)}(\\d{${width},})${escapePattern(suffix)}$`, "i");
-  const usedIds = new Set(products.map((product) => String(product.id || "").trim().toUpperCase()));
-  const highestNumber = products.reduce((highest, product) => {
-    const match = String(product.id || "").trim().match(idPattern);
-    return match ? Math.max(highest, Number(match[1])) : highest;
-  }, 0);
-  let number = highestNumber + 1;
-  let candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
-
-  while (usedIds.has(candidate.toUpperCase())) {
-    number += 1;
-    candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
-  }
-
-  return candidate;
+function nextAutomaticProductId(products = [], _format = "") {
+  return descriptiveProductSku({}, products.map((product) => product.id));
 }
 
 function renderProductImage(product) {
@@ -1173,7 +1156,7 @@ function renderDispatchProductOptions(state, recipientType, selectedProductId = 
     '<option value="">Choose stock item</option>',
     ...dispatchableProducts(state, recipientType).map((product) => `
       <option value="${escapeHtml(product.id)}" ${product.id === selectedProductId ? "selected" : ""}>
-        ${escapeHtml(product.name)} (${formatNumber(product.stock)} available)
+        ${escapeHtml(productSelectionLabel(product))} (${formatNumber(product.stock)} available)
       </option>
     `)
   ].join("");
@@ -1985,7 +1968,7 @@ function renderBatchMaterialRow(rawMaterials) {
         <span>Raw material</span>
         <select name="batchMaterialId">
           <option value="">Choose material</option>
-          ${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
+          ${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(productSelectionLabel(product))} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
         </select>
       </label>
       <label class="field">
@@ -2097,7 +2080,7 @@ function renderRawMaterialSaleModal(state) {
           <span>Raw material</span>
           <select name="productId" data-raw-sale-product required>
             <option value="">Choose raw material</option>
-            ${saleableRawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
+            ${saleableRawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(productSelectionLabel(product))} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
           </select>
         </label>
         <label class="field">
@@ -3484,8 +3467,27 @@ export function bindInventory({ root, store, signal }) {
     if (event.target !== stockImageInput) captureStockEditDraft();
   });
 
+  function updateDescriptiveSku() {
+    if (!productForm || String(productForm.elements.productId?.value || "").trim()) return;
+    const selectedUnit = String(productForm.elements.sizeUnit?.value || "").trim();
+    const sizeUnit = selectedUnit === "other"
+      ? String(productForm.elements.sizeUnitOther?.value || "").trim()
+      : selectedUnit;
+    productForm.elements.sku.value = descriptiveProductSku({
+      name: productForm.elements.name?.value,
+      sizeValue: productForm.elements.sizeValue?.value,
+      sizeUnit
+    }, store.getState().products.map((product) => product.id));
+  }
+
+  ["name", "sizeValue", "sizeUnit", "sizeUnitOther"].forEach((fieldName) => {
+    productForm?.elements[fieldName]?.addEventListener("input", updateDescriptiveSku);
+    productForm?.elements[fieldName]?.addEventListener("change", updateDescriptiveSku);
+  });
+
   productForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    updateDescriptiveSku();
     const formData = new FormData(productForm);
     const sku = String(formData.get("sku") || "").trim();
     const existingProductId = String(formData.get("productId") || "").trim();

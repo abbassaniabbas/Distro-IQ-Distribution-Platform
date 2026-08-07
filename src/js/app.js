@@ -1,35 +1,35 @@
 import { DEFAULT_ROUTE, NAV_ITEMS } from "./config/navigation.js?v=20260801d";
-import { createStore } from "./state/store.js?v=20260804m";
+import { createStore } from "./state/store.js?v=20260805g";
 import { getAuthContext, onAuthStateChange, signOut } from "./services/auth.js";
-import { loadWorkspace, loadWorkspaceFeatureModules, loadWorkspacePackagingState, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260804m";
+import { loadWorkspace, loadWorkspaceFeatureModules, loadWorkspacePackagingState, saveSharedProductImage, tryLoadPlatformOverview } from "./services/backend.js?v=20260805c";
 import { isClientRouteEnabled, scopeStateForEnabledModules } from "./services/features.js?v=20260804e";
-import { setCurrencySettings } from "./services/formatters.js";
-import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js?v=20260804m";
+import { setCurrencySettings } from "./services/formatters.js?v=20260805h";
+import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js?v=20260805g";
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
-import { createOperationalSync } from "./services/operational-sync.js?v=20260804m";
+import { createOperationalSync } from "./services/operational-sync.js?v=20260807a";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "./services/global-search.js?v=20260802c";
 import { createInactivitySession } from "./services/inactivity-session.js?v=20260804m";
 import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=20260804i";
 import { applySearchFilter, escapeHtml, qs, qsa } from "./ui/dom.js";
 import { bindRequiredFieldValidation, captureInMemoryFormDrafts, clearAllFormDrafts } from "./ui/form-validation.js";
 import { icon, replaceIconPlaceholders } from "./ui/icons.js";
-import { createModalRenderGuard } from "./ui/modal-render-guard.js?v=20260805a";
+import { createModalRenderGuard } from "./ui/modal-render-guard.js?v=20260805c";
 import {
   bindTopbarCommunications,
   getTopbarNotificationItems,
   getUnreadNotificationCount,
   getUnreadMessageCount
-} from "./ui/topbar-communications.js?v=20260804m";
+} from "./ui/topbar-communications.js?v=20260805g";
 import { showToast } from "./ui/toast.js";
-import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260804l";
-import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260804e";
+import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20260805h";
+import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260805h";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js?v=20260804m";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260804m";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260804i";
-import { renderInventory, bindInventory } from "./views/inventory.js?v=20260804l";
-import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260804i";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260805h";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260805h";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260805h";
+import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260805h";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js?v=20260801d";
 import {
@@ -37,15 +37,15 @@ import {
   bindOnboarding,
   renderOnboardingConfirmation,
   bindOnboardingConfirmation
-} from "./views/onboarding.js?v=20260801d";
-import { renderOrders, bindOrders } from "./views/orders.js?v=20260804e";
+} from "./views/onboarding.js?v=20260805h";
+import { renderOrders, bindOrders } from "./views/orders.js?v=20260805h";
 import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.js?v=20260715";
-import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js?v=20260804m";
-import { renderProduction, bindProduction } from "./views/production.js?v=20260804e";
-import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260804f";
-import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260804e";
-import { renderSettings, bindSettings } from "./views/settings.js?v=20260801d";
-import { renderTeam, bindTeam } from "./views/team.js?v=20260805a";
+import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js?v=20260805h";
+import { renderProduction, bindProduction } from "./views/production.js?v=20260805h";
+import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260805h";
+import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260805h";
+import { renderSettings, bindSettings } from "./views/settings.js?v=20260805h";
+import { renderTeam, bindTeam } from "./views/team.js?v=20260805h";
 
 const routes = {
   loading: {
@@ -451,7 +451,7 @@ function updateTopbarUtilities(state, view) {
   const notificationCount = getTopbarNotificationItems(state).length;
   const unreadNotifications = getUnreadNotificationCount(state);
 
-  if (notificationsButton) notificationsButton.hidden = productionSupervisorOnly;
+  if (notificationsButton) notificationsButton.hidden = false;
   if (messagesButton) messagesButton.hidden = productionSupervisorOnly;
 
   notificationsButton?.classList.toggle("has-alert", unreadNotifications > 0);
@@ -550,6 +550,7 @@ function render() {
   view.bind?.({
     root: viewRoot,
     store,
+    operationalSync,
     routeId,
     beginAuthFormFlow,
     signal: activeViewAbortController.signal
@@ -627,7 +628,7 @@ signOutButton.addEventListener("click", async () => {
 
 store.subscribe((state, action) => {
   inactivitySession.handleStateChange(state);
-  if (!modalRenderGuard.deferIfNeeded(action)) render();
+  if (!action?.deferRenderUntilSaved && !modalRenderGuard.deferIfNeeded(action)) render();
   showToast(action?.message);
   operationalSync.handleStateChange(state, action);
 });

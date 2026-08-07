@@ -1,6 +1,6 @@
 import { escapeHtml } from "./dom.js";
 import { icon } from "./icons.js";
-import { formatPercent, statusClass, statusText } from "../services/formatters.js";
+import { formatPercent, statusClass, statusText } from "../services/formatters.js?v=20260805h";
 
 export function metricCard({ label, value, meta, iconName }) {
   return `

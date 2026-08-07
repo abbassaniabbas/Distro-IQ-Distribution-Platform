@@ -368,7 +368,7 @@ function syncMessagesInBackground({ store, signal }) {
       const currentState = store.getState();
 
       if (messagesSignature(workspace.messages) !== messagesSignature(currentState.messages)) {
-        store.dispatch({ type: "SET_WORKSPACE", ...workspace });
+        store.dispatch({ type: "SET_WORKSPACE", ...workspace, backgroundRefresh: true });
       }
     } catch (error) {
       console.warn("Messages could not be refreshed:", error.message);

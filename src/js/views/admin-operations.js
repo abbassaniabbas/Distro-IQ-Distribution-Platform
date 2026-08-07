@@ -1,5 +1,5 @@
 import { assignmentOutstanding, getFinancialSalesLines, stockCategoryIdForProduct } from "../services/calculations.js?v=20260804i";
-import { formatCurrency, formatDate, formatDateTime, formatNumber, statusText } from "../services/formatters.js";
+import { formatCurrency, formatDate, formatDateTime, formatNumber, productSelectionLabel, statusText } from "../services/formatters.js?v=20260805h";
 import { currentUserRole, salesRepresentativeAccounts } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
@@ -214,7 +214,7 @@ function renderProcurement(state, role) {
       <form id="admin-procurement-form" class="form-grid">
         <label class="field"><span>Supplier name</span><input name="supplierName" required></label>
         <label class="field"><span>Supplier contact</span><input name="supplierContact" placeholder="Phone or email"></label>
-        <label class="field"><span>Raw material</span><select name="productId" required><option value="">Select material</option>${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} · ${escapeHtml(product.id)}</option>`).join("")}</select></label>
+        <label class="field"><span>Raw material</span><select name="productId" required><option value="">Select material</option>${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(productSelectionLabel(product))} · ${escapeHtml(product.id)}</option>`).join("")}</select></label>
         <label class="field"><span>Quantity</span><input name="quantity" type="number" min="0.01" step="0.01" required></label>
         <label class="field"><span>Unit cost</span><input name="unitCost" type="number" min="0" step="0.01" required></label>
         <label class="field"><span>Expected delivery</span><input name="expectedAt" type="date" min="${todayISO()}" value="${todayISO()}" required></label>

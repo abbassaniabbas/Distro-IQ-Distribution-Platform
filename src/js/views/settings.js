@@ -16,13 +16,13 @@ import {
   readLogoFile,
   validateLogoFile
 } from "../services/branding.js";
-import { setCurrencySettings } from "../services/formatters.js";
+import { setCurrencySettings } from "../services/formatters.js?v=20260805h";
 import {
   CURRENCY_OPTIONS,
   getScopedAccounts,
   validateClientForm
 } from "../services/tenant.js?v=20260801d";
-import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js?v=20260801d";
+import { currentUserPermissions, currentUserRole, roleLabel } from "../services/rbac.js?v=20260805b";
 import { enabledPackagingTypes, packagingDefaults, PACKAGING_OPTIONS } from "../services/packaging.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";
@@ -158,8 +158,9 @@ function renderCompanySettings(state, account) {
         </div>
 
         <label class="field">
-          <span>SKU format</span>
-          <input name="skuFormat" value="${escapeHtml(client.skuFormat || "SKU-{0000}")}" placeholder="SKU-{0000}" ${canEdit ? "" : "disabled"}>
+          <span>SKU style</span>
+          <input name="skuFormat" value="AUTO-DESCRIPTIVE" readonly>
+          <small>Product initials and size, for example PC-120G.</small>
           ${renderFieldError("skuFormat")}
         </label>
 
@@ -758,7 +759,6 @@ export function bindSettings({ root, store, signal }) {
     const submitButton = qs('button[type="submit"]', companyForm);
 
     writeErrors(companyForm, errors);
-    if (!/\{0{2,}\}/.test(values.skuFormat)) errors.skuFormat = "Use a number block such as {0000}.";
     if (!/\{0{2,}\}/.test(values.invoiceFormat)) errors.invoiceFormat = "Use a number block such as {0000}.";
     writeErrors(companyForm, errors);
     message.textContent = "";

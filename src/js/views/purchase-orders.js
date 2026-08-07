@@ -1,4 +1,4 @@
-import { formatDate, formatDateTime, formatNumber, statusText } from "../services/formatters.js";
+import { formatDate, formatDateTime, formatNumber, statusText } from "../services/formatters.js?v=20260805h";
 import { currentUserRole } from "../services/rbac.js?v=20260801d";
 import { openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";

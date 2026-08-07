@@ -1,4 +1,4 @@
-import { formatDateTime, formatNumber, statusText } from "../services/formatters.js";
+import { formatDateTime, formatNumber, statusText } from "../services/formatters.js?v=20260805h";
 import { currentUserRole, roleLabel } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";

@@ -1,17 +1,23 @@
-import { actionTypeLabel, getScopedActivityLogs, isProductionActivityEntry } from "../services/activity.js?v=20260804m";
+import { actionTypeLabel, getScopedActivityLogs, isProductionActivityEntry } from "../services/activity.js?v=20260805b";
 import {
   accountForCurrentUser,
   initials,
   normalized,
   relativeTime
 } from "../services/messages.js";
-import { currentUserRole } from "../services/rbac.js?v=20260804m";
+import { currentUserRole } from "../services/rbac.js?v=20260805g";
 import { escapeHtml } from "./dom.js";
 
 let activeNotificationPopover = null;
 const NOTIFICATION_DISMISS_DURATION_MS = 260;
 
-function activityNotificationHref(entry) {
+function activityNotificationHref(entry, role = "") {
+  if (["production_manager", "ceo"].includes(role) && entry.recordType === "production_batch" && entry.actionType === "submitted") {
+    return "#/production?tab=reports";
+  }
+  if (["production_manager", "ceo"].includes(role) && entry.recordType === "production_issue") {
+    return "#/production?tab=issues";
+  }
   const focus = String(entry.recordLabel || entry.id || entry.summary || "").trim();
   return `#/activity-log?tab=activity&focus=${encodeURIComponent(focus)}`;
 }
@@ -33,6 +39,7 @@ export function getTopbarNotificationItems(state) {
   const activityItems = getScopedActivityLogs(state)
     .filter((entry) => entry.clientId === state.client.id)
     .filter((entry) => !Array.isArray(entry.notificationRoles) || !entry.notificationRoles.length || entry.notificationRoles.includes(role))
+    .filter((entry) => !Array.isArray(entry.notificationUserIds) || !entry.notificationUserIds.length || entry.notificationUserIds.includes(state.user?.id))
     .filter((entry) => !(
       entry.recordType === "packaging_settings" &&
       entry.actionType === "requested" &&
@@ -50,7 +57,7 @@ export function getTopbarNotificationItems(state) {
       body: entry.summary || "Workspace activity updated",
       avatar: initials(entry.actorName),
       createdAt: entry.createdAt,
-      href: activityNotificationHref(entry),
+      href: activityNotificationHref(entry, role),
       unread: new Date(entry.createdAt || 0).getTime() > readAt
     }))
     .filter((item) => !dismissedIds.has(item.id));

@@ -4,7 +4,7 @@ import {
   getCustomerOrderCompletion,
   getCustomerRating
 } from "../services/calculations.js?v=20260804i";
-import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
+import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js?v=20260805h";
 import { accountForUser, currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../services/rbac.js?v=20260802c";
 import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { getNigeriaLgas, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../data/nigeria-locations.js";

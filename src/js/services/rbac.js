@@ -120,7 +120,7 @@ const ROLE_PERMISSIONS = {
     canViewProductionReports: true
   },
   production_supervisor: {
-    nav: ["dashboard"],
+    nav: ["dashboard", "production", "inventory", "activity-log", "settings"],
     canViewCompanyWide: false,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -141,7 +141,11 @@ const ROLE_PERMISSIONS = {
     canRequestStock: false,
     canCoordinateStockRequests: false,
     canFulfillPurchaseOrders: false,
-    canRecordFinishedProducts: true
+    canRecordFinishedProducts: true,
+    canStartAssignedProduction: true,
+    canSubmitProductionReports: true,
+    canReportProductionIssues: true,
+    canViewAssignedProduction: true
   },
   admin: {
     nav: ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"],
@@ -167,7 +171,7 @@ const ROLE_PERMISSIONS = {
     canFulfillPurchaseOrders: false
   },
   ceo: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "production", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
@@ -184,6 +188,14 @@ const ROLE_PERMISSIONS = {
     canExportReports: true,
     canManageUsers: true,
     canConfigureFactory: true,
+    canPlanProduction: true,
+    canRecordProduction: true,
+    canAssignProductionWork: true,
+    canPerformProductionQC: true,
+    canApproveProductionBatch: true,
+    canTransferFinishedGoods: true,
+    canReportProductionIssues: true,
+    canViewProductionReports: true,
     canAuditRecords: true,
     canRequestStock: false,
     canCoordinateStockRequests: false,
@@ -261,6 +273,31 @@ export function canAccessRoute(state, routeId) {
 
 export function scopeStateForCurrentRole(state) {
   const role = currentUserRole(state);
+
+  if (role === "production_supervisor" && state.session && state.client?.id) {
+    const account = accountForUser(state);
+    const userId = String(state.user?.id || "");
+    const accountId = String(account?.id || "");
+    const accountName = String(account?.name || "").trim().toLowerCase();
+    const productionPlans = (state.productionPlans || []).filter((plan) => (
+      (userId && String(plan.assignedSupervisorUserId || "") === userId) ||
+      (accountId && String(plan.assignedSupervisorId || "") === accountId) ||
+      (accountName && String(plan.assignedSupervisorName || "").trim().toLowerCase() === accountName)
+    ));
+    const planIds = new Set(productionPlans.map((plan) => plan.id));
+    const productionBatches = (state.productionBatches || []).filter((batch) => planIds.has(batch.planId));
+    const productionIssues = (state.productionIssues || []).filter((issue) => (
+      planIds.has(issue.planId) ||
+      (userId && String(issue.reportedByUserId || "") === userId)
+    ));
+
+    return {
+      ...state,
+      productionPlans,
+      productionBatches,
+      productionIssues
+    };
+  }
 
   if (role !== "sales_rep" || !state.session || !state.client?.id) {
     return state;

@@ -6,7 +6,7 @@ import {
 import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus, setMembershipRole } from "../services/backend.js?v=20260804m";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";
-import { formatDate } from "../services/formatters.js";
+import { formatDate } from "../services/formatters.js?v=20260805h";
 import { actionTypeLabel, getScopedActivityLogs, recordTypeLabel } from "../services/activity.js?v=20260804m";
 import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js?v=20260804m";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";

@@ -4772,6 +4772,24 @@
   font-weight: 700;
 }
 
+.report-review-note {
+  display: grid;
+  gap: 5px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.report-review-note:first-of-type {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.report-review-note > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .customer-detail-summary {
   display: flex;
   align-items: flex-start;
@@ -7342,6 +7360,10 @@
 
 .production-command-strip .row-actions {
   justify-content: flex-end;
+}
+
+.production-sync-status:empty {
+  display: none;
 }
 
 .production-product-summary {
