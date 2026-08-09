@@ -30,6 +30,7 @@ const IGNORED_ACTIONS = new Set([
   "SET_AUTHENTICATED_WORKSPACE",
   "SET_PLATFORM_CONTEXT",
   "CLEAR_AUTH_CONTEXT",
+  "RESET_WORKSPACE_DATA_SCOPE",
   "SET_OPERATIONAL_RECORDS",
   "HYDRATE_PRODUCT_IMAGES",
   "MARK_MESSAGES_READ",
@@ -592,6 +593,22 @@ export function createOperationalSync({ store }) {
     lastSyncError = null;
   }
 
+  function discardQueuedChanges() {
+    queue = [];
+    lastSyncError = null;
+    globalThis.clearTimeout(retryTimer);
+    retryTimer = null;
+    try {
+      if (clientId && userId) {
+        globalThis.localStorage?.removeItem(queueStorageKey(clientId, userId));
+        globalThis.localStorage?.removeItem(`distro-iq-operational-sync:${clientId}:${userId}`);
+      }
+    } catch {
+      // The confirmed backend reset remains authoritative if browser storage is unavailable.
+    }
+    baseline = operationalSnapshot(store.getState(), allowedCollections(store.getState()));
+  }
+
   function handleStateChange(state, action = {}) {
     if (!state.session || !state.client?.id) {
       disconnect();
@@ -617,5 +634,5 @@ export function createOperationalSync({ store }) {
     void refresh();
   });
 
-  return { connect, disconnect, flush, handleStateChange, refresh };
+  return { connect, disconnect, discardQueuedChanges, flush, handleStateChange, refresh };
 }

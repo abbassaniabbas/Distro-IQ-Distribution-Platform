@@ -7,7 +7,7 @@ import { setCurrencySettings } from "./services/formatters.js?v=20260805h";
 import { canAccessRoute, currentUserPermissions, currentUserRole, roleLabel, scopeStateForCurrentRole } from "./services/rbac.js?v=20260805g";
 import { isBackendConfigured } from "./services/supabase-client.js";
 import { restoreProductImages } from "./services/product-images.js";
-import { createOperationalSync } from "./services/operational-sync.js?v=20260807a";
+import { createOperationalSync } from "./services/operational-sync.js?v=20260809a";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "./services/global-search.js?v=20260802c";
 import { createInactivitySession } from "./services/inactivity-session.js?v=20260804m";
 import { hasOrdersRequiringAutomaticDelay } from "./services/calculations.js?v=20260804i";
@@ -26,9 +26,9 @@ import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20
 import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260805h";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js?v=20260804m";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260805h";
-import { renderFinance, bindFinance } from "./views/finance.js?v=20260805h";
-import { renderInventory, bindInventory } from "./views/inventory.js?v=20260805h";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260809a";
+import { renderFinance, bindFinance } from "./views/finance.js?v=20260809a";
+import { renderInventory, bindInventory } from "./views/inventory.js?v=20260809a";
 import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260805h";
 import { renderLoading, bindLoading } from "./views/loading.js";
 import { renderMessages, bindMessages } from "./views/messages.js?v=20260801d";
@@ -43,8 +43,8 @@ import { renderPasswordReset, bindPasswordReset } from "./views/password-reset.j
 import { renderPlatformConsole, bindPlatformConsole } from "./views/platform.js?v=20260805h";
 import { renderProduction, bindProduction } from "./views/production.js?v=20260805h";
 import { renderPurchaseOrders, bindPurchaseOrders } from "./views/purchase-orders.js?v=20260805h";
-import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260805h";
-import { renderSettings, bindSettings } from "./views/settings.js?v=20260805h";
+import { renderRetailers, bindRetailers } from "./views/retailers.js?v=20260809a";
+import { renderSettings, bindSettings } from "./views/settings.js?v=20260809a";
 import { renderTeam, bindTeam } from "./views/team.js?v=20260805h";
 
 const routes = {

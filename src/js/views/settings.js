@@ -31,7 +31,7 @@ import { icon } from "../ui/icons.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
 import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
 import { verifyCeoPassword } from "../ui/ceo-password-verification.js";
-import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js?v=20260809a";
 
 function getCurrentAccount(state) {
   return getScopedAccounts(state).find((account) => account.userId === state.user?.id);
@@ -525,8 +525,8 @@ function bindCompanyLogoUpload({ root, form, state }) {
   };
 }
 
-export function bindSettings({ root, store, signal }) {
-  bindWorkspaceDataResetButtons({ root, store, signal });
+export function bindSettings({ root, store, operationalSync, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, operationalSync, signal });
   const state = store.getState();
   const companyForm = qs("#company-settings-form", root);
   const profileForm = qs("#profile-settings-form", root);

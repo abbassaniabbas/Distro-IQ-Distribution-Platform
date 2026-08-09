@@ -1,6 +1,7 @@
 import { resetWorkspaceData } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { currentUserRole } from "../services/rbac.js?v=20260801d";
+import { clearStoredState } from "../services/storage.js";
 import { confirmActionDialog } from "./action-dialog.js";
 import { verifyCeoPassword } from "./ceo-password-verification.js";
 import { qsa } from "./dom.js";
@@ -62,7 +63,7 @@ async function verifyFactoryResetPassword(state) {
   });
 }
 
-export function bindWorkspaceDataResetButtons({ root, store, signal }) {
+export function bindWorkspaceDataResetButtons({ root, store, operationalSync, signal }) {
   qsa("[data-reset-workspace-scope]", root).forEach((button) => {
     button.addEventListener("click", async () => {
       const state = store.getState();
@@ -80,6 +81,9 @@ export function bindWorkspaceDataResetButtons({ root, store, signal }) {
         if (isBackendConfigured()) {
           resetResult = await resetWorkspaceData({ clientId: state.client.id, scope });
         }
+        // The reset is already confirmed by Supabase. Remove the old local
+        // snapshot first, then save the freshly reset state below.
+        if (scope === "factory") clearStoredState(state.client.id);
         store.dispatch({
           type: "RESET_WORKSPACE_DATA_SCOPE",
           scope,
@@ -87,6 +91,7 @@ export function bindWorkspaceDataResetButtons({ root, store, signal }) {
           createdAt: resetResult.completedAt || new Date().toISOString(),
           message: scope === "factory" ? "Factory operational data reset" : RESET_COPY[scope]?.success
         });
+        if (scope === "factory") operationalSync?.discardQueuedChanges?.();
       } catch (error) {
         showToast(error.message);
         button.disabled = false;

@@ -27,7 +27,7 @@ import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js?v=20260722";
 import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
-import { bindAdjustments, renderAdjustmentContent } from "./adjustments.js";
+import { bindAdjustments, renderAdjustmentContent } from "./adjustments.js?v=20260809a";
 import {
   enabledPackagingTypes,
   effectivePiecePrice,
@@ -2155,8 +2155,8 @@ export function renderInventory({ state }) {
   `;
 }
 
-export function bindInventory({ root, store, signal }) {
-  bindAdjustments({ root, store, signal });
+export function bindInventory({ root, store, operationalSync, signal }) {
+  bindAdjustments({ root, store, operationalSync, signal });
   const imageRefreshState = store.getState();
   if (isBackendConfigured() && imageRefreshState.client?.id) {
     const refreshSharedStockPictures = () => {

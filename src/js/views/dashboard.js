@@ -31,7 +31,7 @@ import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog, requestTextDialog } from "../ui/action-dialog.js";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 import { effectivePiecePrice, packagingLineAmount, packagingMultiplier, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260805b";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260809a";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -306,14 +306,11 @@ function unlinkedActualSalesTransactions(state, orders = ceoActualSalesOrders(st
 }
 
 export function ceoActualSalesRevenue(state) {
-  const orders = ceoActualSalesOrders(state);
-  const productMap = getProductMap(state.products || []);
-  const orderRevenue = orders.reduce((total, order) => total + salesValueFromOrder(order, productMap), 0);
-  const unlinkedRevenue = unlinkedActualSalesTransactions(state, orders).reduce((total, transaction) => {
-    const amount = Number(transaction.amount || 0);
-    return total + (normalized(transaction.type) === "return" ? -amount : amount);
-  }, 0);
-  return orderRevenue + unlinkedRevenue;
+  // Use the shared finance ledger so an outright Sales Rep purchase is counted
+  // once when paid to the factory, never again when the rep resells the stock.
+  return getFinancialSalesLines(state).reduce((total, line) => (
+    total + Number(line.netSales ?? line.revenue ?? 0)
+  ), 0);
 }
 
 function buildCeoFreshness(state) {
@@ -3677,7 +3674,7 @@ function bindManagerTableExports(root) {
   });
 }
 
-export function bindDashboard({ root, store, signal }) {
+export function bindDashboard({ root, store, operationalSync, signal }) {
   bindSubmittedReportDetails({ root, store });
 
   if (root.querySelector(".sales-rep-portal")) {
@@ -3686,13 +3683,13 @@ export function bindDashboard({ root, store, signal }) {
   }
 
   if (root.querySelector(".ceo-dashboard")) {
-    bindInventory({ root, store, signal });
+    bindInventory({ root, store, operationalSync, signal });
     bindCeoDashboard({ root, store, signal });
     return;
   }
 
   if (root.querySelector(".storekeeper-dashboard")) {
-    bindInventory({ root, store, signal });
+    bindInventory({ root, store, operationalSync, signal });
   }
 
   qsa(".js-restock-product", root).forEach((button) => {

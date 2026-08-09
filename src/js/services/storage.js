@@ -47,6 +47,11 @@ export function clearStoredState(clientId) {
   try {
     const storageKey = workspaceStorageKey(clientId);
     if (storageKey) localStorage.removeItem(storageKey);
+
+    // Do not leave a pre-tenant snapshot behind: on a later sign-in it could
+    // otherwise be migrated back into the now-empty factory workspace.
+    const legacyState = parseStoredValue(localStorage.getItem(LEGACY_STORAGE_KEY));
+    if (legacyState?.client?.id === clientId) localStorage.removeItem(LEGACY_STORAGE_KEY);
   } catch {
     // Ignore storage failures so reset still works in private browsing modes.
   }

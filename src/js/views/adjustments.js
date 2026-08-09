@@ -4,7 +4,7 @@ import { escapeHtml, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
 import { requestTextDialog } from "../ui/action-dialog.js";
-import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js?v=20260809a";
 import { packagingQuantityLabel } from "../services/packaging.js";
 
 function correctionQuantityLabel(request, prefix) {
@@ -75,8 +75,8 @@ export function renderAdjustmentContent(state) {
   `;
 }
 
-export function bindAdjustments({ root, store, signal }) {
-  bindWorkspaceDataResetButtons({ root, store, signal });
+export function bindAdjustments({ root, store, operationalSync, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, operationalSync, signal });
   qsa(".js-approve-adjustment", root).forEach((button) => button.addEventListener("click", () => {
     store.dispatch({
       type: "APPROVE_RECORD_CORRECTION",

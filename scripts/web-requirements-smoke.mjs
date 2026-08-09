@@ -16,6 +16,7 @@ import { OPERATIONAL_COLLECTIONS, collectionsFromRemote, operationalChanges, ope
 import { dateIsWithinRange, normalizeDateRange } from "../src/js/services/filtering.js";
 import { buildGlobalSearchIndex, findGlobalSearchSuggestions } from "../src/js/services/global-search.js";
 import { INACTIVITY_TIMEOUT_MS, remainingInactivityMs, requiresInactivityLogout } from "../src/js/services/inactivity-session.js";
+import { clearStoredState, loadStoredState, saveStoredState } from "../src/js/services/storage.js";
 import { createStore } from "../src/js/state/store.js";
 import { getTopbarNotificationItems } from "../src/js/ui/topbar-communications.js";
 import { REQUIRED_FORM_ALERT_MESSAGE } from "../src/js/ui/form-validation.js";
@@ -95,6 +96,11 @@ globalThis.localStorage = {
   setItem(key, value) { browserStorage.set(key, String(value)); },
   removeItem(key) { browserStorage.delete(key); }
 };
+
+saveStoredState({ client: { id: "RESET-CLIENT" }, activityLogs: [{ id: "old-activity" }], invoices: [{ id: "old-invoice" }] });
+browserStorage.set("distro-iq-snack-factory-state-v3", JSON.stringify({ client: { id: "RESET-CLIENT" }, activityLogs: [{ id: "legacy-activity" }] }));
+clearStoredState("RESET-CLIENT");
+assert.equal(loadStoredState("RESET-CLIENT"), null, "a factory reset must remove both current and legacy browser snapshots so old activity and finance cannot return");
 
 assert.deepEqual(normalizeDateRange("2026-07-20", "2026-07-10"), { from: "2026-07-10", to: "2026-07-20" });
 assert.equal(dateIsWithinRange("2026-07-10", "2026-07-10", "2026-07-20"), true, "date filters must include the first day");
@@ -369,6 +375,8 @@ assert.equal(synchronizedChanges.records.length, 2, "a stock change and its move
 assert.equal(synchronizedChanges.records.find((record) => record.collection === "products").data.imageUrl, "", "large stock image data must remain in the dedicated shared-image path");
 const operationalMigrationSql = readFileSync(new URL("../supabase/operational-persistence-migration.sql", import.meta.url), "utf8");
 const operationalSyncSource = readFileSync(new URL("../src/js/services/operational-sync.js", import.meta.url), "utf8");
+assert.match(operationalSyncSource, /"RESET_WORKSPACE_DATA_SCOPE"/, "the operational sync service must not queue a factory reset as stale operational data");
+assert.match(operationalSyncSource, /function discardQueuedChanges\(\)[\s\S]*localStorage\?\.removeItem\(queueStorageKey/, "a confirmed factory reset must erase persisted operational-sync work");
 assert.match(operationalSyncSource, /if \(queue\.length \|\| !connected\) return;/, "an in-flight remote refresh must never overwrite a newer queued local action");
 assert.match(operationalSyncSource, /while \(queue\.length\)[\s\S]*await drain\(\)[\s\S]*loadOperationalWorkspace/, "actions recorded during initial connection must be flushed before remote hydration replaces local state");
 const sanitizedSupervisorQueue = sanitizePersistedOperationalQueue([
@@ -861,6 +869,7 @@ assert.match(workspaceDataResetSource, /scope === "factory" && !await verifyFact
 assert.match(ceoPasswordVerificationSource, /await signInWithPassword\(\{[\s\S]*email:[\s\S]*password[\s\S]*\}\);/, "CEO destructive actions must re-authenticate with the signed-in account");
 assert.match(workspaceDataResetSource, /verifyFactoryResetPassword\(store\.getState\(\)\)[\s\S]*await resetWorkspaceData/, "CEO password verification must finish before the backend factory reset starts");
 assert.doesNotMatch(workspaceDataResetSource, /Type RESET to confirm|placeholder: "RESET"/, "Factory Data Reset must not require typing RESET when CEO password verification is enabled");
+assert.match(workspaceDataResetSource, /clearStoredState\(state\.client\.id\)[\s\S]*RESET_WORKSPACE_DATA_SCOPE[\s\S]*operationalSync\?\.discardQueuedChanges\?\./, "a factory reset must replace the old browser snapshot and discard pending sync work after the backend confirms the reset");
 assert.doesNotMatch(managerSettings, /Delete records before today|delete-history-before-today/, "Settings must not include the section-data Delete control");
 const managerAccountsBeforePackagingSync = store.getState().accounts.length;
 store.dispatch({
@@ -2945,6 +2954,7 @@ assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.pa
 const purchasedStockState = structuredClone(multiDispatchStore.getState());
 const purchasedAssignment = purchasedStockState.stockAssignments.find((item) => item.productId === "MULTI-A" && item.dispatchArrangement === "rep_purchase");
 const purchaseRevenue = getFinancialSalesLines(purchasedStockState).reduce((total, line) => total + Number(line.revenue || 0), 0);
+const purchaseCeoRevenue = ceoActualSalesRevenue(purchasedStockState);
 purchasedStockState.stockTransactions.unshift({
   id: "TXN-PURCHASED-RESALE",
   type: "sale",
@@ -2960,6 +2970,7 @@ purchasedStockState.stockTransactions.unshift({
   date: "2026-07-15"
 });
 assert.equal(getFinancialSalesLines(purchasedStockState).reduce((total, line) => total + Number(line.revenue || 0), 0), purchaseRevenue, "a representative's later resale of purchased stock must not count as a second factory sale");
+assert.equal(ceoActualSalesRevenue(purchasedStockState), purchaseCeoRevenue, "the CEO sales figure must not count a representative's later resale of stock already purchased from the factory");
 multiDispatchStore.dispatch({
   type: "RECORD_STOCK_DISPATCH",
   items: [{ productId: "MULTI-B", quantity: 1 }],

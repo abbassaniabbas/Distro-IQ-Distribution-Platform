@@ -30,7 +30,7 @@ import {
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js";
-import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js?v=20260809a";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260802i";
 
 const DEFAULT_FINANCE_TAB = "overview";
@@ -1577,8 +1577,8 @@ function bindFinancePagination(root) {
   });
 }
 
-export function bindFinance({ root, store, signal }) {
-  bindWorkspaceDataResetButtons({ root, store, signal });
+export function bindFinance({ root, store, operationalSync, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, operationalSync, signal });
   bindCeoDataDeletion({ root, store, signal });
   bindFinancePagination(root);
   bindCreditHistoryFilters(root);

@@ -10,7 +10,7 @@ import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { getNigeriaLgas, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../data/nigeria-locations.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
-import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
+import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js?v=20260809a";
 
 function formatTermPercent(value) {
   return `${new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(Number(value || 0))}%`;
@@ -422,8 +422,8 @@ export function renderRetailers({ state }) {
   `;
 }
 
-export function bindRetailers({ root, store, signal }) {
-  bindWorkspaceDataResetButtons({ root, store, signal });
+export function bindRetailers({ root, store, operationalSync, signal }) {
+  bindWorkspaceDataResetButtons({ root, store, operationalSync, signal });
   const ratingFilter = qs("#retailer-rating-filter", root);
   const retailerForm = qs("#retailer-form", root);
   const stateSelect = retailerForm?.elements.stateName;
