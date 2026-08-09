@@ -1,7 +1,7 @@
 import { DEFAULT_BRAND_COLOR, isValidHexColor, normalizeBrandColor } from "./branding.js";
-import { ROLE_OPTIONS } from "./rbac.js";
+import { ROLE_OPTIONS } from "./rbac.js?v=20260804m";
 
-export { ROLE_OPTIONS } from "./rbac.js";
+export { ROLE_OPTIONS } from "./rbac.js?v=20260804m";
 
 const DEFAULT_CURRENCY = "NGN";
 const DEFAULT_TIMEZONE = "Africa/Lagos";
@@ -69,6 +69,27 @@ export function nextFormattedId(format, existingIds = [], fallbackPrefix = "REC"
   return candidate.toUpperCase();
 }
 
+export function descriptiveProductSku({ name = "", sizeValue = "", sizeUnit = "" } = {}, existingIds = []) {
+  const words = String(name || "")
+    .toUpperCase()
+    .match(/[A-Z0-9]+/g) || [];
+  const productCode = words.length > 1
+    ? words.slice(0, 3).map((word) => word[0]).join("")
+    : String(words[0] || "PRD").slice(0, 3);
+  const numericSize = String(sizeValue || "").trim().replace(/\.0+$/, "").replace(/[^0-9.]/g, "");
+  const unitCode = String(sizeUnit || "").trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!productCode || !numericSize || !unitCode) {
+    return nextFormattedId("PRD-{0000}", existingIds, "PRD");
+  }
+
+  const base = `${productCode}-${numericSize}${unitCode}`;
+  const used = new Set(existingIds.map((id) => String(id || "").trim().toUpperCase()));
+  if (!used.has(base)) return base;
+  let suffix = 2;
+  while (used.has(`${base}-${suffix}`)) suffix += 1;
+  return `${base}-${suffix}`;
+}
+
 export function createClientProfile(formData) {
   const currency = CURRENCY_OPTIONS.find((item) => item.value === formData.currency) || CURRENCY_OPTIONS[0];
 
@@ -80,7 +101,7 @@ export function createClientProfile(formData) {
     timezone: formData.timezone || DEFAULT_TIMEZONE,
     currency: currency.value || DEFAULT_CURRENCY,
     currencySymbol: currency.symbol,
-    skuFormat: formData.skuFormat || "SKU-{0000}",
+    skuFormat: formData.skuFormat || "AUTO-DESCRIPTIVE",
     invoiceFormat: formData.invoiceFormat || "INV-{0000}",
     createdAt: new Date().toISOString()
   };
@@ -189,7 +210,7 @@ export function validateAccountForm(values, existingAccounts) {
     errors.email = "This email is already invited for this company.";
   }
 
-  if (!values.role || !["sales_rep", "store_keeper", "admin"].includes(values.role)) {
+  if (!values.role || !["sales_rep", "store_keeper", "production_manager", "production_supervisor", "admin"].includes(values.role)) {
     errors.role = "Choose a staff role.";
   }
 

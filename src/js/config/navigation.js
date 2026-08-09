@@ -27,6 +27,11 @@ export const NAV_ITEMS = [
     icon: "inventory"
   },
   {
+    id: "production",
+    label: "Production",
+    icon: "package"
+  },
+  {
     id: "retailers",
     label: "Customers",
     icon: "retailers"

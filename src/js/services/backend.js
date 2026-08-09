@@ -1,4 +1,4 @@
-import { CURRENCY_OPTIONS } from "./tenant.js";
+import { CURRENCY_OPTIONS } from "./tenant.js?v=20260801d";
 import { getSupabaseClient, isBackendConfigured } from "./supabase-client.js";
 import { classifyAppFailure } from "./error-classification.js";
 
@@ -20,7 +20,7 @@ function mapClient(row) {
     currencySymbol: row.currency_symbol || "₦",
     creditLimitEmailEnabled: row.credit_limit_email_enabled === true,
     creditLimitSmsEnabled: row.credit_limit_sms_enabled === true,
-    skuFormat: row.sku_format || "SKU-{0000}",
+    skuFormat: row.sku_format || "AUTO-DESCRIPTIVE",
     invoiceFormat: row.invoice_format || "INV-{0000}",
     packagingTypes: Array.isArray(row.packaging_types) ? row.packaging_types : ["piece"],
     packagingDefaults: row.packaging_defaults && typeof row.packaging_defaults === "object" ? row.packaging_defaults : { piece: 1 },
@@ -972,7 +972,7 @@ export async function updateWorkspaceSettings({ client, payload }) {
       currency_symbol: currency.symbol,
       credit_limit_email_enabled: payload.creditLimitEmailEnabled === true,
       credit_limit_sms_enabled: payload.creditLimitSmsEnabled === true,
-      sku_format: payload.skuFormat || "SKU-{0000}",
+      sku_format: payload.skuFormat || "AUTO-DESCRIPTIVE",
       invoice_format: payload.invoiceFormat || "INV-{0000}"
     })
     .eq("id", client.id);
@@ -1153,6 +1153,10 @@ export async function inviteAccount({ client, name, email, phoneNumber, role, st
   }
 
   if (data?.error) {
+    if (["production_manager", "production_supervisor"].includes(role) && /choose a valid role/i.test(String(data.error))) {
+      const roleName = role === "production_supervisor" ? "Production Supervisor" : "Production Line Manager";
+      throw new Error(`Backend update required: deploy the latest invite-user function before creating a ${roleName}.`);
+    }
     throw new Error(friendlyEdgeFunctionMessage(data.error, undefined, { serviceLabel: "staff invitation service" }));
   }
 

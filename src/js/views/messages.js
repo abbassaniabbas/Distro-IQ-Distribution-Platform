@@ -16,7 +16,7 @@ import {
   sendWorkspaceMessage
 } from "../services/backend.js?v=20260729a";
 import { isBackendConfigured } from "../services/supabase-client.js";
-import { roleLabel } from "../services/rbac.js";
+import { roleLabel } from "../services/rbac.js?v=20260801d";
 import { confirmActionDialog } from "../ui/action-dialog.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { icon } from "../ui/icons.js?v=20260729a";
@@ -368,7 +368,7 @@ function syncMessagesInBackground({ store, signal }) {
       const currentState = store.getState();
 
       if (messagesSignature(workspace.messages) !== messagesSignature(currentState.messages)) {
-        store.dispatch({ type: "SET_WORKSPACE", ...workspace });
+        store.dispatch({ type: "SET_WORKSPACE", ...workspace, backgroundRefresh: true });
       }
     } catch (error) {
       console.warn("Messages could not be refreshed:", error.message);

@@ -1,7 +1,7 @@
-import { createId } from "./tenant.js";
-import { currentUserRole } from "./rbac.js";
+import { createId } from "./tenant.js?v=20260804m";
+import { currentUserRole } from "./rbac.js?v=20260805b";
 import { formatCurrency, formatNumber } from "./formatters.js";
-import { isRepresentativeSellThroughTransaction } from "./calculations.js?v=20260722";
+import { isRepresentativeSellThroughTransaction } from "./calculations.js?v=20260804i";
 
 export const ACTION_LABELS = {
   created: "Created",
@@ -29,7 +29,16 @@ export const ACTION_LABELS = {
   issued: "Issued",
   received: "Received",
   cancelled: "Cancelled",
-  requested: "Requested"
+  requested: "Requested",
+  used: "Used",
+  planned: "Planned",
+  started: "Started",
+  recorded: "Recorded",
+  passed: "Passed",
+  failed: "Failed",
+  transferred: "Transferred",
+  reported: "Reported",
+  resolved: "Resolved"
 };
 
 export const RECORD_LABELS = {
@@ -48,7 +57,14 @@ export const RECORD_LABELS = {
   purchase_order: "Purchase Order",
   procurement_order: "Procurement Order",
   record_correction: "Record Correction",
-  customer_return: "Customer Return"
+  customer_return: "Customer Return",
+  stock_addition: "Stock Addition",
+  production_batch: "Production Batch",
+  production_plan: "Production Plan",
+  production_qc: "Quality Control",
+  production_transfer: "Finished-goods Transfer",
+  production_output: "Finished Product Output",
+  production_issue: "Production Issue"
 };
 
 export function actionTypeLabel(actionType) {
@@ -79,7 +95,11 @@ export function createActivityLog({
   recordLabel = "",
   actor,
   summary,
-  details = []
+  details = [],
+  notificationRoles = [],
+  notificationUserIds = [],
+  relatedUserIds = [],
+  planId = ""
 }) {
   return {
     id: createId("LOG"),
@@ -92,6 +112,10 @@ export function createActivityLog({
     actorEmail: actor?.email || "",
     summary,
     details,
+    notificationRoles: Array.isArray(notificationRoles) ? notificationRoles : [],
+    notificationUserIds: Array.isArray(notificationUserIds) ? notificationUserIds : [],
+    relatedUserIds: Array.isArray(relatedUserIds) ? relatedUserIds : [],
+    planId: String(planId || ""),
     createdAt: new Date().toISOString()
   };
 }
@@ -160,6 +184,7 @@ function stockMovementActivityLogs(state, existingLogs) {
   const productMap = new Map((state.products || []).map((product) => [product.id, product]));
 
   return (state.stockTransactions || [])
+    .filter((transaction) => !transaction.productionSupervisorEntry)
     .map((transaction) => {
       const product = productMap.get(transaction.productId);
       const productName = transaction.productName || product?.name || transaction.productId || "Stock item";
@@ -174,6 +199,9 @@ function stockMovementActivityLogs(state, existingLogs) {
         actorName: transaction.staffResponsible || transaction.recordedBy || "Store Keeper",
         actorEmail: "",
         summary: transactionSummary(transaction, productName),
+        stockMovementType: String(transaction.type || "").toLowerCase(),
+        batchId: String(transaction.batchId || ""),
+        productId: String(transaction.productId || ""),
         createdAt: transactionCreatedAt(transaction)
       };
 
@@ -229,6 +257,22 @@ function financialTransactionActivityLogs(state) {
     });
 }
 
+export function isProductionActivityEntry(entry, state) {
+  if (!entry) return false;
+  if (["production_plan", "production_batch", "production_qc", "production_transfer", "production_output", "production_issue"].includes(entry.recordType)) return true;
+
+  if (entry.recordType === "stock_movement") {
+    const movementType = String(entry.stockMovementType || "").trim().toLowerCase();
+    return Boolean(entry.batchId) || ["production usage", "production output"].includes(movementType);
+  }
+
+  if (entry.recordType !== "inventory") return false;
+  const productId = String(entry.productId || entry.recordLabel || "");
+  const product = (state.products || []).find((item) => String(item.id || "") === productId);
+  const stockCategory = String(product?.stockCategory || "").trim().toLowerCase();
+  return ["raw_materials", "finished_products"].includes(stockCategory);
+}
+
 export function getScopedActivityLogs(state) {
   if (!state.client?.id) return [];
 
@@ -250,6 +294,33 @@ export function getScopedActivityLogs(state) {
   if (role === "store_keeper") {
     return logs
       .filter((entry) => ["inventory", "stock_movement", "route"].includes(entry.recordType))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  if (role === "production_manager") {
+    return logs
+      .filter((entry) => isProductionActivityEntry(entry, state))
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  }
+
+  if (role === "production_supervisor") {
+    const userId = String(state.user?.id || "");
+    const account = (state.accounts || []).find((item) => item.userId === userId);
+    const accountName = String(account?.name || "").trim().toLowerCase();
+    const assignedPlanIds = new Set((state.productionPlans || [])
+      .filter((plan) => (
+        String(plan.assignedSupervisorUserId || "") === userId ||
+        (accountName && String(plan.assignedSupervisorName || "").trim().toLowerCase() === accountName)
+      ))
+      .map((plan) => plan.id));
+    return logs
+      .filter((entry) => (
+        entry.actorUserId === userId ||
+        (entry.relatedUserIds || []).includes(userId) ||
+        assignedPlanIds.has(entry.planId) ||
+        assignedPlanIds.has(entry.recordLabel)
+      ))
+      .filter((entry) => isProductionActivityEntry(entry, state))
       .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   }
 

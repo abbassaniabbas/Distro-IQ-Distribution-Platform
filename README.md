@@ -33,7 +33,7 @@ The server prints the local URL. By default it starts at `http://127.0.0.1:8080`
    - `url`
    - `anonKey`
 3. Run `supabase/schema.sql` in the Supabase SQL Editor.
-   For an existing project, also run `supabase/operational-persistence-migration.sql` once. This enables shared Supabase persistence and the append-only operation ledger for stock, dispatches, sales, invoices, production, returns, corrections, customers, reports, and related movements. Run `supabase/message-management.sql` once to enable private message deletion, conversation clearing, and sender-only unsend.
+   For an existing project, also run `supabase/admin-role-access.sql` and the latest `supabase/operational-persistence-migration.sql`. This enables the Production Line Manager role plus shared Store Keeper stock-addition requests and Admin/CEO approvals. Run `supabase/message-management.sql` once to enable private message deletion, conversation clearing, and sender-only unsend.
 4. Deploy the staff-account Edge Functions. These are required for team member creation, temporary password generation, and permanent staff deletion:
 
 ```bash

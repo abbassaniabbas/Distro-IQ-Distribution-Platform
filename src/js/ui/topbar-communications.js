@@ -1,16 +1,30 @@
-import { actionTypeLabel, getScopedActivityLogs } from "../services/activity.js?v=20260722";
+import { actionTypeLabel, getScopedActivityLogs, isProductionActivityEntry } from "../services/activity.js?v=20260805b";
 import {
   accountForCurrentUser,
   initials,
   normalized,
   relativeTime
 } from "../services/messages.js";
-import { currentUserRole } from "../services/rbac.js";
+import { currentUserRole } from "../services/rbac.js?v=20260805g";
 import { escapeHtml } from "./dom.js";
 
 let activeNotificationPopover = null;
-const EMPTY_NOTIFICATIONS_MARKUP = '<div class="topbar-empty-state">No notifications yet</div>';
 const NOTIFICATION_DISMISS_DURATION_MS = 260;
+
+function activityNotificationHref(entry, role = "") {
+  if (["production_manager", "ceo"].includes(role) && entry.recordType === "production_batch" && entry.actionType === "submitted") {
+    return "#/production?tab=reports";
+  }
+  if (["production_manager", "ceo"].includes(role) && entry.recordType === "production_issue") {
+    return "#/production?tab=issues";
+  }
+  const focus = String(entry.recordLabel || entry.id || entry.summary || "").trim();
+  return `#/activity-log?tab=activity&focus=${encodeURIComponent(focus)}`;
+}
+
+function emptyNotificationsMarkup(isProductionManager = false) {
+  return `<div class="topbar-empty-state">${isProductionManager ? "No production notifications yet" : "No notifications yet"}</div>`;
+}
 
 export { getUnreadMessageCount } from "../services/messages.js";
 
@@ -24,11 +38,14 @@ export function getTopbarNotificationItems(state) {
   const role = currentUserRole(state);
   const activityItems = getScopedActivityLogs(state)
     .filter((entry) => entry.clientId === state.client.id)
+    .filter((entry) => !Array.isArray(entry.notificationRoles) || !entry.notificationRoles.length || entry.notificationRoles.includes(role))
+    .filter((entry) => !Array.isArray(entry.notificationUserIds) || !entry.notificationUserIds.length || entry.notificationUserIds.includes(state.user?.id))
     .filter((entry) => !(
       entry.recordType === "packaging_settings" &&
       entry.actionType === "requested" &&
       role !== "ceo"
     ))
+    .filter((entry) => role !== "production_manager" || isProductionActivityEntry(entry, state))
     .filter((entry) => entry.actorUserId !== state.user?.id)
     .filter((entry) => normalized(entry.actorEmail) !== normalized(account?.email))
     .filter((entry) => new Date(entry.createdAt || 0).getTime() > clearedAt)
@@ -40,6 +57,7 @@ export function getTopbarNotificationItems(state) {
       body: entry.summary || "Workspace activity updated",
       avatar: initials(entry.actorName),
       createdAt: entry.createdAt,
+      href: activityNotificationHref(entry, role),
       unread: new Date(entry.createdAt || 0).getTime() > readAt
     }))
     .filter((item) => !dismissedIds.has(item.id));
@@ -74,7 +92,7 @@ function positionPopover(popover, trigger) {
 
 function notificationRow(item) {
   return `
-    <article class="topbar-notification-row ${item.unread ? "is-unread" : ""}" data-notification-id="${escapeHtml(item.id)}">
+    <article class="topbar-notification-row ${item.unread ? "is-unread" : ""}" data-notification-id="${escapeHtml(item.id)}" data-notification-href="${escapeHtml(item.href)}" role="link" tabindex="0" aria-label="Open this notification in the activity log">
       <div class="communication-avatar">${escapeHtml(item.avatar)}</div>
       <div>
         <strong>${escapeHtml(item.title)}</strong>
@@ -86,9 +104,9 @@ function notificationRow(item) {
   `;
 }
 
-function showEmptyNotifications(popover) {
+function showEmptyNotifications(popover, isProductionManager = false) {
   const list = popover.querySelector(".topbar-notification-list");
-  if (list) list.innerHTML = EMPTY_NOTIFICATIONS_MARKUP;
+  if (list) list.innerHTML = emptyNotificationsMarkup(isProductionManager);
   popover.querySelector(".topbar-clear-notifications")?.remove();
 }
 
@@ -113,6 +131,7 @@ function openNotificationPopover({ store, trigger }) {
   }
 
   const items = getTopbarNotificationItems(store.getState());
+  const isProductionManager = currentUserRole(store.getState()) === "production_manager";
   const popover = document.createElement("section");
   popover.className = "topbar-notification-popover";
   popover.setAttribute("role", "dialog");
@@ -121,14 +140,14 @@ function openNotificationPopover({ store, trigger }) {
     <div class="topbar-popover-arrow"></div>
     <header>
       <div>
-        <strong>Notifications</strong>
+        <strong>${isProductionManager ? "Production notifications" : "Notifications"}</strong>
       </div>
       ${items.length ? '<button class="topbar-clear-notifications" type="button" title="Clear all notifications" aria-label="Clear all notifications">X</button>' : ""}
     </header>
     <div class="topbar-notification-list">
       ${items.length
         ? items.map(notificationRow).join("")
-        : EMPTY_NOTIFICATIONS_MARKUP}
+        : emptyNotificationsMarkup(isProductionManager)}
     </div>
   `;
 
@@ -148,7 +167,7 @@ function openNotificationPopover({ store, trigger }) {
 
     if (!rows.length) {
       store.dispatch({ type: "DISMISS_ALL_NOTIFICATIONS" });
-      showEmptyNotifications(popover);
+      showEmptyNotifications(popover, isProductionManager);
       return;
     }
 
@@ -158,7 +177,7 @@ function openNotificationPopover({ store, trigger }) {
       remaining -= 1;
       if (remaining > 0) return;
       store.dispatch({ type: "DISMISS_ALL_NOTIFICATIONS" });
-      showEmptyNotifications(popover);
+      showEmptyNotifications(popover, isProductionManager);
     }));
   });
 
@@ -174,8 +193,26 @@ function openNotificationPopover({ store, trigger }) {
       dismissNotificationRow(row, () => {
         store.dispatch({ type: "DISMISS_NOTIFICATIONS", notificationIds: [notificationId] });
         row.remove();
-        if (!popover.querySelector("[data-notification-id]")) showEmptyNotifications(popover);
+        if (!popover.querySelector("[data-notification-id]")) showEmptyNotifications(popover, isProductionManager);
       });
+    });
+  });
+
+  popover.querySelectorAll("[data-notification-href]").forEach((row) => {
+    const openActivity = () => {
+      const href = row.dataset.notificationHref;
+      if (!href || row.classList.contains("is-dismissing")) return;
+      closeNotificationPopover();
+      window.location.hash = href;
+    };
+    row.addEventListener("click", (event) => {
+      if (event.target.closest(".topbar-dismiss-notification")) return;
+      openActivity();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (!["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      openActivity();
     });
   });
 }

@@ -2,12 +2,12 @@ import {
   actionTypeLabel,
   getScopedActivityLogs,
   recordTypeLabel
-} from "../services/activity.js?v=20260722";
-import { formatCurrency, formatNumber } from "../services/formatters.js";
+} from "../services/activity.js?v=20260805b";
+import { formatCurrency, formatNumber } from "../services/formatters.js?v=20260805h";
 import { dateIsWithinRange } from "../services/filtering.js";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
-import { accountForUser, currentUserRole } from "../services/rbac.js";
-import { isModuleEnabled } from "../services/features.js";
+import { accountForUser, currentUserRole } from "../services/rbac.js?v=20260805b";
+import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, table } from "../ui/components.js?v=20260724b";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
@@ -15,7 +15,7 @@ import {
   bindManagerActivitySections,
   renderManagerRecentSalesOrders,
   renderManagerReportReview
-} from "./dashboard.js?v=20260724b";
+} from "./dashboard.js?v=20260804l";
 
 const DEFAULT_ACTIVITY_TAB = "activity";
 
@@ -182,9 +182,12 @@ function repRecentActivityRows(state) {
       title: report.tripLabel || "Daily report",
       customerName: "CEO review",
       amount: formatCurrency(report.salesAmount),
-      details: `${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned`,
+      details: [
+        `${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned`,
+        report.status === "flagged" && report.reviewNote ? `Flag reason: ${report.reviewNote}` : ""
+      ].filter(Boolean).join(" - "),
       when: report.submittedAt || report.reportDate,
-      search: `report submitted ${report.tripLabel || ""} ${report.status || ""}`
+      search: `report submitted ${report.tripLabel || ""} ${report.status || ""} ${report.reviewNote || ""}`
     }));
 
   return [...transactions, ...reports]
@@ -203,6 +206,7 @@ function renderRepActionOptions(rows) {
 function renderRepRecentRows(rows) {
   return rows.map((row) => {
     const searchIndex = [
+      row.id,
       row.actionLabel,
       row.title,
       row.customerName,
@@ -333,10 +337,12 @@ function renderRows(logs, canDelete = false) {
     const searchIndex = [
       actionLabel,
       recordLabel,
+      entry.id,
       entry.recordLabel,
       entry.actorName,
       entry.actorEmail,
-      entry.summary
+      entry.summary,
+      entry.details
     ]
       .join(" ")
       .toLowerCase();
@@ -362,6 +368,7 @@ function renderRows(logs, canDelete = false) {
         </td>
         <td>
           ${escapeHtml(entry.summary || "Record updated")}
+          ${entry.details ? `<div class="muted">${escapeHtml(entry.details)}</div>` : ""}
         </td>
       </tr>
     `;
@@ -404,10 +411,16 @@ export function renderActivityLog({ state }) {
 
   const logs = getScopedActivityLogs(state);
   const isStoreKeeper = role === "store_keeper";
+  const isProductionManager = role === "production_manager";
+  const isProductionSupervisor = role === "production_supervisor";
   const isAccountant = role === "accountant";
-  const title = isStoreKeeper ? "Store activity log" : isAccountant ? "Finance activity log" : "Activity log";
+  const title = isStoreKeeper ? "Store activity log" : isProductionManager ? "Production activity log" : isProductionSupervisor ? "My production activity" : isAccountant ? "Finance activity log" : "Activity log";
   const subtitle = isStoreKeeper
     ? "Permanent searchable record of stock added, reduced, dispatched, returned, and reconciled"
+    : isProductionManager
+      ? "Read-only record of production batches and factory stock movements"
+    : isProductionSupervisor
+      ? "Only your assigned plans, submitted batches, and reported production issues"
     : isAccountant
       ? "Permanent searchable record of sales, payments, credit balances, and submitted reports"
       : "Permanent searchable record of what changed, who changed it, and when";
@@ -488,6 +501,8 @@ export function bindActivityLog({ root, store, signal }) {
   const previousButton = qs('[data-activity-page="prev"]', root);
   const nextButton = qs('[data-activity-page="next"]', root);
   const filters = [searchFilter, fromFilter, toFilter, userFilter, actionFilter, recordFilter].filter(Boolean);
+  const notificationFocus = activityRouteParams().get("focus") || "";
+  if (searchFilter && notificationFocus) searchFilter.value = notificationFocus;
 
   function exportActivityTable(mode) {
     const section = tableSectionFromElement(qs("[data-activity-export-table] table", root), "Activity log");

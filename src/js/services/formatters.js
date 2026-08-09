@@ -52,6 +52,15 @@ export function formatNumber(value) {
   return new Intl.NumberFormat("en").format(Number(value || 0));
 }
 
+export function productSelectionLabel(product = {}) {
+  const name = String(product.name || "Product").trim() || "Product";
+  const productType = String(product.productType || "Standard").trim() || "Standard";
+  const explicitSize = String(product.size || "").trim();
+  const composedSize = [product.sizeValue, product.sizeUnit].filter((value) => String(value || "").trim()).join("");
+  const size = explicitSize || composedSize;
+  return [name, productType, size].filter(Boolean).join(" — ");
+}
+
 export function formatPercent(value) {
   return `${Math.round(Number(value || 0))}%`;
 }

@@ -2,13 +2,13 @@ import {
   ROLE_OPTIONS,
   getScopedAccounts,
   validateAccountForm
-} from "../services/tenant.js";
-import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus, setMembershipRole } from "../services/backend.js";
+} from "../services/tenant.js?v=20260804m";
+import { deleteMembershipAccount, inviteAccount, setMembershipActiveStatus, setMembershipRole } from "../services/backend.js?v=20260804m";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { STAFF_IMAGE_ACCEPT, readStaffImage, validateStaffImageFile } from "../services/staff-images.js";
-import { formatDate } from "../services/formatters.js";
-import { actionTypeLabel, getScopedActivityLogs, recordTypeLabel } from "../services/activity.js?v=20260722";
-import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js";
+import { formatDate } from "../services/formatters.js?v=20260805h";
+import { actionTypeLabel, getScopedActivityLogs, recordTypeLabel } from "../services/activity.js?v=20260804m";
+import { currentUserPermissions, currentUserRole, normalizeRole, roleLabel } from "../services/rbac.js?v=20260804m";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, statusPill, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -439,12 +439,12 @@ export function renderTeam({ state }) {
               <div class="staff-create-fields">
                 <label class="field">
                   <span>Full name</span>
-                  <input name="name" autocomplete="name" placeholder="Ada Okonkwo">
+                  <input name="name" autocomplete="name" placeholder="Ada Okonkwo" required>
                   ${renderFieldError("name")}
                 </label>
                 <label class="field">
                   <span>Email</span>
-                  <input name="email" type="email" autocomplete="email" placeholder="ada@example.com">
+                  <input name="email" type="email" autocomplete="email" placeholder="ada@example.com" required>
                   ${renderFieldError("email")}
                 </label>
                 <label class="field">
@@ -454,7 +454,7 @@ export function renderTeam({ state }) {
                 </label>
                 <label class="field">
                   <span>Role assignment</span>
-                  <select name="role">
+                  <select name="role" required>
                     ${renderRoleOptions(state)}
                   </select>
                   ${renderFieldError("role")}
@@ -617,7 +617,7 @@ export function bindTeam({ root, store, signal }) {
       const role = String(roleSelect?.value || "");
       const account = getScopedAccounts(state).find((item) => item.id === accountId);
       const message = qs("[data-team-account-message]", accountModal);
-      if (!account || !["sales_rep", "store_keeper", "admin"].includes(role)) return;
+      if (!account || !["sales_rep", "store_keeper", "production_manager", "production_supervisor", "admin"].includes(role)) return;
       if (normalizeRole(account.role) === role) {
         if (message) message.textContent = "Choose a different role before updating.";
         return;

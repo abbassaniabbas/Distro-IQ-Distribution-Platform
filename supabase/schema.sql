@@ -29,7 +29,7 @@ alter table public.clients
 add column if not exists credit_limit_sms_enabled boolean not null default false;
 
 alter table public.clients
-add column if not exists sku_format text not null default 'SKU-{0000}';
+add column if not exists sku_format text not null default 'AUTO-DESCRIPTIVE';
 
 alter table public.clients
 add column if not exists invoice_format text not null default 'INV-{0000}';
@@ -706,19 +706,19 @@ where role in ('manager', 'owner', 'operations', 'finance', 'viewer', 'super_adm
 
 update public.memberships
 set role = 'sales_rep'
-where role not in ('sales_rep', 'store_keeper', 'admin', 'ceo');
+where role not in ('sales_rep', 'store_keeper', 'production_manager', 'production_supervisor', 'admin', 'ceo');
 
 update public.invites
 set role = 'sales_rep'
-where role not in ('sales_rep', 'store_keeper', 'admin', 'ceo');
+where role not in ('sales_rep', 'store_keeper', 'production_manager', 'production_supervisor', 'admin', 'ceo');
 
 alter table public.memberships
 add constraint memberships_role_check
-check (role in ('sales_rep', 'store_keeper', 'admin', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'production_manager', 'production_supervisor', 'admin', 'ceo'));
 
 alter table public.invites
 add constraint invites_role_check
-check (role in ('sales_rep', 'store_keeper', 'admin', 'ceo'));
+check (role in ('sales_rep', 'store_keeper', 'production_manager', 'production_supervisor', 'admin', 'ceo'));
 
 create unique index if not exists memberships_one_ceo_per_client
 on public.memberships (client_id)
@@ -2323,7 +2323,7 @@ begin
     raise exception 'CEO access required';
   end if;
 
-  if v_role not in ('sales_rep', 'store_keeper', 'admin') then
+  if v_role not in ('sales_rep', 'store_keeper', 'production_manager', 'production_supervisor', 'admin') then
     raise exception 'Choose a valid staff role';
   end if;
 
@@ -2673,9 +2673,9 @@ create policy "stock_products_write_by_stock_roles"
 on public.stock_products
 for all
 to authenticated
-using (public.has_client_role(client_id, array['ceo', 'store_keeper']))
+using (public.has_client_role(client_id, array['ceo', 'admin']))
 with check (
-  public.has_client_role(client_id, array['ceo', 'store_keeper'])
+  public.has_client_role(client_id, array['ceo', 'admin'])
   and (
     category_id is null
     or exists (

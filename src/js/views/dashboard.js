@@ -19,19 +19,19 @@ import {
   isRepresentativeSellThroughTransaction,
   getStockHealth,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260722";
-import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, statusText } from "../services/formatters.js";
-import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js";
-import { isModuleEnabled } from "../services/features.js";
-import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
+} from "../services/calculations.js?v=20260804i";
+import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, productSelectionLabel, statusText } from "../services/formatters.js?v=20260805h";
+import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260805b";
+import { isModuleEnabled } from "../services/features.js?v=20260804e";
+import { getFinancialInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { downloadTabularReport, printTabularReport, tableSectionFromElement } from "../services/report-export.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, metricCard, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
 import { icon } from "../ui/icons.js?v=20260722";
-import { requestNumberDialog } from "../ui/action-dialog.js";
+import { requestNumberDialog, requestTextDialog } from "../ui/action-dialog.js";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
-import { effectivePiecePrice, packagingLineAmount, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260724b";
+import { effectivePiecePrice, packagingLineAmount, packagingMultiplier, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260805b";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 
@@ -77,6 +77,8 @@ function dashboardIdentity(state, role = currentUserRole(state)) {
     ceo: "CEO",
     admin: "Admin",
     store_keeper: "Store Keeper",
+    production_manager: "Production Line Manager",
+    production_supervisor: "Production Supervisor",
     sales_rep: "Sales Representative"
   };
 
@@ -118,8 +120,7 @@ function buildRepAssignments(state, repName = "") {
     ));
 }
 
-function todaysRepTransactions(state, repName) {
-  const date = todayISO();
+function repTransactions(state, repName) {
   const repKey = normalized(repName);
 
   return (state.stockTransactions || [])
@@ -127,11 +128,17 @@ function todaysRepTransactions(state, repName) {
       const type = normalized(transaction.type);
       return (
         (!repKey || normalized(transaction.recordedBy) === repKey) &&
-        transaction.date === date &&
         (type === "sale" || type === "return" || type === "return to factory")
       );
     })
     .sort((a, b) => String(b.id).localeCompare(String(a.id)));
+}
+
+function todaysRepTransactions(state, repName) {
+  const date = todayISO();
+  return repTransactions(state, repName).filter((transaction) => (
+    dateOnly(transaction.date || transaction.createdAt) === date
+  ));
 }
 
 function repDaySummary(transactions) {
@@ -140,13 +147,29 @@ function repDaySummary(transactions) {
     const quantity = Number(transaction.quantity || 0);
     const type = normalized(transaction.type);
     if (type === "sale") {
-      summary.salesAmount += amount;
+      const grossSales = Math.max(0, Number(transaction.grossAmount ?? amount));
+      const discountAmount = Math.max(0, Number(transaction.discountAmount || transaction.discount || 0)) ||
+        grossSales * Math.min(100, Math.max(0, Number(transaction.discountPercent || 0))) / 100;
+      const otherDeductions = Math.max(0, Number(
+        transaction.otherDeductions || transaction.otherDeductionAmount || transaction.allowanceAmount || 0
+      ));
+      const netSales = Number(transaction.netAmount ?? (grossSales - discountAmount - otherDeductions));
+
+      summary.grossSales += grossSales;
+      summary.salesAmount += grossSales;
+      summary.discountAmount += discountAmount;
+      summary.otherDeductions += otherDeductions;
+      summary.netSales += netSales;
       summary.unitsSold += quantity;
     }
 
     if (type === "return") {
       summary.returnAmount += amount;
+      summary.netSales -= amount;
       summary.unitsReturned += quantity;
+      if (transaction.returnDisposition === "to_store") {
+        summary.unitsReturnedToFactory += quantity;
+      }
     }
 
     if (type === "return to factory") {
@@ -157,6 +180,10 @@ function repDaySummary(transactions) {
     return summary;
   }, {
     salesAmount: 0,
+    grossSales: 0,
+    netSales: 0,
+    discountAmount: 0,
+    otherDeductions: 0,
     cashAmount: 0,
     creditAmount: 0,
     returnAmount: 0,
@@ -258,6 +285,37 @@ function salesValueFromOrder(order, productMap) {
   }, 0);
 }
 
+function ceoActualSalesOrders(state) {
+  return (state.orders || []).filter((order) => !isFactoryDispatchToRepresentative(order, state));
+}
+
+function linkedTransactionIdsForOrders(orders) {
+  return new Set((orders || []).flatMap((order) => [
+    order.transactionId,
+    ...(order.transactionIds || []),
+    ...(order.items || []).map((item) => item.transactionId)
+  ]).map((id) => String(id || "")).filter(Boolean));
+}
+
+function unlinkedActualSalesTransactions(state, orders = ceoActualSalesOrders(state)) {
+  const linkedIds = linkedTransactionIdsForOrders(orders);
+  return (state.stockTransactions || []).filter((transaction) => (
+    ["sale", "return"].includes(normalized(transaction.type)) &&
+    !linkedIds.has(String(transaction.id || ""))
+  ));
+}
+
+export function ceoActualSalesRevenue(state) {
+  const orders = ceoActualSalesOrders(state);
+  const productMap = getProductMap(state.products || []);
+  const orderRevenue = orders.reduce((total, order) => total + salesValueFromOrder(order, productMap), 0);
+  const unlinkedRevenue = unlinkedActualSalesTransactions(state, orders).reduce((total, transaction) => {
+    const amount = Number(transaction.amount || 0);
+    return total + (normalized(transaction.type) === "return" ? -amount : amount);
+  }, 0);
+  return orderRevenue + unlinkedRevenue;
+}
+
 function buildCeoFreshness(state) {
   return {
     sales: freshnessFor([
@@ -322,9 +380,11 @@ function buildCeoProductPerformance(state) {
     latestActivity: productLatestActivity(product.id, state)
   }));
   const rowMap = new Map(rows.map((row) => [row.id, row]));
+  const actualOrders = ceoActualSalesOrders(state);
+  const linkedTransactionIds = linkedTransactionIdsForOrders(actualOrders);
 
-  (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
-    const representativeOrder = isFactoryDispatchToRepresentative(order, state);
+  actualOrders.forEach((order) => {
+    const representativeOrder = isRepresentativeSellThroughOrder(order, state);
     const recipientType = normalized(order.customerType);
     const supermarketOrder = !representativeOrder && (
       recipientType.includes("supermarket") ||
@@ -345,14 +405,14 @@ function buildCeoProductPerformance(state) {
     });
   });
 
-  (state.stockTransactions || []).filter((transaction) => !isRepresentativeSellThroughTransaction(transaction)).forEach((transaction) => {
+  (state.stockTransactions || []).forEach((transaction) => {
     const row = rowMap.get(transaction.productId);
     if (!row) return;
 
     const type = normalized(transaction.type);
     const quantity = Number(transaction.quantity || 0);
 
-    if (type === "sale" || type === "supply") {
+    if (type === "sale" && !linkedTransactionIds.has(String(transaction.id || ""))) {
       row.directUnits += quantity;
       row.salesValue += Number(transaction.amount || 0);
     }
@@ -515,7 +575,7 @@ function renderCeoFilterPanel(state, productRows, repRows, supermarketRows) {
           <span>Product</span>
           <select data-ceo-filter="product">
             <option value="">All products</option>
-            ${finishedProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(row.product.name)}</option>`).join("")}
+            ${finishedProducts.map((row) => `<option value="${escapeHtml(row.id)}">${escapeHtml(productSelectionLabel(row.product))}</option>`).join("")}
           </select>
         </label>
         <label class="field">
@@ -763,10 +823,17 @@ function buildCeoSalesTrend(state, dayCount = 7) {
   const days = Array.from({ length: normalizedDayCount }, (_, index) => addDays(anchor, index - (normalizedDayCount - 1)));
   const totals = new Map(days.map((day) => [day, 0]));
 
-  (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
+  const actualOrders = ceoActualSalesOrders(state);
+  actualOrders.forEach((order) => {
     const key = dateKey(order.createdAt || order.dueAt);
     if (!totals.has(key)) return;
     totals.set(key, totals.get(key) + salesValueFromOrder(order, productMap));
+  });
+  unlinkedActualSalesTransactions(state, actualOrders).forEach((transaction) => {
+    const key = dateKey(transaction.createdAt || transaction.date);
+    if (!totals.has(key)) return;
+    const amount = Number(transaction.amount || 0);
+    totals.set(key, totals.get(key) + (normalized(transaction.type) === "return" ? -amount : amount));
   });
 
   const maxValue = Math.max(...totals.values(), 1);
@@ -1106,15 +1173,15 @@ function productSalesTimeline(state, productId) {
     row.orders += 1;
     totals.set(key, row);
   };
-  const linkedTransactionIds = new Set();
-  (state.orders || []).filter((order) => !isRepresentativeSellThroughOrder(order, state)).forEach((order) => {
-    if (order.transactionId) linkedTransactionIds.add(order.transactionId);
+  const actualOrders = ceoActualSalesOrders(state);
+  const linkedTransactionIds = linkedTransactionIdsForOrders(actualOrders);
+  actualOrders.forEach((order) => {
     (order.items || []).filter((item) => item.productId === productId).forEach((item) => {
       add(order.createdAt || order.orderDate || order.dueAt, item.quantity, Number(item.lineAmount ?? (Number(item.quantity || 0) * Number(item.unitPrice ?? item.unitPriceAtSale ?? 0))));
     });
   });
   (state.stockTransactions || [])
-    .filter((transaction) => transaction.productId === productId && normalized(transaction.type) === "sale" && !isRepresentativeSellThroughTransaction(transaction) && !linkedTransactionIds.has(transaction.id))
+    .filter((transaction) => transaction.productId === productId && normalized(transaction.type) === "sale" && !linkedTransactionIds.has(String(transaction.id || "")))
     .forEach((transaction) => add(transaction.createdAt || transaction.date, transaction.quantity, transaction.amount));
   return [...totals.values()].sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -1421,6 +1488,7 @@ function renderCeoProductStock(state) {
 
 function renderCeoDashboard(state) {
   const metrics = calculateMetrics(state);
+  const actualSalesRevenue = ceoActualSalesRevenue(state);
   const vision = calculateVisionMetrics(state);
   const productRows = buildCeoProductPerformance(state);
   const riskRows = buildCeoRiskRows(state);
@@ -1432,7 +1500,7 @@ function renderCeoDashboard(state) {
     .filter((product) => stockCategoryIdForProduct(product) === "finished_products");
   const stockPackageSummary = aggregatePackageQuantityLabel(state, finishedProducts.map((product) => ({
     product,
-    pieces: Number(product.stock || 0) + productStockWithSalesReps(state, product.id)
+    pieces: Number(product.stock || 0)
   })));
 
   return `
@@ -1449,21 +1517,21 @@ function renderCeoDashboard(state) {
       <div class="metric-grid ceo-minimal-metrics">
         ${renderCeoMetricCard({
           label: "Sales",
-          value: formatCurrency(metrics.orderRevenue),
-          meta: "Total order value",
+          value: formatCurrency(actualSalesRevenue),
+          meta: "Actual customer sales",
           iconName: "orders"
         })}
         ${renderCeoMetricCard({
           label: "Stock",
           value: stockPackageSummary === "Package conversion not set"
-            ? `${formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits)} pieces`
+            ? `${formatNumber(vision.finishedStockUnits)} pieces`
             : stockPackageSummary,
           secondaryValue: stockPackageSummary === "Package conversion not set"
             ? ""
-            : `${formatNumber(vision.finishedStockUnits + vision.repOutstandingUnits)} pieces`,
+            : `${formatNumber(vision.finishedStockUnits)} pieces`,
           meta: stockPackageSummary === "Package conversion not set"
-            ? "Package conversion not set · factory plus representative custody"
-            : "Factory plus representative custody",
+            ? "Package conversion not set · factory stock available"
+            : "Factory stock available",
           iconName: "package"
         })}
         ${renderCeoMetricCard({
@@ -1571,7 +1639,7 @@ function renderStoreKeeperCategoryCards(state) {
 }
 
 function renderStoreKeeperAlertRows(state, permissions) {
-  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock || permissions.canAddStock;
   const lowStockProducts = getLowStockProducts(activeStockProducts(state.products)).slice(0, 5);
 
   if (!lowStockProducts.length) {
@@ -1724,6 +1792,103 @@ function renderStoreKeeperDashboard(state, permissions) {
       <section class="panel">
         ${panelHeader("Stock sections", "Raw materials, finished products, and equipment are managed separately")}
         ${renderStoreKeeperCategoryCards(state)}
+      </section>
+    </section>
+  `;
+}
+
+function renderProductionManagerDashboard(state) {
+  const batches = [...(state.productionBatches || [])]
+    .sort((a, b) => String(b.createdAt || b.batchDate || "").localeCompare(String(a.createdAt || a.batchDate || "")));
+  const todayOutput = batches
+    .filter((batch) => dateOnly(batch.batchDate || batch.createdAt) === todayISO())
+    .reduce((total, batch) => total + Number(batch.quantityProduced || 0), 0);
+  const activeProducts = activeStockProducts(state.products || []);
+  const lowStock = getLowStockProducts(activeProducts);
+  const activePlans = (state.productionPlans || []).filter((plan) => ["planned", "in_progress", "submitted", "flagged"].includes(plan.status));
+  const awaitingQuality = batches.filter((batch) => ["awaiting_qc", "qc_failed", "qc_passed", "submitted"].includes(batch.status));
+  const submittedSupervisorReports = batches.filter((batch) => batch.supervisorWorkflow && batch.status === "submitted");
+  const openIssues = (state.productionIssues || []).filter((issue) => issue.status === "open");
+  const recentBatchRows = batches.slice(0, 8).map((batch) => `
+    <tr data-search-index="${escapeHtml(`${batch.reference} ${batch.finishedProductName} ${batch.recordedBy}`.toLowerCase())}">
+      <td><strong>${escapeHtml(batch.reference || batch.id)}</strong></td>
+      <td>${formatDate(batch.batchDate || dateOnly(batch.createdAt))}</td>
+      <td>${escapeHtml(batch.finishedProductName || batch.finishedProductId || "Finished product")}</td>
+      <td><strong>${formatNumber(batch.quantityProduced || 0)}</strong> ${escapeHtml(batch.outputUnit || "units")}</td>
+      <td>${statusPill(batch.status || "transferred")}</td>
+    </tr>
+  `);
+
+  return `
+    <section class="view dashboard-view production-manager-dashboard">
+      ${dashboardIdentity(state, "production_manager")}
+      <section class="ceo-command-strip storekeeper-command-strip">
+        <div><span class="eyebrow">Production Line Manager portal</span><h2>Production overview</h2></div>
+        <div class="row-actions">
+          ${submittedSupervisorReports.length ? `<a class="button primary" href="#/production?tab=reports"><span>Review submitted reports (${formatNumber(submittedSupervisorReports.length)})</span></a>` : ""}
+          <a class="button ${submittedSupervisorReports.length ? "" : "primary"}" href="#/production"><span>Manage production</span></a>
+        </div>
+      </section>
+      <div class="metric-grid">
+        ${metricCard({ label: "Today's output", value: formatNumber(todayOutput), meta: "Finished units recorded today", iconName: "package" })}
+        ${metricCard({ label: "Active plans", value: formatNumber(activePlans.length), meta: "Daily or weekly plans in progress", iconName: "orders" })}
+        ${metricCard({ label: "Reports to review", value: formatNumber(awaitingQuality.length), meta: "Submitted or legacy batches awaiting review", iconName: "check" })}
+        ${metricCard({ label: "Open issues", value: formatNumber(openIssues.length), meta: `${formatNumber(lowStock.length)} stock items also need attention`, iconName: "alert" })}
+      </div>
+      <section class="panel">
+        ${panelHeader("Recent production batches", "Current production output and workflow stage")}
+        ${table(["Batch", "Date", "Finished product", "Output", "Stage"], recentBatchRows, "No production batches have been recorded")}
+      </section>
+      <section class="panel">
+        ${panelHeader("Stock attention", "Factory stock currently at or below its reorder point")}
+        ${table(
+          ["Stock item", "Category", "Available", "Reorder point"],
+          lowStock.slice(0, 8).map((product) => `<tr><td><strong>${escapeHtml(product.name)}</strong><div class="muted">${escapeHtml(product.id)}</div></td><td>${escapeHtml(product.category)}</td><td>${formatNumber(product.stock)}</td><td>${formatNumber(product.reorderPoint)}</td></tr>`),
+          "No stock items currently need attention"
+        )}
+      </section>
+    </section>
+  `;
+}
+
+function renderProductionSupervisorDashboard(state) {
+  const plans = [...(state.productionPlans || [])]
+    .sort((a, b) => String(b.productionDate || b.startDate || "").localeCompare(String(a.productionDate || a.startDate || "")));
+  const activePlans = plans.filter((plan) => ["planned", "in_progress", "flagged"].includes(plan.status));
+  const awaitingReview = plans.filter((plan) => plan.status === "submitted");
+  const completed = plans.filter((plan) => ["completed", "closed"].includes(plan.status));
+  const openIssues = (state.productionIssues || []).filter((issue) => issue.status === "open");
+  const rows = plans.slice(0, 6).map((plan) => {
+    const line = plan.lines?.[0] || {};
+    return `<tr>
+      <td><strong>${escapeHtml(plan.name || "Production plan")}</strong><div class="muted">${escapeHtml(plan.batchReference || "Batch generated when started")}</div></td>
+      <td>${escapeHtml(line.productName || plan.productName || "Finished product")}</td>
+      <td>${formatNumber(plan.targetQuantity || line.quantity || 0)}</td>
+      <td>${formatDate(plan.productionDate || plan.startDate)}</td>
+      <td>${statusPill(plan.status || "planned")}</td>
+    </tr>`;
+  });
+
+  return `
+    <section class="view dashboard-view production-supervisor-dashboard">
+      ${dashboardIdentity(state, "production_supervisor")}
+      <section class="ceo-command-strip storekeeper-command-strip">
+        <div>
+          <span class="eyebrow">Production Supervisor portal</span>
+          <h2>Assigned production overview</h2>
+          <p>Start assigned plans, record batch results, and submit reports for manager review.</p>
+        </div>
+        <div class="row-actions"><a class="button primary" href="#/production"><span>Open assigned plans</span></a><a class="button" href="#/inventory"><span>View stock</span></a></div>
+      </section>
+      <div class="metric-grid">
+        ${metricCard({ label: "Active plans", value: formatNumber(activePlans.length), meta: "Planned, in progress, or flagged", iconName: "orders" })}
+        ${metricCard({ label: "Awaiting review", value: formatNumber(awaitingReview.length), meta: "Reports submitted to your manager", iconName: "check" })}
+        ${metricCard({ label: "Completed", value: formatNumber(completed.length), meta: "Approved production plans", iconName: "package" })}
+        ${metricCard({ label: "Open issues", value: formatNumber(openIssues.length), meta: "Issues reported from your work", iconName: "alert" })}
+      </div>
+      <section class="panel">
+        ${panelHeader("Recent assigned plans", "Only production plans assigned to you are shown")}
+        ${table(["Plan / batch", "Product", "Target", "Production date", "Status"], rows, "No production plans are assigned to you")}
       </section>
     </section>
   `;
@@ -2001,8 +2166,11 @@ function reportLinesFor(report, state) {
 
 function renderManagerReportRows(state, { readOnly = false } = {}) {
   const canDelete = currentUserRole(state) === "ceo";
-  return (state.salesReports || []).map((report) => {
+  return [...(state.salesReports || [])]
+    .sort((a, b) => String(b.submittedAt || b.updatedAt || b.reportDate || "").localeCompare(String(a.submittedAt || a.updatedAt || a.reportDate || "")))
+    .map((report) => {
     const reportLines = reportLinesFor(report, state);
+    const reviewHistory = reportReviewHistory(report);
     const linePreview = reportLines
       .slice(0, 2)
       .map((line) => [line.customerName, line.productName, line.returnDisposition].filter(Boolean).join(" - "))
@@ -2028,7 +2196,15 @@ function renderManagerReportRows(state, { readOnly = false } = {}) {
           <div class="muted">${formatNumber(report.unitsSold)} sold - ${formatNumber(report.unitsReturned)} returned</div>
         </td>
         <td>
-          ${escapeHtml(report.reviewNote || "No query")}
+          <div class="row-actions">
+            <span>${escapeHtml(reviewHistory[0]?.note || "No query")}</span>
+            ${reviewHistory.length ? iconButton({
+              iconName: "alert",
+              label: "View permanent review notes",
+              className: "js-view-report-notes",
+              data: { "report-id": report.id }
+            }) : ""}
+          </div>
           <div class="muted">${linePreview ? escapeHtml(linePreview) : `${formatNumber((report.transactionIds || []).length)} linked record${(report.transactionIds || []).length === 1 ? "" : "s"}`}</div>
         </td>
         <td>
@@ -2042,7 +2218,7 @@ function renderManagerReportRows(state, { readOnly = false } = {}) {
             ${readOnly ? "" : `
               ${textButton({
                 iconName: "alert",
-                label: "Flag",
+                label: "Reject",
                 className: "js-flag-report",
                 disabled: report.status === "flagged",
                 data: { "report-id": report.id }
@@ -2153,8 +2329,25 @@ export function renderManagerSalesOperations(state) {
   `;
 }
 
+function reportReviewHistory(report) {
+  if (Array.isArray(report.reviewHistory) && report.reviewHistory.length) {
+    return [...report.reviewHistory]
+      .sort((a, b) => String(b.recordedAt || "").localeCompare(String(a.recordedAt || "")));
+  }
+  const legacyNote = String(report.flagReason || report.reviewNote || "").trim();
+  if (!legacyNote) return [];
+  return [{
+    id: `legacy-${report.id}`,
+    status: report.flagReason ? "flagged" : (report.status || "reviewed"),
+    note: legacyNote,
+    recordedBy: report.reviewedBy || "Reviewer",
+    recordedAt: report.flaggedAt || report.reviewedAt || report.submittedAt || report.reportDate || ""
+  }];
+}
+
 function renderReportDetails(report, state) {
   const lines = reportLinesFor(report, state);
+  const reviewHistory = reportReviewHistory(report);
 
   return `
     <div class="report-detail-summary">
@@ -2191,9 +2384,14 @@ function renderReportDetails(report, state) {
         </tbody>
       </table>
     </div>
-    <div class="report-detail-note">
-      <span class="eyebrow">Review note</span>
-      <p>${escapeHtml(report.reviewNote || "No review query has been added.")}</p>
+    <div class="report-detail-note report-review-history" data-report-review-history>
+      <span class="eyebrow">Permanent review notes</span>
+      ${reviewHistory.length ? reviewHistory.map((entry) => `
+        <article class="report-review-note">
+          <div><strong>${escapeHtml(statusText(entry.status || "reviewed"))}</strong><span class="muted">${entry.recordedAt ? formatDateTime(entry.recordedAt) : "Date unavailable"} · ${escapeHtml(entry.recordedBy || "Reviewer")}</span></div>
+          <p>${escapeHtml(entry.note)}</p>
+        </article>
+      `).join("") : "<p>No review query has been added.</p>"}
     </div>
   `;
 }
@@ -2310,14 +2508,73 @@ function renderRepOfflineStatus(state) {
   `;
 }
 
-function renderRepStockCards(assignments) {
-  if (!assignments.length) {
+function repPackageStockLabels(assignment, state) {
+  const pieces = Math.max(0, Math.floor(Number(assignment.outstanding || 0)));
+
+  return productPackagingTypes(state.client, assignment.product)
+    .filter((type) => type !== "piece")
+    .sort((typeA, typeB) => (
+      packagingMultiplier(assignment.product, typeB, state.client) -
+      packagingMultiplier(assignment.product, typeA, state.client)
+    ))
+    .map((type) => {
+      const multiplier = Math.max(1, Math.floor(packagingMultiplier(assignment.product, type, state.client)));
+      const packageCount = Math.floor(pieces / multiplier);
+      const loosePieces = pieces % multiplier;
+      const packageLabel = packagingQuantityLabel(formatNumber(packageCount), type);
+
+      return loosePieces
+        ? `${packageLabel} + ${packagingQuantityLabel(formatNumber(loosePieces), "piece")}`
+        : packageLabel;
+    });
+}
+
+function groupRepStockCards(assignments) {
+  const grouped = new Map();
+
+  assignments.forEach((assignment) => {
+    const key = `${assignment.productId}:${assignment.assignedDate}`;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, {
+        ...assignment,
+        assignmentIds: [assignment.id],
+        assigned: Number(assignment.assigned || 0),
+        sold: Number(assignment.sold || 0),
+        returned: Number(assignment.returned || 0),
+        heldReturns: Number(assignment.heldReturns || 0),
+        outstanding: Number(assignment.outstanding || 0)
+      });
+      return;
+    }
+
+    existing.assignmentIds.push(assignment.id);
+    existing.assigned += Number(assignment.assigned || 0);
+    existing.sold += Number(assignment.sold || 0);
+    existing.returned += Number(assignment.returned || 0);
+    existing.heldReturns += Number(assignment.heldReturns || 0);
+    existing.outstanding += Number(assignment.outstanding || 0);
+  });
+
+  return [...grouped.values()].map((assignment) => ({
+    ...assignment,
+    soldPercent: assignment.assigned ? (assignment.sold / assignment.assigned) * 100 : 0
+  }));
+}
+
+function renderRepStockCards(assignments, state) {
+  const groupedAssignments = groupRepStockCards(assignments);
+
+  if (!groupedAssignments.length) {
     return '<div class="empty-state">No stock assigned in the past 7 days</div>';
   }
 
   return `
     <div class="rep-stock-grid">
-      ${assignments.map((assignment) => `
+      ${groupedAssignments.map((assignment) => {
+        const packageLabels = repPackageStockLabels(assignment, state);
+
+        return `
         <article class="rep-stock-card" data-search-index="${escapeHtml(`${assignment.product.name} ${assignment.repName}`.toLowerCase())}">
           <header>
             <div>
@@ -2327,9 +2584,18 @@ function renderRepStockCards(assignments) {
             ${statusPill(assignment.outstanding > 0 ? "in_hand" : "done")}
           </header>
 
-          <div class="rep-stock-count">
-            <strong>${formatNumber(assignment.outstanding)}</strong>
-            <span>left</span>
+          <div class="rep-stock-quantity-row">
+            <div class="rep-stock-count">
+              <strong class="rep-assigned-piece-stock">${formatNumber(assignment.outstanding)}</strong>
+              <span>pieces left</span>
+            </div>
+
+            <div class="rep-stock-package-summary">
+              <span>In packages</span>
+              ${packageLabels.length
+                ? packageLabels.map((label) => `<strong class="rep-assigned-package-stock">${escapeHtml(label)}</strong>`).join("")
+                : '<small>Package conversion not set</small>'}
+            </div>
           </div>
 
           <div class="stock-line">
@@ -2348,7 +2614,8 @@ function renderRepStockCards(assignments) {
             </button>
           </footer>
         </article>
-      `).join("")}
+      `;
+      }).join("")}
     </div>
   `;
 }
@@ -2465,6 +2732,7 @@ function repProductChoices(assignments, mode = "sale") {
     const existing = choices.get(assignment.productId) || {
       productId: assignment.productId,
       productName: assignment.product.name,
+      productLabel: productSelectionLabel(assignment.product),
       available: 0,
       assignmentIds: []
     };
@@ -2482,7 +2750,7 @@ function renderRepAssignmentOptions(assignments, mode = "sale") {
 
   return repProductChoices(assignments, mode).map((choice) => `
     <option value="${escapeHtml(choice.productId)}" data-assignment-ids="${escapeHtml(choice.assignmentIds.join(","))}">
-      ${escapeHtml(choice.productName)} (${formatNumber(choice.available)} ${unitLabel})
+      ${escapeHtml(choice.productLabel || choice.productName)} (${formatNumber(choice.available)} ${unitLabel})
     </option>
   `).join("");
 }
@@ -2557,6 +2825,14 @@ function renderRepQuickLog(state, assignments) {
           </section>
 
           ${renderRepCustomerField(customers, "sale", true)}
+
+          <label class="field">
+            <span>Payment</span>
+            <select name="salePaymentType" required>
+              <option value="cash">Paid</option>
+              <option value="credit">Credit - awaiting payment</option>
+            </select>
+          </label>
 
           <span id="rep-sale-message" class="rep-form-message" role="status" aria-live="polite"></span>
           <button class="button primary rep-save-button" type="submit">
@@ -2711,12 +2987,16 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
       ${panelHeader("Day report", existingReport ? (hasReportChanges ? "New activity added" : "Submitted") : "Ready when today's activity is saved")}
       <div class="rep-report-grid">
         <div>
-          <span class="eyebrow">Sales</span>
-          <strong>${formatCurrency(summary.salesAmount)}</strong>
+          <span class="eyebrow">Gross sales</span>
+          <strong>${formatCurrency(summary.grossSales)}</strong>
         </div>
         <div>
           <span class="eyebrow">Returns</span>
           <strong>${formatCurrency(summary.returnAmount)}</strong>
+        </div>
+        <div>
+          <span class="eyebrow">Net sales</span>
+          <strong>${formatCurrency(summary.netSales)}</strong>
         </div>
         <div>
           <span class="eyebrow">Back to factory</span>
@@ -2731,6 +3011,10 @@ function renderRepReportPanel(repName, transactions, summary, existingReport, st
         data-rep-name="${escapeHtml(repName)}"
         data-report-date="${escapeHtml(todayISO())}"
         data-sales-amount="${escapeHtml(summary.salesAmount)}"
+        data-gross-sales="${escapeHtml(summary.grossSales)}"
+        data-net-sales="${escapeHtml(summary.netSales)}"
+        data-discount-amount="${escapeHtml(summary.discountAmount)}"
+        data-other-deductions="${escapeHtml(summary.otherDeductions)}"
         data-cash-amount="${escapeHtml(summary.cashAmount)}"
         data-credit-amount="${escapeHtml(summary.creditAmount)}"
         data-return-amount="${escapeHtml(summary.returnAmount)}"
@@ -2838,6 +3122,7 @@ function renderSalesRepDashboard(state) {
     : assignments;
   const transactions = todaysRepTransactions(state, repName);
   const summary = repDaySummary(transactions);
+  const totalSalesSummary = repDaySummary(repTransactions(state, repName));
   const creditLimit = getCreditLimitForParty(state.creditLimits || [], repName);
   const factoryCreditOwed = Number(creditLimit?.balance || 0);
   const creditUsage = creditLimit?.limit ? (factoryCreditOwed / Number(creditLimit.limit || 0)) * 100 : 0;
@@ -2855,7 +3140,7 @@ function renderSalesRepDashboard(state) {
       ${renderRepOfflineStatus(state)}
       <section class="rep-hero">
         <div>
-          <span class="eyebrow">Today</span>
+          <span class="eyebrow">Sales representative</span>
           <h2>${escapeHtml(repName)}</h2>
         </div>
         <div class="rep-hero-stats${creditControlEnabled ? "" : " is-credit-disabled"}">
@@ -2864,8 +3149,12 @@ function renderSalesRepDashboard(state) {
             <strong>${formatNumber(stockInHand)}</strong>
           </div>
           <div>
-            <span>Sales</span>
-            <strong>${formatCurrency(summary.salesAmount)}</strong>
+            <span>Gross sales</span>
+            <strong>${formatCurrency(totalSalesSummary.grossSales)}</strong>
+          </div>
+          <div>
+            <span>Net sales</span>
+            <strong>${formatCurrency(totalSalesSummary.netSales)}</strong>
           </div>
           ${creditControlEnabled ? `
             <div class="${creditUsage >= 85 ? "is-warning" : ""}">
@@ -2891,7 +3180,7 @@ function renderSalesRepDashboard(state) {
             : "Stock currently loaded to you"
         )}
         ${renderRepStockDateFilter(assignments, activeStockDate)}
-        ${renderRepStockCards(visibleAssignments)}
+        ${renderRepStockCards(visibleAssignments, state)}
       </section>
 
       ${renderRepStockRequestPanel(state)}
@@ -3204,6 +3493,14 @@ export function renderDashboard({ state }) {
     return renderStoreKeeperDashboard(state, permissions);
   }
 
+  if (state.session && state.client?.id && role === "production_manager") {
+    return renderProductionManagerDashboard(state);
+  }
+
+  if (state.session && state.client?.id && role === "production_supervisor") {
+    return renderProductionSupervisorDashboard(state);
+  }
+
   return `
     <section class="view dashboard-view">
       ${dashboardIdentity(state, role)}
@@ -3319,14 +3616,24 @@ export function bindManagerActivitySections({ root, store }) {
   });
 
   qsa(".js-flag-report", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      store.dispatch({
-        type: "FLAG_SALES_REPORT",
-        reportId: button.dataset.reportId,
-        note: "CEO query raised",
-        message: "Report flagged"
-      });
-    });
+    button.addEventListener("click", () => flagSalesReportWithReason(store, button.dataset.reportId));
+  });
+}
+
+async function flagSalesReportWithReason(store, reportId) {
+  const reason = await requestTextDialog({
+    title: "Reject sales report",
+    message: "Explain why this sales report is being flagged. The sales representative and reviewers will see this message.",
+    label: "Reason the report is flagged",
+    placeholder: "Describe the incorrect, missing, or unclear information",
+    confirmLabel: "Reject report"
+  });
+  if (!reason?.trim()) return;
+  store.dispatch({
+    type: "FLAG_SALES_REPORT",
+    reportId,
+    note: reason,
+    message: "Sales report rejected and reason attached"
   });
 }
 
@@ -3392,22 +3699,24 @@ export function bindDashboard({ root, store, signal }) {
     button.addEventListener("click", async () => {
       const product = store.getState().products.find((item) => item.id === button.dataset.productId);
       const rawQuantity = await requestNumberDialog({
-        title: "Add factory stock",
+        title: currentUserRole(store.getState()) === "store_keeper" ? "Request factory stock" : "Add factory stock",
         message: `How many ${product?.unit || "units"} do you want to add to ${product?.name || "this stock item"}?`,
         label: `Quantity (${product?.unit || "units"})`,
         placeholder: "0",
-        confirmLabel: "Add stock"
+        confirmLabel: currentUserRole(store.getState()) === "store_keeper" ? "Send for approval" : "Add stock"
       });
       if (rawQuantity === null) return;
 
       const quantity = Number(rawQuantity);
       if (!Number.isFinite(quantity) || quantity <= 0) return;
 
+      const requiresApproval = currentUserRole(store.getState()) === "store_keeper";
       store.dispatch({
-        type: "RESTOCK_PRODUCT",
+        type: requiresApproval ? "SUBMIT_STOCK_ADDITION_REQUEST" : "RESTOCK_PRODUCT",
+        ...(requiresApproval ? { kind: "restock" } : {}),
         productId: button.dataset.productId,
         quantity,
-        message: "Snack stock replenished"
+        message: requiresApproval ? "Stock addition sent for approval" : "Snack stock replenished"
       });
     });
   });
@@ -3433,14 +3742,7 @@ export function bindDashboard({ root, store, signal }) {
   });
 
   qsa(".js-flag-report", root).forEach((button) => {
-    button.addEventListener("click", () => {
-      store.dispatch({
-        type: "FLAG_SALES_REPORT",
-        reportId: button.dataset.reportId,
-        note: "CEO query raised",
-        message: "Report flagged"
-      });
-    });
+    button.addEventListener("click", () => flagSalesReportWithReason(store, button.dataset.reportId));
   });
 }
 
@@ -3456,7 +3758,7 @@ function bindSubmittedReportDetails({ root, store }) {
     modal.hidden = true;
   }
 
-  qsa(".js-view-report-details", root).forEach((button) => {
+  qsa(".js-view-report-details, .js-view-report-notes", root).forEach((button) => {
     button.addEventListener("click", () => {
       const report = (store.getState().salesReports || []).find((item) => item.id === button.dataset.reportId);
       if (!report) return;
@@ -3466,6 +3768,9 @@ function bindSubmittedReportDetails({ root, store }) {
       if (title) title.textContent = `${report.repName || "Representative"} - ${formatDate(report.reportDate)}`;
       modal.hidden = false;
       modal.focus();
+      if (button.classList.contains("js-view-report-notes")) {
+        qs("[data-report-review-history]", content)?.scrollIntoView({ block: "start" });
+      }
     });
   });
 
@@ -4159,7 +4464,7 @@ function bindSalesRepDashboard({ root, store }) {
     const customerId = isWalkInSale ? "" : selectedCustomerId;
     const customer = (state.retailers || []).find((item) => item.id === customerId);
     const customerName = isWalkInSale ? "Walk-in customer" : customer?.name || "";
-    const paymentType = "not_tracked";
+    const paymentType = String(formData.get("salePaymentType") || "cash") === "credit" ? "credit" : "cash";
     const repName = currentRepName(state);
     const items = qsa("[data-rep-sale-item-row]", form).map((row) => {
       const productId = String(qs("[data-rep-sale-product]", row)?.value || "");
@@ -4411,6 +4716,10 @@ function bindSalesRepDashboard({ root, store }) {
         repName: button.dataset.repName,
         reportDate: button.dataset.reportDate,
         salesAmount: Number(button.dataset.salesAmount || 0),
+        grossSales: Number(button.dataset.grossSales || 0),
+        netSales: Number(button.dataset.netSales || 0),
+        discountAmount: Number(button.dataset.discountAmount || 0),
+        otherDeductions: Number(button.dataset.otherDeductions || 0),
         cashAmount: Number(button.dataset.cashAmount || 0),
         creditAmount: Number(button.dataset.creditAmount || 0),
         returnAmount: Number(button.dataset.returnAmount || 0),

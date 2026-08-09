@@ -11,7 +11,7 @@ import {
   verifyMfaChallenge
 } from "../services/auth.js";
 import { loadPlatformOverview, loadWorkspace } from "../services/backend.js";
-import { ROLE_OPTIONS, normalizeRole, roleLabel } from "../services/rbac.js";
+import { ROLE_OPTIONS, normalizeRole, roleLabel } from "../services/rbac.js?v=20260804m";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js";
@@ -95,6 +95,8 @@ function renderLoginRoleSelector() {
   const roleIcons = {
     sales_rep: "retailers",
     store_keeper: "inventory",
+    production_manager: "package",
+    production_supervisor: "check",
     admin: "orders",
     ceo: "building"
   };

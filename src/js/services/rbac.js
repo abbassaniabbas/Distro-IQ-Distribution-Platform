@@ -12,6 +12,16 @@ export const ROLE_OPTIONS = [
     description: "Raw materials, finished products, equipment, stock movement, and dispatch"
   },
   {
+    value: "production_manager",
+    label: "Production Line Manager",
+    description: "Production plans, work assignments, batches, quality control, finished-goods transfer, issues, and reports"
+  },
+  {
+    value: "production_supervisor",
+    label: "Production Supervisor",
+    description: "Record completed finished products"
+  },
+  {
     value: "admin",
     label: "Admin",
     description: "Sales documentation, representative stock requests, and Purchase Order coordination"
@@ -56,7 +66,7 @@ const ROLE_PERMISSIONS = {
     canFulfillPurchaseOrders: false
   },
   store_keeper: {
-    nav: ["dashboard", "inventory", "activity-log", "settings"],
+    nav: ["dashboard", "inventory", "invoices", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -78,12 +88,71 @@ const ROLE_PERMISSIONS = {
     canCoordinateStockRequests: false,
     canFulfillPurchaseOrders: false
   },
+  production_manager: {
+    nav: ["dashboard", "production", "inventory", "activity-log", "settings"],
+    canViewCompanyWide: true,
+    canLogSalesReturns: false,
+    canManageProducts: false,
+    canAddStock: false,
+    canAssignStock: false,
+    canReconcileStock: false,
+    canSetCreditLimits: false,
+    canAddCustomers: false,
+    canManageCustomers: false,
+    canReviewReports: false,
+    canManageStockMovements: false,
+    canDispatchStock: false,
+    canViewFinancialReports: false,
+    canExportReports: false,
+    canManageUsers: false,
+    canConfigureFactory: false,
+    canAuditRecords: false,
+    canRequestStock: false,
+    canCoordinateStockRequests: false,
+    canFulfillPurchaseOrders: false,
+    canPlanProduction: true,
+    canRecordProduction: true,
+    canAssignProductionWork: true,
+    canPerformProductionQC: true,
+    canApproveProductionBatch: true,
+    canTransferFinishedGoods: true,
+    canReportProductionIssues: true,
+    canViewProductionReports: true
+  },
+  production_supervisor: {
+    nav: ["dashboard", "production", "inventory", "activity-log", "settings"],
+    canViewCompanyWide: false,
+    canLogSalesReturns: false,
+    canManageProducts: false,
+    canAddStock: false,
+    canAssignStock: false,
+    canReconcileStock: false,
+    canSetCreditLimits: false,
+    canAddCustomers: false,
+    canManageCustomers: false,
+    canReviewReports: false,
+    canManageStockMovements: false,
+    canDispatchStock: false,
+    canViewFinancialReports: false,
+    canExportReports: false,
+    canManageUsers: false,
+    canConfigureFactory: false,
+    canAuditRecords: false,
+    canRequestStock: false,
+    canCoordinateStockRequests: false,
+    canFulfillPurchaseOrders: false,
+    canRecordFinishedProducts: true,
+    canStartAssignedProduction: true,
+    canSubmitProductionReports: true,
+    canReportProductionIssues: true,
+    canViewAssignedProduction: true
+  },
   admin: {
     nav: ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
-    canAddStock: false,
+    canAddStock: true,
     canAssignStock: false,
     canReconcileStock: false,
     canSetCreditLimits: false,
@@ -102,7 +171,7 @@ const ROLE_PERMISSIONS = {
     canFulfillPurchaseOrders: false
   },
   ceo: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "team", "finance", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "production", "retailers", "team", "finance", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: true,
     canManageProducts: true,
@@ -119,6 +188,14 @@ const ROLE_PERMISSIONS = {
     canExportReports: true,
     canManageUsers: true,
     canConfigureFactory: true,
+    canPlanProduction: true,
+    canRecordProduction: true,
+    canAssignProductionWork: true,
+    canPerformProductionQC: true,
+    canApproveProductionBatch: true,
+    canTransferFinishedGoods: true,
+    canReportProductionIssues: true,
+    canViewProductionReports: true,
     canAuditRecords: true,
     canRequestStock: false,
     canCoordinateStockRequests: false,
@@ -183,7 +260,11 @@ export function canAccessRoute(state, routeId) {
 
   if (setupRoutes.includes(routeId)) return true;
   if (routeId === "platform-console") return Boolean(state.platformAdmin);
-  if (routeId === "messages") return Boolean(state.session && state.client?.id);
+  if (routeId === "messages") return Boolean(
+    state.session &&
+    state.client?.id &&
+    currentUserRole(state) !== "production_supervisor"
+  );
   if (!state.session || !state.client?.id) return true;
   if (!isClientRouteEnabled(state, routeId)) return false;
 
@@ -192,6 +273,31 @@ export function canAccessRoute(state, routeId) {
 
 export function scopeStateForCurrentRole(state) {
   const role = currentUserRole(state);
+
+  if (role === "production_supervisor" && state.session && state.client?.id) {
+    const account = accountForUser(state);
+    const userId = String(state.user?.id || "");
+    const accountId = String(account?.id || "");
+    const accountName = String(account?.name || "").trim().toLowerCase();
+    const productionPlans = (state.productionPlans || []).filter((plan) => (
+      (userId && String(plan.assignedSupervisorUserId || "") === userId) ||
+      (accountId && String(plan.assignedSupervisorId || "") === accountId) ||
+      (accountName && String(plan.assignedSupervisorName || "").trim().toLowerCase() === accountName)
+    ));
+    const planIds = new Set(productionPlans.map((plan) => plan.id));
+    const productionBatches = (state.productionBatches || []).filter((batch) => planIds.has(batch.planId));
+    const productionIssues = (state.productionIssues || []).filter((issue) => (
+      planIds.has(issue.planId) ||
+      (userId && String(issue.reportedByUserId || "") === userId)
+    ));
+
+    return {
+      ...state,
+      productionPlans,
+      productionBatches,
+      productionIssues
+    };
+  }
 
   if (role !== "sales_rep" || !state.session || !state.client?.id) {
     return state;
@@ -204,7 +310,6 @@ export function scopeStateForCurrentRole(state) {
     const repName = String(order.repName || "").trim().toLowerCase();
     return order.repUserId === userId || (actorName && repName === actorName);
   });
-  const customerIds = new Set(orders.map((order) => order.retailerId));
   const activeProductIds = new Set((state.products || [])
     .filter((product) => product.status !== "inactive")
     .map((product) => product.id));
@@ -218,10 +323,9 @@ export function scopeStateForCurrentRole(state) {
     ...orders.flatMap((order) => (order.items || []).map((item) => item.productId)),
     ...assignedProductIds
   ]);
-  const retailers = (state.retailers || []).filter((retailer) => {
-    const assignedRepUserId = String(retailer.assignedRepUserId || "");
-    return customerIds.has(retailer.id) || assignedRepUserId === userId || !assignedRepUserId;
-  });
+  // Customers belong to the company workspace, not to the representative who
+  // first added them. Representative sales and records remain private below.
+  const retailers = [...(state.retailers || [])];
   const visibleCustomerNames = new Set(retailers.map((retailer) => String(retailer.name || "").trim().toLowerCase()).filter(Boolean));
 
   return {

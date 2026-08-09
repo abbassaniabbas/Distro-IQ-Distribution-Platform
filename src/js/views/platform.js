@@ -6,11 +6,11 @@ import {
   triggerPlatformJob,
   updatePlatformAccount,
   updatePlatformConfiguration
-} from "../services/backend.js";
-import { CURRENCY_OPTIONS, TIMEZONE_OPTIONS } from "../services/tenant.js";
-import { formatDate, formatNumber } from "../services/formatters.js";
+} from "../services/backend.js?v=20260804m";
+import { CURRENCY_OPTIONS, TIMEZONE_OPTIONS } from "../services/tenant.js?v=20260804m";
+import { formatDate, formatNumber } from "../services/formatters.js?v=20260805h";
 import { createZipBlob } from "../services/zip.js";
-import { ROLE_OPTIONS, roleLabel } from "../services/rbac.js";
+import { ROLE_OPTIONS, roleLabel } from "../services/rbac.js?v=20260804m";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js";
 

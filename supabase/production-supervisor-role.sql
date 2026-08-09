@@ -62,25 +62,4 @@ $$;
 grant execute on function public.set_membership_role(uuid, uuid, text) to authenticated;
 revoke all on function public.set_membership_role(uuid, uuid, text) from public, anon;
 
--- Admin and CEO add live stock. Store Keepers submit operational approval
--- requests instead of writing directly to the shared stock-products table.
-drop policy if exists "stock_products_write_by_stock_roles" on public.stock_products;
-create policy "stock_products_write_by_stock_roles"
-on public.stock_products
-for all
-to authenticated
-using (public.has_client_role(client_id, array['ceo', 'admin']))
-with check (
-  public.has_client_role(client_id, array['ceo', 'admin'])
-  and (
-    category_id is null
-    or exists (
-      select 1
-      from public.stock_categories linked_category
-      where linked_category.id = stock_products.category_id
-        and linked_category.client_id = stock_products.client_id
-    )
-  )
-);
-
 commit;

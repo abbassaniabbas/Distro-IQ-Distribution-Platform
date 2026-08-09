@@ -122,28 +122,118 @@ begin
     raise exception 'Operational changes must be JSON arrays';
   end if;
 
+  if upper(trim(p_action_type)) in ('UPSERT_PRODUCT', 'RESTOCK_PRODUCT')
+    and v_role = 'store_keeper' then
+    raise exception 'Store Keeper stock additions require Admin or CEO approval';
+  end if;
+
+  if upper(trim(p_action_type)) = 'SUBMIT_STOCK_ADDITION_REQUEST'
+    and v_role <> 'store_keeper' then
+    raise exception 'Only a Store Keeper can submit a stock addition request';
+  end if;
+
+  if upper(trim(p_action_type)) in ('APPROVE_STOCK_ADDITION_REQUEST', 'REJECT_STOCK_ADDITION_REQUEST')
+    and v_role not in ('ceo', 'admin') then
+    raise exception 'Only an Admin or CEO can review a stock addition request';
+  end if;
+
+  if upper(trim(p_action_type)) = 'APPROVE_STOCK_ADDITION_REQUEST'
+    and not exists (
+      select 1
+      from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as request_item(value)
+      where request_item.value ->> 'collection' = 'stockAdditionRequests'
+        and request_item.value -> 'data' ->> 'status' = 'approved'
+    ) then
+    raise exception 'An approved stock request record is required';
+  end if;
+
+  if v_role = 'production_manager'
+    and upper(trim(p_action_type)) not in (
+      'CREATE_PRODUCTION_PLAN', 'RECORD_MANAGED_PRODUCTION_BATCH',
+      'RECORD_PRODUCTION_QC', 'APPROVE_PRODUCTION_BATCH',
+      'TRANSFER_PRODUCTION_BATCH', 'REPORT_PRODUCTION_ISSUE',
+      'RESOLVE_PRODUCTION_ISSUE', 'CREATE_ASSIGNED_PRODUCTION_PLAN',
+      'APPROVE_SUPERVISOR_BATCH_REPORT', 'FLAG_SUPERVISOR_BATCH_REPORT',
+      'REJECT_SUPERVISOR_BATCH_REPORT', 'CLOSE_PRODUCTION_PLAN'
+    ) then
+    raise exception 'Production Line Manager access is limited to production workflows';
+  end if;
+
+  if v_role = 'production_supervisor'
+    and upper(trim(p_action_type)) not in (
+      'START_ASSIGNED_PRODUCTION_PLAN', 'SUBMIT_SUPERVISOR_BATCH_REPORT',
+      'REPORT_PRODUCTION_ISSUE'
+    ) then
+    raise exception 'Production Supervisor access is limited to assigned production work';
+  end if;
+
+  if v_role = 'production_supervisor'
+    and exists (
+      select 1
+      from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as supervisor_item(value)
+      where (
+        supervisor_item.value ->> 'collection' not in (
+          'productionPlans', 'productionBatches', 'productionIssues', 'activityLogs'
+        )
+      ) or (
+        supervisor_item.value ->> 'collection' = 'productionPlans'
+        and coalesce(supervisor_item.value -> 'data' ->> 'assignedSupervisorUserId', '') <> auth.uid()::text
+      ) or (
+        supervisor_item.value ->> 'collection' = 'productionBatches'
+        and coalesce(supervisor_item.value -> 'data' ->> 'recordedByUserId', '') <> auth.uid()::text
+      ) or (
+        supervisor_item.value ->> 'collection' = 'productionIssues'
+        and coalesce(supervisor_item.value -> 'data' ->> 'reportedByUserId', '') <> auth.uid()::text
+      )
+    ) then
+    raise exception 'Production Supervisor may update only their assigned production records';
+  end if;
+
+  if v_role = 'production_supervisor'
+    and upper(trim(p_action_type)) = 'SUBMIT_SUPERVISOR_BATCH_REPORT'
+    and exists (
+      select 1
+      from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as batch_item(value)
+      join public.workspace_operational_records as saved_plan
+        on saved_plan.client_id = p_client_id
+        and saved_plan.collection_name = 'productionPlans'
+        and saved_plan.record_id = batch_item.value -> 'data' ->> 'planId'
+      where batch_item.value ->> 'collection' = 'productionBatches'
+        and coalesce(nullif(batch_item.value -> 'data' ->> 'quantityProduced', '')::numeric, 0)
+          > coalesce(nullif(saved_plan.record_data ->> 'targetQuantity', '')::numeric, 0)
+    ) then
+    raise exception 'Good quantity cannot exceed the planned production quantity';
+  end if;
+
   v_allowed_collections := case v_role
     when 'ceo' then array[
       'products', 'stockCategories', 'stockAssignments', 'stockTransactions',
-      'productionBatches', 'retailers', 'orders', 'invoices', 'salesReports',
-      'correctionRequests', 'stockRequests', 'purchaseOrders', 'procurementOrders',
+      'productionBatches', 'productionPlans', 'productionIssues', 'retailers', 'orders', 'invoices', 'salesReports',
+      'correctionRequests', 'stockRequests', 'stockAdditionRequests', 'purchaseOrders', 'procurementOrders',
       'routes', 'creditLimits', 'creditLimitHistory', 'activityLogs'
     ]
     when 'admin' then array[
       'products', 'stockAssignments', 'stockTransactions', 'retailers', 'orders',
       'invoices', 'salesReports', 'correctionRequests', 'stockRequests',
-      'purchaseOrders', 'procurementOrders', 'routes', 'creditLimits',
+      'stockAdditionRequests', 'purchaseOrders', 'procurementOrders', 'routes', 'creditLimits',
       'creditLimitHistory', 'activityLogs'
     ]
     when 'store_keeper' then array[
       'products', 'stockCategories', 'stockAssignments', 'stockTransactions',
-      'productionBatches', 'orders', 'invoices', 'correctionRequests',
-      'stockRequests', 'purchaseOrders', 'procurementOrders', 'routes', 'activityLogs'
+      'productionBatches', 'retailers', 'orders', 'invoices', 'correctionRequests',
+      'stockRequests', 'stockAdditionRequests', 'purchaseOrders', 'procurementOrders', 'routes', 'activityLogs'
     ]
     when 'sales_rep' then array[
       'stockAssignments', 'stockTransactions', 'retailers', 'orders', 'invoices',
       'salesReports', 'correctionRequests', 'stockRequests', 'routes',
       'creditLimits', 'activityLogs'
+    ]
+    when 'production_manager' then array[
+      'products', 'stockTransactions', 'productionBatches', 'productionPlans', 'retailers',
+      'productionIssues', 'activityLogs'
+    ]
+    when 'production_supervisor' then array[
+      'products', 'productionBatches', 'productionPlans', 'productionIssues', 'activityLogs'
     ]
     else array[]::text[]
   end;

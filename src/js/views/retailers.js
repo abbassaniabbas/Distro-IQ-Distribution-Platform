@@ -3,10 +3,10 @@ import {
   getCreditLimitForParty,
   getCustomerOrderCompletion,
   getCustomerRating
-} from "../services/calculations.js?v=20260722";
-import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js";
-import { accountForUser, currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../services/rbac.js";
-import { isModuleEnabled } from "../services/features.js";
+} from "../services/calculations.js?v=20260804i";
+import { currencySymbolFor, formatCurrency, formatDate, formatNumber, formatPercent } from "../services/formatters.js?v=20260805h";
+import { accountForUser, currentUserPermissions, currentUserRole, scopeStateForCurrentRole } from "../services/rbac.js?v=20260802c";
+import { isModuleEnabled } from "../services/features.js?v=20260804e";
 import { getNigeriaLgas, NIGERIA_STATE_NAMES, normalizeNigeriaStateName } from "../data/nigeria-locations.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, textButton } from "../ui/components.js";
@@ -14,6 +14,10 @@ import { bindWorkspaceDataResetButtons } from "../ui/workspace-data-reset.js";
 
 function formatTermPercent(value) {
   return `${new Intl.NumberFormat("en", { maximumFractionDigits: 2 }).format(Number(value || 0))}%`;
+}
+
+function customerAddedBy(retailer) {
+  return String(retailer.createdByName || retailer.assignedRepName || "Not recorded").trim();
 }
 
 function renderSupermarketManager(state, permissions) {
@@ -151,6 +155,7 @@ function renderRetailerListItem(retailer, state) {
     retailer.channel,
     retailer.contact,
     retailer.contactPhone,
+    customerAddedBy(retailer),
     rating.label,
     creditStatus
   ]
@@ -168,6 +173,7 @@ function renderRetailerListItem(retailer, state) {
           <span class="eyebrow">${escapeHtml(retailer.id)}</span>
           <strong>${escapeHtml(retailer.name)}</strong>
           <small>${escapeHtml([retailer.lga || retailer.city, retailer.stateName || retailer.region].filter(Boolean).join(", ") || "Location not set")}</small>
+          <small>Added by ${escapeHtml(customerAddedBy(retailer))}</small>
           ${retailer.status === "inactive" ? '<small class="retailer-inactive-label">Inactive</small>' : ""}
         </span>
         <span>
@@ -303,6 +309,8 @@ export function renderCustomerDetails(retailer, state, permissions) {
       ${detailItem("State", retailer.stateName || retailer.region || "Not set")}
       ${detailItem("Local government area", retailer.lga || retailer.city || "Not set")}
       ${detailItem("Address", retailer.address || "Not set")}
+      ${detailItem("Added by", customerAddedBy(retailer))}
+      ${detailItem("Date added", retailer.createdAt ? formatDate(String(retailer.createdAt).slice(0, 10)) : "Not recorded")}
       ${detailItem("Customer rating", rating.label)}
       ${detailItem("Rating basis", `${formatNumber(rating.score)} / 100`)}
       ${detailItem("Last sale", formatDate(retailer.lastOrder))}

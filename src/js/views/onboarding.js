@@ -2,7 +2,7 @@ import {
   CURRENCY_OPTIONS,
   TIMEZONE_OPTIONS,
   validateClientForm
-} from "../services/tenant.js";
+} from "../services/tenant.js?v=20260801d";
 import {
   DEFAULT_BRAND_COLOR,
   LOGO_ACCEPT,
@@ -16,7 +16,7 @@ import { createWorkspace } from "../services/backend.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { escapeHtml, qs } from "../ui/dom.js";
 import { bindBrandColorInputs } from "../ui/brand-controls.js";
-import { renderDeliveryNotePreview } from "../ui/brand-preview.js";
+import { renderDeliveryNotePreview } from "../ui/brand-preview.js?v=20260805h";
 import { icon } from "../ui/icons.js";
 import { panelHeader, textButton } from "../ui/components.js";
 

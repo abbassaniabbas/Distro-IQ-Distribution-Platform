@@ -4,26 +4,29 @@ import {
   getStockHealth,
   isRepresentativeSellThroughOrder,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260722";
+} from "../services/calculations.js?v=20260804i";
 import {
   formatCurrency,
   currencySymbolFor,
   formatDate,
   formatNumber,
   formatPercent,
+  productSelectionLabel,
   statusText
-} from "../services/formatters.js";
-import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js";
-import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260722d";
+} from "../services/formatters.js?v=20260805h";
+import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js?v=20260805b";
+import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { loadSharedProductImages, purgeSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { productImageStorageKey, removeProductImage, saveProductImage } from "../services/product-images.js";
 import { isBackendConfigured } from "../services/supabase-client.js";
+import { descriptiveProductSku } from "../services/tenant.js?v=20260805c";
 import { printTabularReport } from "../services/report-export.js";
 import { dateIsWithinRange } from "../services/filtering.js";
 import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../services/branding.js";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js?v=20260722";
+import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
 import { bindAdjustments, renderAdjustmentContent } from "./adjustments.js";
 import {
   enabledPackagingTypes,
@@ -43,6 +46,11 @@ const DISPATCH_PAGE_SIZE = 10;
 const MOVEMENT_PAGE_SIZE = 10;
 const FINISHED_PRODUCTS_CATEGORY = "finished_products";
 const RAW_MATERIALS_CATEGORY = "raw_materials";
+const DEFAULT_STOCK_CATEGORIES = [
+  { id: RAW_MATERIALS_CATEGORY, name: "Raw Materials" },
+  { id: FINISHED_PRODUCTS_CATEGORY, name: "Finished Products" },
+  { id: "equipment", name: "Equipment" }
+];
 const PRODUCT_SIZE_UNITS = [
   { value: "g", label: "g" },
   { value: "kg", label: "kg" },
@@ -62,6 +70,12 @@ const stockEntrySession = {
   step: 1
 };
 let stockHealthView = "list";
+
+function availableStockCategories(state) {
+  const saved = Array.isArray(state.stockCategories) ? state.stockCategories : [];
+  const savedById = new Map(saved.filter((category) => category?.id).map((category) => [category.id, category]));
+  return DEFAULT_STOCK_CATEGORIES.map((category) => ({ ...category, ...(savedById.get(category.id) || {}) }));
+}
 
 function renderProductSizeUnitOptions(selected = "g") {
   return PRODUCT_SIZE_UNITS.map((unit) => `
@@ -106,6 +120,10 @@ function stockTabHref(tabId) {
 }
 
 function stockTabsForPermissions(permissions, state) {
+  if (["production_manager", "production_supervisor"].includes(currentUserRole(state))) {
+    return [{ id: "stock-health", label: "Stock health" }];
+  }
+
   return [
     {
       id: "stock-health",
@@ -391,27 +409,8 @@ function duplicateProductSku(state, sku, productId = "") {
   ));
 }
 
-function nextAutomaticProductId(products = [], format = "SKU-{0000}") {
-  const tokenMatch = String(format || "").match(/\{(0{2,})\}/);
-  const token = tokenMatch?.[0] || "{0000}";
-  const width = tokenMatch?.[1].length || 4;
-  const [prefix = "SKU-", suffix = ""] = String(format || "SKU-{0000}").split(token);
-  const escapePattern = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const idPattern = new RegExp(`^${escapePattern(prefix)}(\\d{${width},})${escapePattern(suffix)}$`, "i");
-  const usedIds = new Set(products.map((product) => String(product.id || "").trim().toUpperCase()));
-  const highestNumber = products.reduce((highest, product) => {
-    const match = String(product.id || "").trim().match(idPattern);
-    return match ? Math.max(highest, Number(match[1])) : highest;
-  }, 0);
-  let number = highestNumber + 1;
-  let candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
-
-  while (usedIds.has(candidate.toUpperCase())) {
-    number += 1;
-    candidate = `${prefix}${String(number).padStart(width, "0")}${suffix}`;
-  }
-
-  return candidate;
+function nextAutomaticProductId(products = [], _format = "") {
+  return descriptiveProductSku({}, products.map((product) => product.id));
 }
 
 function renderProductImage(product) {
@@ -426,6 +425,7 @@ function renderStockProductModal(state, permissions) {
   if (!permissions.canManageProducts && !permissions.canAddStock) return "";
 
   const moneySymbol = currencySymbolFor(state.client);
+  const requiresApproval = currentUserRole(state) === "store_keeper";
 
   return `
     <div id="stock-product-modal" class="stock-modal-backdrop" ${stockEntrySession.open ? "" : "hidden"}>
@@ -433,7 +433,7 @@ function renderStockProductModal(state, permissions) {
         <header class="stock-modal-header">
           <div>
             <span class="eyebrow">Stock record</span>
-            <h2 id="stock-product-modal-title">${stockEntrySession.editingProductId ? "Update stock" : "Add stock"}</h2>
+            <h2 id="stock-product-modal-title">${stockEntrySession.editingProductId ? "Update stock" : requiresApproval ? "Request stock addition" : "Add stock"}</h2>
           </div>
           ${textButton({
             iconName: "x",
@@ -483,9 +483,9 @@ function renderStockProductModal(state, permissions) {
           <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products, state.client?.skuFormat))}" readonly required>
         </label>
         <label class="field">
-          <span>Category</span>
+          <span>Stock category</span>
           <select name="stockCategory" required>
-            ${state.stockCategories.map((category) => `
+            ${availableStockCategories(state).map((category) => `
               <option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>
             `).join("")}
           </select>
@@ -548,8 +548,9 @@ function renderStockProductModal(state, permissions) {
         </label>
         <div class="field span-full file-field" id="stock-image-upload-field">
           <span>Stock picture</span>
+          ${requiresApproval ? '<small class="field-help">An Admin or CEO can add the catalogue picture after approval.</small>' : ""}
           <div class="file-upload-row">
-            <input class="file-input sr-only" id="stock-image-input" name="imageFile" type="file" accept="${LOGO_ACCEPT}">
+            <input class="file-input sr-only" id="stock-image-input" name="imageFile" type="file" accept="${LOGO_ACCEPT}" ${requiresApproval ? "disabled" : ""}>
             <label class="file-dropzone" for="stock-image-input">
               <span class="file-upload-icon">${icon("upload")}</span>
               <span class="file-upload-copy">
@@ -568,7 +569,7 @@ function renderStockProductModal(state, permissions) {
           <button class="icon-button stock-wizard-previous" type="button" title="Previous step" aria-label="Previous step" data-stock-step-previous hidden>${icon("arrowRight")}</button>
           <span id="manager-product-message" class="field-error" aria-live="polite"></span>
           <button class="icon-button primary stock-wizard-next" type="button" title="Next step" aria-label="Next step" data-stock-step-next>${icon("arrowRight")}</button>
-          <button class="button primary js-save-stock-entry" type="submit" data-stock-step-save hidden>${icon("check")}<span>Save stock</span></button>
+          <button class="button primary js-save-stock-entry" type="submit" data-stock-step-save hidden>${icon("check")}<span>${requiresApproval ? "Send for approval" : "Save stock"}</span></button>
         </div>
         </div>
       </form>
@@ -577,8 +578,8 @@ function renderStockProductModal(state, permissions) {
   `;
 }
 
-function renderRestockModal(permissions) {
-  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+function renderRestockModal(permissions, role) {
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock || permissions.canAddStock;
   if (!canRestock) return "";
 
   return `
@@ -608,7 +609,7 @@ function renderRestockModal(permissions) {
           <div class="manager-form-actions span-full">
             ${textButton({
               iconName: "plus",
-              label: "Add stock",
+              label: role === "store_keeper" ? "Send for approval" : "Add stock",
               className: "primary",
               type: "submit"
             })}
@@ -690,7 +691,7 @@ function managerRepOptions(state) {
 
 function renderProductCard(product, state, permissions) {
   const health = getStockHealth(product);
-  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock || permissions.canAddStock;
   const canReduceStock = permissions.canManageStockMovements;
   const canManageProducts = permissions.canManageProducts;
   const isFinishedProduct = stockCategoryIdForProduct(product) === FINISHED_PRODUCTS_CATEGORY;
@@ -823,7 +824,7 @@ function stockProductBaseName(product) {
 
 function renderProductListRow(product, state, permissions) {
   const health = getStockHealth(product);
-  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock || permissions.canAddStock;
   const canReduceStock = permissions.canManageStockMovements;
   const canManageProducts = permissions.canManageProducts;
   const stockCategory = stockCategoryIdForProduct(product);
@@ -906,7 +907,7 @@ function cartonStockBreakdown(product) {
 
 function renderStockGridCard(product, state, permissions) {
   const health = getStockHealth(product);
-  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock;
+  const canRestock = permissions.canManageProducts || permissions.canManageStockMovements || permissions.canReconcileStock || permissions.canAddStock;
   const canReduceStock = permissions.canManageStockMovements;
   const canManageProducts = permissions.canManageProducts;
   const stockCategory = stockCategoryIdForProduct(product);
@@ -1155,7 +1156,7 @@ function renderDispatchProductOptions(state, recipientType, selectedProductId = 
     '<option value="">Choose stock item</option>',
     ...dispatchableProducts(state, recipientType).map((product) => `
       <option value="${escapeHtml(product.id)}" ${product.id === selectedProductId ? "selected" : ""}>
-        ${escapeHtml(product.name)} (${formatNumber(product.stock)} available)
+        ${escapeHtml(productSelectionLabel(product))} (${formatNumber(product.stock)} available)
       </option>
     `)
   ].join("");
@@ -1245,6 +1246,18 @@ function renderDispatchForm(state, permissions) {
             <option value="credit">Credit</option>
           </select>
         </label>
+        <label class="field" data-rep-dispatch-arrangement-field>
+          <span>Stock arrangement</span>
+          <select name="dispatchArrangement" required>
+            <option value="stock_transfer">Consignment</option>
+            <option value="rep_purchase">Sales rep purchase</option>
+            <option value="refundable_deposit">Stock deposit</option>
+          </select>
+        </label>
+        <label class="field" data-rep-deposit-field hidden>
+          <span>Stock deposit amount (${escapeHtml(currencySymbolFor(state.client?.currency || "NGN"))})</span>
+          <input name="depositAmount" type="number" min="1" step="0.01" inputmode="decimal" disabled>
+        </label>
         <section class="span-full dispatch-items-builder">
           <header>
             <strong>Products being dispatched</strong>
@@ -1258,8 +1271,8 @@ function renderDispatchForm(state, permissions) {
           </template>
         </section>
         <label class="field">
-          <span>Destination / drop-off point</span>
-          <input name="destination" placeholder="${escapeHtml(destinationPlaceholder("Sales Representative"))}" required>
+          <span>Destination / drop-off point (optional)</span>
+          <input name="destination" placeholder="${escapeHtml(destinationPlaceholder("Sales Representative"))}">
         </label>
         <label class="field">
           <span>Dispatch date</span>
@@ -1345,8 +1358,8 @@ export function renderRecordCorrectionModal(submitLabel = "Send for approval") {
             <small class="field-help" data-correction-package-summary>Enter the corrected quantity to see the exact pieces.</small>
           </label>
           <label class="field span-full">
-            <span>Reason for adjustment</span>
-            <textarea name="reason" rows="3" maxlength="500" placeholder="Explain the mistake and why this quantity should change" required></textarea>
+            <span>Reason for adjustment${isDirectAdjustment ? " (optional)" : ""}</span>
+            <textarea name="reason" rows="3" maxlength="500" placeholder="Explain the mistake and why this quantity should change" ${isDirectAdjustment ? "" : "required"}></textarea>
           </label>
           <div class="manager-form-actions span-full">
             ${textButton({ iconName: "check", label: submitLabel, className: "primary", type: "submit" })}
@@ -1739,6 +1752,41 @@ function renderStockRequestsPage(state) {
   `;
 }
 
+function renderStockAdditionApprovalQueue(state) {
+  const role = currentUserRole(state);
+  if (!["ceo", "admin", "store_keeper"].includes(role)) return "";
+  const requests = [...(state.stockAdditionRequests || [])]
+    .filter((request) => role !== "store_keeper" || !request.requestedByUserId || request.requestedByUserId === state.user?.id)
+    .sort((a, b) => String(b.requestedAt || "").localeCompare(String(a.requestedAt || "")));
+  const visible = requests.filter((request) => request.status === "pending").concat(
+    requests.filter((request) => request.status !== "pending").slice(0, 8)
+  );
+  const rows = visible.map((request) => `
+    <tr data-search-index="${escapeHtml(`${request.id} ${request.productName} ${request.requestedBy} ${request.status}`.toLowerCase())}">
+      <td><strong>${escapeHtml(request.id)}</strong><div class="muted">${request.requestedAt ? formatDate(String(request.requestedAt).slice(0, 10)) : "Not recorded"}</div></td>
+      <td>${request.kind === "restock" ? "Restock" : "New stock record"}</td>
+      <td><strong>${escapeHtml(request.productName || request.productId)}</strong><div class="muted">${escapeHtml(request.productId)}</div></td>
+      <td>${formatNumber(request.quantity || 0)}</td>
+      <td>${escapeHtml(request.requestedBy || "Store Keeper")}</td>
+      <td>${statusPill(request.status || "pending")}${request.reviewNote ? `<div class="muted">${escapeHtml(request.reviewNote)}</div>` : ""}</td>
+      <td>${role === "store_keeper" || request.status !== "pending" ? "" : `<div class="row-actions">
+        ${textButton({ iconName: "check", label: "Approve", className: "primary js-approve-stock-addition", data: { "request-id": request.id } })}
+        ${textButton({ iconName: "x", label: "Reject", className: "warning js-reject-stock-addition", data: { "request-id": request.id } })}
+      </div>`}</td>
+    </tr>
+  `);
+
+  return `
+    <section class="panel stock-addition-approval-queue">
+      ${panelHeader(
+        role === "store_keeper" ? "My stock addition requests" : "Stock additions awaiting approval",
+        role === "store_keeper" ? "Admin or CEO approval is required before stock is added" : "Approve or reject stock submitted by a Store Keeper"
+      )}
+      ${table(["Request", "Type", "Stock item", "Quantity", "Requested by", "Status", "Actions"], rows, role === "store_keeper" ? "You have not submitted any stock additions" : "No stock additions are awaiting approval")}
+    </section>
+  `;
+}
+
 function renderStockHealthPage(state, permissions) {
   const canAddStock = permissions.canManageProducts || permissions.canAddStock;
   const visibleProducts = permissions.canManageProducts
@@ -1746,6 +1794,7 @@ function renderStockHealthPage(state, permissions) {
     : state.products.filter((product) => product.status !== "inactive");
 
   return `
+    ${renderStockAdditionApprovalQueue(state)}
     <section class="panel inventory-layout">
       <div class="toolbar stock-health-toolbar">
         ${panelHeader("Stock health", "Raw materials, finished products, equipment, days remaining, and low-stock warnings")}
@@ -1765,7 +1814,7 @@ function renderStockHealthPage(state, permissions) {
           ${canAddStock
             ? textButton({
                 iconName: "plus",
-                label: "Add stock",
+                label: currentUserRole(state) === "store_keeper" ? "Request stock" : "Add stock",
                 className: "primary js-open-stock-modal"
               })
             : ""}
@@ -1773,7 +1822,7 @@ function renderStockHealthPage(state, permissions) {
             <span>Stock type</span>
             <select id="inventory-category-filter">
               <option value="all">All stock</option>
-              ${state.stockCategories.map((category) => `
+              ${availableStockCategories(state).map((category) => `
                 <option value="${escapeHtml(category.id)}">${escapeHtml(category.name)}</option>
               `).join("")}
             </select>
@@ -1919,7 +1968,7 @@ function renderBatchMaterialRow(rawMaterials) {
         <span>Raw material</span>
         <select name="batchMaterialId">
           <option value="">Choose material</option>
-          ${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
+          ${rawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(productSelectionLabel(product))} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
         </select>
       </label>
       <label class="field">
@@ -2031,7 +2080,7 @@ function renderRawMaterialSaleModal(state) {
           <span>Raw material</span>
           <select name="productId" data-raw-sale-product required>
             <option value="">Choose raw material</option>
-            ${saleableRawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(product.name)} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
+            ${saleableRawMaterials.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(productSelectionLabel(product))} - ${formatNumber(product.stock)} ${escapeHtml(productUnit(product))} available</option>`).join("")}
           </select>
         </label>
         <label class="field">
@@ -2094,7 +2143,7 @@ export function renderInventory({ state }) {
       ${renderStockSubtabs(activeTabId, permissions, state)}
       ${renderStockTabPage({ activeTabId, state, permissions })}
       ${renderStockProductModal(state, permissions)}
-      ${renderRestockModal(permissions)}
+      ${renderRestockModal(permissions, currentUserRole(state))}
       ${renderStockReductionModal(permissions)}
       ${renderAssignmentDetailsModal()}
       ${renderProductionTraceabilityModal()}
@@ -2186,6 +2235,10 @@ export function bindInventory({ root, store, signal }) {
   const dispatchOtherRecipient = dispatchForm ? qs("[data-dispatch-recipient-other]", dispatchForm) : null;
   const dispatchPaymentField = dispatchForm ? qs("[data-dispatch-payment-field]", dispatchForm) : null;
   const dispatchPaymentSelect = dispatchForm ? qs('select[name="paymentType"]', dispatchForm) : null;
+  const dispatchArrangementField = dispatchForm ? qs("[data-rep-dispatch-arrangement-field]", dispatchForm) : null;
+  const dispatchArrangementSelect = dispatchForm ? qs('select[name="dispatchArrangement"]', dispatchForm) : null;
+  const dispatchDepositField = dispatchForm ? qs("[data-rep-deposit-field]", dispatchForm) : null;
+  const dispatchDepositInput = dispatchForm ? qs('input[name="depositAmount"]', dispatchForm) : null;
   const dispatchDestinationInput = dispatchForm ? qs('input[name="destination"]', dispatchForm) : null;
   const dispatchDateInput = dispatchForm ? qs('input[name="dispatchDate"]', dispatchForm) : null;
   const expectedDeliveryInput = dispatchForm ? qs('input[name="expectedDeliveryAt"]', dispatchForm) : null;
@@ -2424,12 +2477,14 @@ export function bindInventory({ root, store, signal }) {
     const transaction = (store.getState().stockTransactions || []).find((item) => item.id === transactionId);
 
     if (correctionMessage) correctionMessage.textContent = "";
-    if (!transaction || !requestedQuantity || requestedQuantity <= 0 || requestedQuantity === Number(transaction.quantity || 0) || !reason) {
-      if (correctionMessage) correctionMessage.textContent = "Enter a different quantity and explain the reason for the adjustment.";
+    const actorRole = currentUserRole(store.getState());
+    if (!transaction || !requestedQuantity || requestedQuantity <= 0 || requestedQuantity === Number(transaction.quantity || 0) || (actorRole !== "ceo" && !reason)) {
+      if (correctionMessage) correctionMessage.textContent = actorRole === "ceo"
+        ? "Enter a different quantity."
+        : "Enter a different quantity and explain the reason for the adjustment.";
       return;
     }
 
-    const actorRole = currentUserRole(store.getState());
     store.dispatch(actorRole === "ceo" ? {
       type: "DIRECT_RECORD_CORRECTION",
       transactionId,
@@ -3412,8 +3467,27 @@ export function bindInventory({ root, store, signal }) {
     if (event.target !== stockImageInput) captureStockEditDraft();
   });
 
+  function updateDescriptiveSku() {
+    if (!productForm || String(productForm.elements.productId?.value || "").trim()) return;
+    const selectedUnit = String(productForm.elements.sizeUnit?.value || "").trim();
+    const sizeUnit = selectedUnit === "other"
+      ? String(productForm.elements.sizeUnitOther?.value || "").trim()
+      : selectedUnit;
+    productForm.elements.sku.value = descriptiveProductSku({
+      name: productForm.elements.name?.value,
+      sizeValue: productForm.elements.sizeValue?.value,
+      sizeUnit
+    }, store.getState().products.map((product) => product.id));
+  }
+
+  ["name", "sizeValue", "sizeUnit", "sizeUnitOther"].forEach((fieldName) => {
+    productForm?.elements[fieldName]?.addEventListener("input", updateDescriptiveSku);
+    productForm?.elements[fieldName]?.addEventListener("change", updateDescriptiveSku);
+  });
+
   productForm?.addEventListener("submit", async (event) => {
     event.preventDefault();
+    updateDescriptiveSku();
     const formData = new FormData(productForm);
     const sku = String(formData.get("sku") || "").trim();
     const existingProductId = String(formData.get("productId") || "").trim();
@@ -3577,6 +3651,55 @@ export function bindInventory({ root, store, signal }) {
         if (productMessage) productMessage.textContent = `Only ${formatNumber(stockMaterial?.stock || 0)} ${productUnit(stockMaterial || {})} of ${stockMaterial?.name || "this material"} is available.`;
         return;
       }
+    }
+
+    if (currentUserRole(state) === "store_keeper" && !existingProductId) {
+      const stockCategory = String(formData.get("stockCategory") || FINISHED_PRODUCTS_CATEGORY);
+      const hasPendingRequest = (state.stockAdditionRequests || []).some((request) => (
+        request.status === "pending" && request.kind === "new_product" && request.productId === sku
+      ));
+      if (hasPendingRequest) {
+        if (productMessage) productMessage.textContent = "This stock request is already awaiting approval.";
+        return;
+      }
+      const product = {
+        id: sku,
+        name: primaryProductName,
+        productFamily,
+        productType,
+        size: primarySize,
+        sizeValue,
+        sizeUnit,
+        category: availableStockCategories(state).find((category) => category.id === stockCategory)?.name || "Finished Products",
+        stockCategory,
+        unit: sizeUnit,
+        warehouse: stockCategory === RAW_MATERIALS_CATEGORY ? "Raw Materials Store" : stockCategory === "equipment" ? "Equipment Store" : "Finished Products Store",
+        region: "Factory",
+        stock: factoryStockInPieces,
+        reorderPoint: Number(formData.get("reorderPoint") || 0),
+        dailyVelocity: 0,
+        unitCost: Number(formData.get("unitCost") || 0),
+        unitPrice: Number(formData.get("unitPrice") || 0),
+        packagingConversions,
+        packagingPrices,
+        imageUrl: "",
+        imageStorageKey: "",
+        imageRemoteSynced: false,
+        status: String(formData.get("status") || "active"),
+        soldOutAt: factoryStockInPieces > 0 ? "" : todayISO(),
+        equipmentStatus: stockCategory === "equipment" ? "in_stock" : undefined,
+        updatedAt: todayISO()
+      };
+      closeStockModal();
+      store.dispatch({
+        type: "SUBMIT_STOCK_ADDITION_REQUEST",
+        kind: "new_product",
+        productId: sku,
+        quantity: factoryStockInPieces,
+        product,
+        message: "Stock request sent for approval"
+      });
+      return;
     }
 
     let imageStorageKey = String(existingProduct?.imageStorageKey || "");
@@ -3823,13 +3946,27 @@ export function bindInventory({ root, store, signal }) {
       return;
     }
 
-    store.dispatch({
+    const requiresApproval = currentUserRole(store.getState()) === "store_keeper";
+    const hasPendingRequest = requiresApproval && (store.getState().stockAdditionRequests || []).some((request) => (
+      request.status === "pending" && request.kind === "restock" && request.productId === productId
+    ));
+    if (hasPendingRequest) {
+      if (restockMessage) restockMessage.textContent = "This stock request is already awaiting approval.";
+      return;
+    }
+    closeRestockModal();
+    store.dispatch(requiresApproval ? {
+      type: "SUBMIT_STOCK_ADDITION_REQUEST",
+      kind: "restock",
+      productId,
+      quantity,
+      message: "Stock request sent for approval"
+    } : {
       type: "RESTOCK_PRODUCT",
       productId,
       quantity,
       message: "Stock quantity added"
     });
-    closeRestockModal();
   });
 
   reduceStockForm?.addEventListener("submit", (event) => {
@@ -3949,13 +4086,29 @@ export function bindInventory({ root, store, signal }) {
   }
 
   function syncDispatchPaymentField() {
-    if (!dispatchRecipientType || !dispatchPaymentField || !dispatchPaymentSelect) return;
-    const isInternal = dispatchRecipientType.value.toLowerCase().includes("internal");
-    const isWalkIn = dispatchRecipientType.value.toLowerCase().includes("walk-in") || dispatchRecipientType.value.toLowerCase().includes("walk in");
-    dispatchPaymentField.hidden = isInternal || isWalkIn;
-    dispatchPaymentSelect.disabled = isInternal || isWalkIn;
-    dispatchPaymentSelect.required = !isInternal && !isWalkIn;
-    if (isInternal || isWalkIn) dispatchPaymentSelect.value = "cash";
+    if (!dispatchRecipientType) return;
+    const recipientType = dispatchRecipientType.value.toLowerCase();
+    const isInternal = recipientType.includes("internal");
+    const isWalkIn = recipientType.includes("walk-in") || recipientType.includes("walk in");
+    const isRepresentative = recipientType.includes("representative");
+    if (dispatchPaymentField && dispatchPaymentSelect) {
+      dispatchPaymentField.hidden = isInternal || isWalkIn || isRepresentative;
+      dispatchPaymentSelect.disabled = isInternal || isWalkIn || isRepresentative;
+      dispatchPaymentSelect.required = !isInternal && !isWalkIn && !isRepresentative;
+      if (isInternal || isWalkIn || isRepresentative) dispatchPaymentSelect.value = "cash";
+    }
+    if (dispatchArrangementField && dispatchArrangementSelect) {
+      dispatchArrangementField.hidden = !isRepresentative;
+      dispatchArrangementSelect.disabled = !isRepresentative;
+      dispatchArrangementSelect.required = isRepresentative;
+    }
+    const recordsDeposit = isRepresentative && dispatchArrangementSelect?.value === "refundable_deposit";
+    if (dispatchDepositField && dispatchDepositInput) {
+      dispatchDepositField.hidden = !recordsDeposit;
+      dispatchDepositInput.disabled = !recordsDeposit;
+      dispatchDepositInput.required = recordsDeposit;
+      if (!recordsDeposit) dispatchDepositInput.value = "";
+    }
   }
 
   updateDispatchRecipientOptions();
@@ -3980,6 +4133,7 @@ export function bindInventory({ root, store, signal }) {
     updateDispatchProductOptions();
     syncDispatchPaymentField();
   });
+  dispatchArrangementSelect?.addEventListener("change", syncDispatchPaymentField);
   dispatchRecipientSelect?.addEventListener("change", updateOtherRecipientField);
   addDispatchItemButton?.addEventListener("click", () => {
     if (!dispatchItemList || !dispatchItemTemplate) return;
@@ -4022,7 +4176,16 @@ export function bindInventory({ root, store, signal }) {
     const recipientType = String(formData.get("recipientType") || "");
     const isInternalDispatch = recipientType.toLowerCase().includes("internal");
     const isWalkInDispatch = recipientType.toLowerCase().includes("walk-in") || recipientType.toLowerCase().includes("walk in");
-    const paymentType = isInternalDispatch ? "none" : isWalkInDispatch ? "cash" : String(formData.get("paymentType") || "");
+    const isRepresentativeDispatch = recipientType.toLowerCase().includes("representative");
+    const dispatchArrangement = isRepresentativeDispatch ? String(formData.get("dispatchArrangement") || "stock_transfer") : "";
+    const depositAmount = dispatchArrangement === "refundable_deposit" ? Number(formData.get("depositAmount") || 0) : 0;
+    const paymentType = isInternalDispatch
+      ? "none"
+      : isWalkInDispatch
+        ? "cash"
+        : isRepresentativeDispatch
+          ? dispatchArrangement === "rep_purchase" ? "cash" : dispatchArrangement === "refundable_deposit" ? "deposit" : "none"
+          : String(formData.get("paymentType") || "");
     const recipientChoice = String(formData.get("recipientNameChoice") || "").trim();
     const otherRecipient = String(formData.get("recipientNameOther") || "").trim();
     const recipientName = recipientChoice === "__other__" ? otherRecipient : recipientChoice;
@@ -4032,8 +4195,10 @@ export function bindInventory({ root, store, signal }) {
 
     if (message) message.textContent = "";
 
-    if (!items.length || items.some((item) => !item.productId || !item.packagingQuantity || item.packagingQuantity <= 0 || !item.quantity || item.quantity <= 0) || !recipientName || !formData.get("destination") || !dispatchDate || !expectedDeliveryAt || (!isInternalDispatch && !paymentType)) {
-      if (message) message.textContent = "Complete every product, quantity, recipient, payment method, destination, and delivery date.";
+    if (!items.length || items.some((item) => !item.productId || !item.packagingQuantity || item.packagingQuantity <= 0 || !item.quantity || item.quantity <= 0) || !recipientName || !dispatchDate || !expectedDeliveryAt || (!isInternalDispatch && !paymentType) || (dispatchArrangement === "refundable_deposit" && (!Number.isFinite(depositAmount) || depositAmount <= 0))) {
+      if (message) message.textContent = dispatchArrangement === "refundable_deposit"
+        ? "Enter the stock deposit amount and complete the required dispatch details."
+        : "Complete every product, quantity, recipient, payment method, and delivery date.";
       return;
     }
 
@@ -4078,6 +4243,8 @@ export function bindInventory({ root, store, signal }) {
       recipientType,
       recipientName,
       paymentType,
+      dispatchArrangement,
+      depositAmount,
       destination: formData.get("destination"),
       dispatchDate,
       expectedDeliveryAt,
@@ -4105,6 +4272,35 @@ export function bindInventory({ root, store, signal }) {
   qsa(".js-restock-product", root).forEach((button) => {
     button.addEventListener("click", () => {
       openRestockModal(button.dataset.productId);
+    });
+  });
+
+  qsa(".js-approve-stock-addition", root).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const request = (store.getState().stockAdditionRequests || []).find((item) => item.id === button.dataset.requestId);
+      if (!request) return;
+      const approved = await confirmActionDialog({
+        title: "Approve stock addition?",
+        message: `${request.productName} will be added to live factory stock.`,
+        confirmLabel: "Approve stock"
+      });
+      if (!approved) return;
+      store.dispatch({ type: "APPROVE_STOCK_ADDITION_REQUEST", requestId: request.id, message: "Stock addition approved" });
+    });
+  });
+
+  qsa(".js-reject-stock-addition", root).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const note = await requestTextDialog({
+        title: "Reject stock addition?",
+        message: "Give the Store Keeper a short reason for rejecting this stock addition.",
+        label: "Reason",
+        placeholder: "Explain what needs to change",
+        confirmLabel: "Reject request",
+        tone: "danger"
+      });
+      if (note === null) return;
+      store.dispatch({ type: "REJECT_STOCK_ADDITION_REQUEST", requestId: button.dataset.requestId, note, message: "Stock addition rejected" });
     });
   });
 

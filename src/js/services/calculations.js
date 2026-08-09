@@ -65,7 +65,7 @@ export function isRepresentativeSellThroughInvoice(invoice, state = {}) {
   if (
     invoice.financialImpact === false ||
     invoice.accountingTreatment === "sell_through_only" ||
-    invoice.documentType === "sales_receipt"
+    ["sales_receipt", "representative_customer_receipt", "representative_customer_invoice"].includes(invoice.documentType)
   ) return true;
 
   const order = (state.orders || []).find((item) => item.id === invoice.orderId);
@@ -91,6 +91,60 @@ export function isFactoryDispatchToRepresentative(order, state = {}) {
     (order.dispatchId && assignment.dispatchId === order.dispatchId) ||
     transactionIds.has(String(assignment.transactionId || ""))
   ));
+}
+
+export function representativeDispatchArrangement(record, state = {}) {
+  const explicitArrangement = normalizedValue(record?.dispatchArrangement || record?.representativeDispatchArrangement);
+  if (["rep_purchase", "refundable_deposit", "stock_transfer"].includes(explicitArrangement)) {
+    return explicitArrangement;
+  }
+
+  const order = record?.source === "factory_dispatch"
+    ? record
+    : (state.orders || []).find((item) => (
+        (record?.orderId && item.id === record.orderId) ||
+        (record?.dispatchId && item.dispatchId === record.dispatchId)
+      ));
+  const orderArrangement = normalizedValue(order?.dispatchArrangement || order?.representativeDispatchArrangement);
+  if (["rep_purchase", "refundable_deposit", "stock_transfer"].includes(orderArrangement)) {
+    return orderArrangement;
+  }
+
+  return "stock_transfer";
+}
+
+export function isRepresentativeStockPurchaseOrder(order, state = {}) {
+  return isFactoryDispatchToRepresentative(order, state) && representativeDispatchArrangement(order, state) === "rep_purchase";
+}
+
+export function representativeSellThroughFinancialFactor(transaction, state) {
+  if (!isRepresentativeSellThroughTransaction(transaction)) return 1;
+  const allocations = Array.isArray(transaction.assignmentAllocations)
+    ? transaction.assignmentAllocations.filter((allocation) => allocation?.assignmentId && Number(allocation.quantity || 0) > 0)
+    : [];
+  const assignmentMap = new Map((state.stockAssignments || []).map((assignment) => [String(assignment.id || ""), assignment]));
+
+  if (allocations.length) {
+    const allocatedTotal = allocations.reduce((total, allocation) => total + Number(allocation.quantity || 0), 0);
+    const factorySaleQuantity = allocations.reduce((total, allocation) => {
+      const assignment = assignmentMap.get(String(allocation.assignmentId || ""));
+      return representativeDispatchArrangement(assignment, state) === "rep_purchase"
+        ? total
+        : total + Number(allocation.quantity || 0);
+    }, 0);
+    return allocatedTotal ? Math.max(0, Math.min(1, factorySaleQuantity / allocatedTotal)) : 1;
+  }
+
+  const assignmentIds = linkedAssignmentIds(transaction);
+  if (!assignmentIds.length) return 1;
+  const linkedAssignments = assignmentIds.map((id) => assignmentMap.get(id)).filter(Boolean);
+  return linkedAssignments.length && linkedAssignments.every((assignment) => (
+    representativeDispatchArrangement(assignment, state) === "rep_purchase"
+  )) ? 0 : 1;
+}
+
+export function isRepresentativePurchasedStockSellThroughTransaction(transaction, state = {}) {
+  return isRepresentativeSellThroughTransaction(transaction) && representativeSellThroughFinancialFactor(transaction, state) === 0;
 }
 
 function linkedAssignmentIds(transaction) {
@@ -148,7 +202,7 @@ export function getReturnableCustomerChoices(state, {
 }
 
 export function stockCategoryIdForProduct(product) {
-  const category = String(product.stockCategory || product.category || "").toLowerCase();
+  const category = String(product?.stockCategory || product?.category || "").toLowerCase();
 
   if (category.includes("raw") || category.includes("packaging")) return "raw_materials";
   if (category.includes("equipment")) return "equipment";
@@ -173,6 +227,54 @@ function marginPercent(revenue, profit) {
   return revenue ? (Number(profit || 0) / Number(revenue || 0)) * 100 : 0;
 }
 
+function nonNegativeAmount(value) {
+  return Math.max(0, Number(value || 0));
+}
+
+function deductionAmount(record, grossSales, amountKeys, percentKeys = []) {
+  const explicitKey = amountKeys.find((key) => Number.isFinite(Number(record?.[key])) && Number(record?.[key]) > 0);
+  if (explicitKey) return nonNegativeAmount(record[explicitKey]);
+
+  const percentKey = percentKeys.find((key) => Number.isFinite(Number(record?.[key])) && Number(record?.[key]) > 0);
+  return percentKey ? grossSales * Math.min(100, nonNegativeAmount(record[percentKey])) / 100 : 0;
+}
+
+function saleDeductions(record, grossSales) {
+  const discounts = deductionAmount(record, grossSales, ["discountAmount", "discount"], ["discountPercent"]);
+  const otherDeductions = deductionAmount(
+    record,
+    grossSales,
+    ["otherDeductions", "otherDeductionAmount", "allowanceAmount"]
+  );
+
+  return { discounts, otherDeductions };
+}
+
+export function summarizeSalesLines(lines = []) {
+  return (lines || []).reduce((summary, line) => {
+    const revenue = Number(line.netSales ?? line.revenue ?? 0);
+    const returns = nonNegativeAmount(line.returnAmount);
+    const discounts = nonNegativeAmount(line.discountAmount);
+    const otherDeductions = nonNegativeAmount(line.otherDeductions);
+    const grossSales = Number.isFinite(Number(line.grossSales))
+      ? nonNegativeAmount(line.grossSales)
+      : Math.max(0, revenue) + discounts + otherDeductions;
+
+    summary.grossSales += grossSales;
+    summary.returns += returns;
+    summary.discounts += discounts;
+    summary.otherDeductions += otherDeductions;
+    summary.netSales += revenue;
+    return summary;
+  }, {
+    grossSales: 0,
+    returns: 0,
+    discounts: 0,
+    otherDeductions: 0,
+    netSales: 0
+  });
+}
+
 function getOrderRouteMap(routes = []) {
   const routeMap = new Map();
 
@@ -191,29 +293,36 @@ export function getFinancialSalesLines(state) {
   const routeMap = getOrderRouteMap(state.routes || []);
   const orderLines = (state.orders || [])
     .filter((order) => order.source !== "quick_sale")
-    .filter((order) => !isRepresentativeSellThroughOrder(order, state))
+    .filter((order) => !isFactoryDispatchToRepresentative(order, state) || isRepresentativeStockPurchaseOrder(order, state))
     .flatMap((order) => {
       const route = routeMap.get(order.id);
       const retailer = retailerMap.get(order.retailerId);
+      const representativePurchase = isRepresentativeStockPurchaseOrder(order, state);
 
       return (order.items || []).map((item, itemIndex) => {
         if (item.financeRevenueDeleted) return null;
         const product = productMap.get(item.productId);
         const quantity = Number(item.quantity || 0);
-        const revenue = Number(item.lineAmount ?? (quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0)));
+        const grossSales = nonNegativeAmount(item.grossAmount ?? item.lineAmount ?? (quantity * Number(item.unitPrice ?? item.unitPriceAtSale ?? product?.unitPrice ?? 0)));
+        const { discounts, otherDeductions } = saleDeductions(item, grossSales);
+        const revenue = Number(item.netAmount ?? (grossSales - discounts - otherDeductions));
         const cost = quantity * Number(item.unitCost ?? item.unitCostAtSale ?? product?.unitCost ?? 0);
         const profit = revenue - cost;
 
         return {
           id: `${order.id}-${item.productId}-${item.packagingType || "piece"}-${itemIndex}`,
           recordId: order.id,
-          source: "Sales order",
+          source: representativePurchase ? "Sales rep purchase" : "Sales order",
           date: dateOnly(order.createdAt || order.updatedAt || order.dueAt),
           productId: item.productId,
           productName: item.productName || product?.name || "Unknown product",
           repName: route?.driver || order.repName || "Unassigned",
           customerName: retailer?.name || order.customerName || "Unknown customer",
           quantity,
+          grossSales,
+          discountAmount: discounts,
+          otherDeductions,
+          netSales: revenue,
           revenue,
           cost,
           profit,
@@ -231,22 +340,35 @@ export function getFinancialSalesLines(state) {
       const type = String(transaction.type || "").toLowerCase();
       return (
         (type === "sale" || type === "return") &&
-        !transaction.financeRevenueDeleted &&
-        !isRepresentativeSellThroughTransaction(transaction)
+        !transaction.financeRevenueDeleted
       );
     })
     .map((transaction) => {
       const product = productMap.get(transaction.productId);
       const type = String(transaction.type || "").toLowerCase();
       const isReturn = type === "return";
-      const quantity = Number(transaction.quantity || 0);
+      const financialFactor = representativeSellThroughFinancialFactor(transaction, state);
+      if (financialFactor <= 0) return null;
+      const quantity = Number(transaction.quantity || 0) * financialFactor;
       const signedQuantity = isReturn ? -quantity : quantity;
-      const grossAmount = Number(transaction.amount || quantity * Number(product?.unitPrice || 0));
-      const revenue = isReturn ? -grossAmount : grossAmount;
+      const fallbackAmount = Number(transaction.quantity || 0) * Number(product?.unitPrice || 0);
+      const originalGrossAmount = Number(transaction.grossAmount ?? transaction.amount ?? fallbackAmount);
+      const grossAmount = Number(transaction.amount ?? fallbackAmount) * financialFactor;
+      const grossSales = isReturn ? 0 : nonNegativeAmount(originalGrossAmount * financialFactor);
+      const originalDeductions = isReturn ? { discounts: 0, otherDeductions: 0 } : saleDeductions(transaction, originalGrossAmount);
+      const discounts = originalDeductions.discounts * financialFactor;
+      const otherDeductions = originalDeductions.otherDeductions * financialFactor;
+      const revenue = isReturn
+        ? -nonNegativeAmount(grossAmount)
+        : Number(transaction.netAmount ?? (grossSales - discounts - otherDeductions));
       const cost = signedQuantity * Number(transaction.unitCost ?? transaction.unitCostAtSale ?? product?.unitCost ?? 0);
       const profit = revenue - cost;
       const paymentType = transaction.paymentType || (isReturn ? "return" : "cash");
       const isCredit = String(paymentType || "").toLowerCase().includes("credit");
+      const isTrackedCash = ["cash", "paid", "card", "transfer", "bank transfer", "pos"].some((value) => (
+        String(paymentType || "").toLowerCase().includes(value)
+      ));
+      const isRepresentativeSellThrough = isRepresentativeSellThroughTransaction(transaction);
       const isFactoryRawMaterialSale = (
         !isReturn &&
         stockCategoryIdForProduct(product) === "raw_materials" &&
@@ -260,31 +382,40 @@ export function getFinancialSalesLines(state) {
           ? "Customer return"
           : isFactoryRawMaterialSale
             ? "Factory raw-material sale"
-            : "Rep quick sale",
+            : isRepresentativeSellThrough
+              ? "Representative customer sale"
+              : "Direct customer sale",
         date: dateOnly(transaction.date || transaction.createdAt),
         productId: transaction.productId,
         productName: transaction.productName || product?.name || "Unknown product",
         repName: transaction.recordedBy || "Sales Representative",
         customerName: transaction.partyName || "Customer",
         quantity: signedQuantity,
+        grossSales,
+        discountAmount: discounts,
+        otherDeductions,
+        netSales: revenue,
         revenue,
         cost,
         profit,
         margin: marginPercent(revenue, profit),
         status: isReturn ? "returned" : "sold",
         paymentType,
-        cashAmount: !isReturn && !isCredit ? grossAmount : 0,
-        creditAmount: !isReturn && isCredit ? grossAmount : 0,
-        returnAmount: isReturn ? grossAmount : 0
+        cashAmount: !isReturn && !isCredit && isTrackedCash ? revenue : 0,
+        creditAmount: !isReturn && isCredit ? revenue : 0,
+        returnAmount: isReturn ? nonNegativeAmount(grossAmount) : 0
       };
-    });
+    })
+    .filter(Boolean);
 
   return [...orderLines, ...transactionLines];
 }
 
 export function calculateMetrics(state) {
   const productMap = getProductMap(state.products);
-  const financialOrders = state.orders.filter((order) => !isRepresentativeSellThroughOrder(order, state));
+  const financialOrders = state.orders
+    .filter((order) => !isRepresentativeSellThroughOrder(order, state))
+    .filter((order) => !isFactoryDispatchToRepresentative(order, state) || isRepresentativeStockPurchaseOrder(order, state));
   const orderRevenue = financialOrders.reduce((total, order) => total + getOrderTotal(order, productMap), 0);
   const deliveredOrders = financialOrders.filter((order) => order.status === "delivered").length;
   const openOrders = financialOrders.filter((order) => order.status !== "delivered").length;
@@ -292,6 +423,10 @@ export function calculateMetrics(state) {
   const activeRoutes = state.routes.filter((route) => ["scheduled", "in_transit"].includes(route.status)).length;
   const receivables = state.invoices
     .filter((invoice) => !isRepresentativeSellThroughInvoice(invoice, state))
+    .filter((invoice) => {
+      const order = state.orders.find((item) => item.id === invoice.orderId);
+      return !isFactoryDispatchToRepresentative(order, state) || isRepresentativeStockPurchaseOrder(order, state);
+    })
     .filter((invoice) => invoice.status !== "paid")
     .reduce((total, invoice) => total + invoice.amount, 0);
 
@@ -522,8 +657,15 @@ export function calculateVisionMetrics(state) {
   const transactions = state.stockTransactions || [];
   const orders = state.orders || [];
   const invoices = state.invoices || [];
-  const financialOrders = orders.filter((order) => !isRepresentativeSellThroughOrder(order, state));
-  const financialInvoices = invoices.filter((invoice) => !isRepresentativeSellThroughInvoice(invoice, state));
+  const financialOrders = orders
+    .filter((order) => !isRepresentativeSellThroughOrder(order, state))
+    .filter((order) => !isFactoryDispatchToRepresentative(order, state) || isRepresentativeStockPurchaseOrder(order, state));
+  const financialInvoices = invoices
+    .filter((invoice) => !isRepresentativeSellThroughInvoice(invoice, state))
+    .filter((invoice) => {
+      const sourceOrder = orders.find((order) => order.id === invoice.orderId);
+      return !isFactoryDispatchToRepresentative(sourceOrder, state) || isRepresentativeStockPurchaseOrder(sourceOrder, state);
+    });
   const creditLimits = state.creditLimits || [];
   const productMap = getProductMap(products);
   const retailerMap = getRetailerMap(state.retailers || []);
@@ -659,7 +801,9 @@ export function buildRepLedger(state) {
 
 export function buildRegionalSummary(state) {
   const productMap = getProductMap(state.products);
-  const regionTotals = state.orders.reduce((summary, order) => {
+  const regionTotals = state.orders
+    .filter((order) => !isFactoryDispatchToRepresentative(order, state) || isRepresentativeStockPurchaseOrder(order, state))
+    .reduce((summary, order) => {
     summary[order.region] = (summary[order.region] || 0) + getOrderTotal(order, productMap);
     return summary;
   }, {});
@@ -746,6 +890,7 @@ export function getOrdersWithTotals(state) {
 
   return state.orders
     .filter((order) => !isRepresentativeSellThroughOrder(order, state))
+    .filter((order) => !isFactoryDispatchToRepresentative(order, state) || isRepresentativeStockPurchaseOrder(order, state))
     .map((order) => ({
     ...order,
     status: effectiveOrderStatus(order),

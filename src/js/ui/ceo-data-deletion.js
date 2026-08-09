@@ -1,5 +1,5 @@
 import { deleteCeoWorkspaceData } from "../services/backend.js";
-import { currentUserRole } from "../services/rbac.js";
+import { currentUserRole } from "../services/rbac.js?v=20260801d";
 import { isBackendConfigured } from "../services/supabase-client.js";
 import { confirmActionDialog } from "./action-dialog.js";
 import { escapeHtml, qs, qsa } from "./dom.js";
@@ -81,7 +81,10 @@ export function ceoDeleteControls({ scope }) {
 }
 
 function selectedIds(root, scope) {
-  return qsa(`[data-ceo-delete-item="${scope}"]:checked`, root).map((checkbox) => checkbox.value);
+  return qsa(`[data-ceo-delete-item="${scope}"]:checked`, root)
+    .flatMap((checkbox) => String(checkbox.value || "").split("|"))
+    .map((id) => id.trim())
+    .filter(Boolean);
 }
 
 async function confirmDeletion(scope, ids) {
@@ -117,7 +120,8 @@ export function bindCeoDataDeletion({ root, store, signal }) {
       if (deleteSelected) {
         deleteSelected.disabled = selected.length === 0;
         const label = qs("span", deleteSelected);
-        if (label) label.textContent = selected.length ? `Delete (${selected.length})` : "Delete";
+        const selectedRecordCount = selectedIds(root, scope).length;
+        if (label) label.textContent = selectedRecordCount ? `Delete (${selectedRecordCount})` : "Delete";
       }
       if (selectAll) {
         selectAll.checked = checkboxes.length > 0 && selected.length === checkboxes.length;

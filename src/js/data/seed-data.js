@@ -11,9 +11,12 @@ const seedData = {
   salesReports: [],
   creditLimitHistory: [],
   productionBatches: [],
+  productionPlans: [],
+  productionIssues: [],
   offlineSalesQueue: [],
   correctionRequests: [],
   stockRequests: [],
+  stockAdditionRequests: [],
   purchaseOrders: [],
   procurementOrders: [],
   backend: {

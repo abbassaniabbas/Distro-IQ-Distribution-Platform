@@ -1,4 +1,4 @@
-import { normalizeRole, roleLabel } from "./rbac.js";
+import { normalizeRole, roleLabel } from "./rbac.js?v=20260801d";
 
 export function normalized(value) {
   return String(value || "").trim().toLowerCase();

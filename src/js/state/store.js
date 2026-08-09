@@ -1,5 +1,5 @@
-import seedData from "../data/seed-data.js";
-import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260722";
+import seedData from "../data/seed-data.js?v=20260801d";
+import { createActivityLog, getCurrentActor } from "../services/activity.js?v=20260805b";
 import {
   assignmentOutstanding,
   getReturnableCustomerChoices,
@@ -9,10 +9,10 @@ import {
   isRepresentativeSellThroughTransaction,
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260722";
-import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js";
+} from "../services/calculations.js?v=20260804i";
+import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260805g";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
-import { createAccountInvite, createClientProfile, createId, nextFormattedId } from "../services/tenant.js";
+import { createAccountInvite, createClientProfile, createId, descriptiveProductSku, nextFormattedId } from "../services/tenant.js?v=20260805c";
 import { effectivePiecePrice, packagingLineAmount, packagingQuantityLabel, packagingUnitPrice, quantityInPieces } from "../services/packaging.js";
 
 function clone(value) {
@@ -254,7 +254,7 @@ function orderFromSaleTransaction(transaction, state) {
   const customer = (state.retailers || []).find((item) => item.id === transaction.customerId);
   const product = (state.products || []).find((item) => item.id === transaction.productId);
   const representativeSellThrough = isRepresentativeSellThroughTransaction(transaction);
-  const paymentType = representativeSellThrough ? "not_tracked" : transaction.paymentType || "cash";
+  const paymentType = transaction.paymentType || "cash";
   const paymentLabel = String(paymentType).toLowerCase();
   const date = String(transaction.date || transaction.createdAt || todayISO()).slice(0, 10);
   const quantity = Number(transaction.quantity || 0);
@@ -267,7 +267,9 @@ function orderFromSaleTransaction(transaction, state) {
     source: "quick_sale",
     financialImpact: !representativeSellThrough,
     accountingTreatment: representativeSellThrough ? "sell_through_only" : "factory_revenue",
-    documentType: representativeSellThrough ? "sales_receipt" : "invoice",
+    documentType: representativeSellThrough
+      ? (paymentLabel.includes("credit") ? INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE : INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT)
+      : INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE,
     transactionId: transaction.id,
     retailerId: customer?.id || transaction.customerId || "",
     customerName: customer?.name || transaction.partyName || "Walk-in customer",
@@ -276,8 +278,8 @@ function orderFromSaleTransaction(transaction, state) {
     priority: "Normal",
     status: "delivered",
     paymentType,
-    paymentStatus: representativeSellThrough ? "recorded" : paymentLabel.includes("credit") ? "open" : "paid",
-    dueAt: date,
+    paymentStatus: paymentLabel.includes("credit") ? "open" : "paid",
+    dueAt: dateOnly(transaction.dueAt) || date,
     createdAt: date,
     updatedAt: date,
     repName: transaction.recordedBy || "Sales Representative",
@@ -359,10 +361,13 @@ function ensureStateShape(value) {
     salesReports: mergeSeedRecords(state.salesReports, seedData.salesReports),
     creditLimitHistory: mergeSeedRecords(state.creditLimitHistory, seedData.creditLimitHistory),
     productionBatches: Array.isArray(state.productionBatches) ? state.productionBatches : [],
+    productionPlans: Array.isArray(state.productionPlans) ? state.productionPlans : [],
+    productionIssues: Array.isArray(state.productionIssues) ? state.productionIssues : [],
     offlineSalesQueue: Array.isArray(state.offlineSalesQueue) ? state.offlineSalesQueue : [],
     packagingChangeRequests: Array.isArray(state.packagingChangeRequests) ? state.packagingChangeRequests : [],
     correctionRequests: Array.isArray(state.correctionRequests) ? state.correctionRequests : [],
     stockRequests: Array.isArray(state.stockRequests) ? state.stockRequests : [],
+    stockAdditionRequests: Array.isArray(state.stockAdditionRequests) ? state.stockAdditionRequests : [],
     purchaseOrders: Array.isArray(state.purchaseOrders) ? state.purchaseOrders : [],
     procurementOrders: Array.isArray(state.procurementOrders) ? state.procurementOrders : [],
     retailers: mergeSeedRecords(state.retailers, seedData.retailers),
@@ -438,11 +443,44 @@ function canManageOrderFlow(state) {
   return currentUserRole(state) === "ceo";
 }
 
-function nextInvoiceId(state) {
+function canManageProductionFlow(state) {
+  return ["production_manager", "ceo"].includes(currentUserRole(state));
+}
+
+const INVOICE_TYPES = {
+  FACTORY_CUSTOMER_INVOICE: "factory_customer_invoice",
+  REPRESENTATIVE_CUSTOMER_RECEIPT: "representative_customer_receipt",
+  REPRESENTATIVE_CUSTOMER_INVOICE: "representative_customer_invoice",
+  REPRESENTATIVE_DISPATCH_NOTE: "representative_dispatch_note",
+  REPRESENTATIVE_PURCHASE_RECEIPT: "representative_purchase_receipt",
+  REPRESENTATIVE_DEPOSIT_RECEIPT: "representative_deposit_receipt",
+  REPRESENTATIVE_STOCK_TRANSFER_NOTE: "representative_stock_transfer_note"
+};
+
+function nextInvoiceId(state, documentType = INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE) {
+  const formats = {
+    [INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE]: state.client?.factoryInvoiceFormat || state.client?.invoiceFormat || "FAC-INV-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT]: state.client?.representativeReceiptFormat || "REP-REC-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE]: state.client?.representativeCreditInvoiceFormat || "REP-INV-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_DISPATCH_NOTE]: state.client?.representativeDispatchFormat || "DSP-NOTE-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT]: state.client?.representativePurchaseReceiptFormat || "SRP-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT]: state.client?.representativeDepositReceiptFormat || "DEP-REC-{0000}",
+    [INVOICE_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE]: state.client?.representativeStockTransferFormat || "STK-TRF-{0000}"
+  };
+  const prefixes = {
+    [INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE]: "FAC-INV",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT]: "REP-REC",
+    [INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE]: "REP-INV",
+    [INVOICE_TYPES.REPRESENTATIVE_DISPATCH_NOTE]: "DSP-NOTE",
+    [INVOICE_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT]: "SRP",
+    [INVOICE_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT]: "DEP-REC",
+    [INVOICE_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE]: "STK-TRF"
+  };
+
   return nextFormattedId(
-    state.client?.invoiceFormat || "INV-{0000}",
+    formats[documentType] || state.client?.invoiceFormat || "INV-{0000}",
     (state.invoices || []).map((invoice) => invoice.id),
-    "INV"
+    prefixes[documentType] || "INV"
   );
 }
 
@@ -724,6 +762,26 @@ function refreshAssignmentCompletion(state, assignment) {
       });
     }
 
+    const dispatchAssignments = (state.stockAssignments || []).filter((item) => (
+      assignment.dispatchId && item.dispatchId === assignment.dispatchId
+    ));
+    const dispatchReconciled = dispatchAssignments.length > 0 && dispatchAssignments.every((item) => assignmentOutstanding(item) <= 0);
+    const order = dispatchReconciled
+      ? (state.orders || []).find((item) => item.dispatchId === assignment.dispatchId)
+      : null;
+    if (order && order.status !== "delivered") {
+      order.status = "delivered";
+      order.deliveredAt = new Date().toISOString();
+      order.updatedAt = order.deliveredAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "completed",
+        recordType: "order",
+        recordLabel: order.id,
+        summary: `${order.id} automatically delivered after all representative stock was reconciled`
+      });
+    }
+
     return;
   }
 
@@ -750,12 +808,17 @@ function createQuickSaleOrder(state, {
   items = [],
   transactionIds = []
 }) {
-  const recordedPaymentType = financialImpact ? String(paymentType || "cash") : "not_tracked";
+  const recordedPaymentType = String(paymentType || "cash").toLowerCase().includes("credit") ? "credit" : "cash";
   const paymentLabel = recordedPaymentType.toLowerCase();
   const today = dateOnly(saleDate) || todayISO();
   const orderId = createId("ORD");
-  const invoiceId = nextInvoiceId(state);
   const isCreditSale = paymentLabel.includes("credit");
+  const documentType = financialImpact
+    ? INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE
+    : isCreditSale
+      ? INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE
+      : INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_RECEIPT;
+  const invoiceId = nextInvoiceId(state, documentType);
   const customerLimit = (state.creditLimits || []).find((limit) => (
     normalized(limit.partyName) === normalized(customer?.name || customerName)
   ));
@@ -793,7 +856,7 @@ function createQuickSaleOrder(state, {
       source: "quick_sale",
       financialImpact,
       accountingTreatment: financialImpact ? "factory_revenue" : "sell_through_only",
-      documentType: financialImpact ? "invoice" : "sales_receipt",
+      documentType,
       transactionId,
       transactionIds: resolvedTransactionIds,
       invoiceId,
@@ -804,7 +867,7 @@ function createQuickSaleOrder(state, {
       priority: "Normal",
       status: "delivered",
       paymentType: recordedPaymentType,
-      paymentStatus: financialImpact ? (isCreditSale ? "open" : "paid") : "recorded",
+      paymentStatus: isCreditSale ? "open" : "paid",
       dueAt: isCreditSale ? dueAt : today,
       createdAt: today,
       updatedAt: today,
@@ -829,11 +892,11 @@ function createQuickSaleOrder(state, {
       issuedAt: today,
       dueAt: isCreditSale ? dueAt : today,
       amount,
-      status: financialImpact ? (isCreditSale ? "open" : "paid") : "recorded",
+      status: isCreditSale ? "open" : "paid",
       paymentType: recordedPaymentType,
       financialImpact,
       accountingTreatment: financialImpact ? "factory_revenue" : "sell_through_only",
-      documentType: financialImpact ? "invoice" : "sales_receipt",
+      documentType,
       repName,
       repUserId: state.user?.id || "",
       items: invoiceItems
@@ -864,21 +927,36 @@ function createDispatchSalesOrder(state, {
   dispatchDate,
   expectedDeliveryAt,
   paymentType,
+  dispatchArrangement = "stock_transfer",
+  depositAmount = 0,
   staffName,
   repUserId = ""
 }) {
   const customer = findRetailerByName(state, recipientName);
   const dispatchesToRepresentative = String(recipientType || "").toLowerCase().includes("representative");
   const orderId = createId("ORD");
-  const invoiceId = nextInvoiceId(state);
-  const isCredit = String(paymentType || "").toLowerCase().includes("credit");
+  const representativeArrangement = dispatchesToRepresentative && ["rep_purchase", "refundable_deposit", "stock_transfer"].includes(dispatchArrangement)
+    ? dispatchArrangement
+    : dispatchesToRepresentative ? "stock_transfer" : "";
+  const documentType = !dispatchesToRepresentative
+    ? INVOICE_TYPES.FACTORY_CUSTOMER_INVOICE
+    : representativeArrangement === "rep_purchase"
+      ? INVOICE_TYPES.REPRESENTATIVE_PURCHASE_RECEIPT
+      : representativeArrangement === "refundable_deposit"
+        ? INVOICE_TYPES.REPRESENTATIVE_DEPOSIT_RECEIPT
+        : INVOICE_TYPES.REPRESENTATIVE_STOCK_TRANSFER_NOTE;
+  const invoiceId = nextInvoiceId(state, documentType);
+  const isCredit = !dispatchesToRepresentative && String(paymentType || "").toLowerCase().includes("credit");
   const creditLimit = (state.creditLimits || []).find((limit) => (
     normalized(limit.partyName) === normalized(customer?.name || recipientName)
   ));
   const dueDate = new Date(`${dispatchDate}T12:00:00`);
   dueDate.setDate(dueDate.getDate() + Number(creditLimit?.paymentPeriodDays ?? 14));
   const dueAt = isCredit ? dueDate.toISOString().slice(0, 10) : dispatchDate;
-  const amount = items.reduce((total, item) => total + Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0);
+  const stockValue = items.reduce((total, item) => total + Number(item.amount ?? (Number(item.quantity || 0) * Number(item.unitPrice || 0))), 0);
+  const refundableDeposit = representativeArrangement === "refundable_deposit" ? Math.max(0, Number(depositAmount || 0)) : 0;
+  const amount = representativeArrangement === "refundable_deposit" ? refundableDeposit : stockValue;
+  const isFactorySale = !dispatchesToRepresentative || representativeArrangement === "rep_purchase";
   const invoiceItems = items.map((item) => ({
     transactionId: item.transactionId || "",
     productId: item.product.id,
@@ -897,6 +975,12 @@ function createDispatchSalesOrder(state, {
       id: orderId,
       clientId: state.client?.id || "",
       source: "factory_dispatch",
+      documentType,
+      dispatchArrangement: representativeArrangement,
+      depositAmount: refundableDeposit,
+      stockValue,
+      financialImpact: isFactorySale,
+      accountingTreatment: isFactorySale ? "factory_revenue" : representativeArrangement === "refundable_deposit" ? "refundable_deposit" : "representative_custody",
       dispatchId,
       transactionId: transactionIds[0] || "",
       transactionIds,
@@ -908,7 +992,7 @@ function createDispatchSalesOrder(state, {
       priority: "Normal",
       status: "in_transit",
       paymentType,
-      paymentStatus: isCredit ? "open" : "paid",
+      paymentStatus: representativeArrangement === "stock_transfer" ? "recorded" : isCredit ? "open" : "paid",
       creditApplied: isCredit,
       dueAt: expectedDeliveryAt || dispatchDate,
       expectedDeliveryAt: expectedDeliveryAt || dispatchDate,
@@ -937,8 +1021,14 @@ function createDispatchSalesOrder(state, {
       issuedAt: dispatchDate,
       dueAt,
       amount,
-      status: isCredit ? "open" : "paid",
+      stockValue,
+      depositAmount: refundableDeposit,
+      status: representativeArrangement === "stock_transfer" ? "recorded" : isCredit ? "open" : "paid",
       paymentType,
+      documentType,
+      dispatchArrangement: representativeArrangement,
+      financialImpact: isFactorySale,
+      accountingTreatment: isFactorySale ? "factory_revenue" : representativeArrangement === "refundable_deposit" ? "refundable_deposit" : "representative_custody",
       collectedBy: recipientName,
       repName: dispatchesToRepresentative ? recipientName : staffName,
       repUserId: dispatchesToRepresentative ? repUserId : state.user?.id || "",
@@ -1058,9 +1148,9 @@ function reducer(currentState, action) {
       if (!state.client?.id || !action.collections || typeof action.collections !== "object") return state;
       const supportedCollections = new Set([
         "products", "stockCategories", "stockAssignments", "stockTransactions",
-        "productionBatches", "retailers", "orders", "invoices", "salesReports",
+        "productionBatches", "productionPlans", "productionIssues", "retailers", "orders", "invoices", "salesReports",
         "correctionRequests", "stockRequests", "purchaseOrders", "procurementOrders",
-        "routes", "creditLimits", "creditLimitHistory", "activityLogs"
+        "stockAdditionRequests", "routes", "creditLimits", "creditLimitHistory", "activityLogs"
       ]);
       const nextState = { ...state };
 
@@ -1081,6 +1171,10 @@ function reducer(currentState, action) {
               imageRemoteSynced: remoteImageSynced
             };
           });
+          return;
+        }
+        if (collection === "stockCategories") {
+          nextState.stockCategories = mergeSeedRecords(records, seedData.stockCategories);
           return;
         }
         nextState[collection] = clone(records);
@@ -1315,10 +1409,13 @@ function reducer(currentState, action) {
         salesReports: [],
         creditLimitHistory: [],
         productionBatches: [],
+        productionPlans: [],
+        productionIssues: [],
         offlineSalesQueue: [],
         packagingChangeRequests: [],
         correctionRequests: [],
         stockRequests: [],
+        stockAdditionRequests: [],
         purchaseOrders: [],
         procurementOrders: [],
         retailers: [],
@@ -1387,16 +1484,19 @@ function reducer(currentState, action) {
       if (scope !== "factory") return state;
 
       state.products = [];
-      state.stockCategories = [];
+      state.stockCategories = clone(seedData.stockCategories);
       state.stockAssignments = [];
       state.stockTransactions = [];
       state.productionBatches = [];
+      state.productionPlans = [];
+      state.productionIssues = [];
       state.retailers = [];
       state.orders = [];
       state.invoices = [];
       state.salesReports = [];
       state.correctionRequests = [];
       state.stockRequests = [];
+      state.stockAdditionRequests = [];
       state.purchaseOrders = [];
       state.procurementOrders = [];
       state.routes = [];
@@ -1423,9 +1523,15 @@ function reducer(currentState, action) {
         return state;
       }
       if (scope === "invoices") {
+        const linkedOrderIds = new Set((state.invoices || [])
+          .filter((invoice) => selected.has(String(invoice.id || "")))
+          .map((invoice) => String(invoice.orderId || ""))
+          .filter(Boolean));
         state.invoices = (state.invoices || []).filter((invoice) => !selected.has(String(invoice.id || "")));
         state.orders = (state.orders || []).map((order) => (
-          selected.has(`INV-${order.id}`) ? { ...order, invoiceDeleted: true } : order
+          linkedOrderIds.has(String(order.id || "")) || selected.has(`INV-${order.id}`)
+            ? { ...order, invoiceDeleted: true }
+            : order
         ));
         return state;
       }
@@ -1554,7 +1660,7 @@ function reducer(currentState, action) {
     }
 
     case "CREATE_ACCOUNT": {
-      if (!state.client?.id || !["sales_rep", "store_keeper", "admin"].includes(action.payload?.role)) return state;
+      if (!state.client?.id || !["sales_rep", "store_keeper", "production_manager", "production_supervisor", "admin"].includes(action.payload?.role)) return state;
       const { account, invite } = createAccountInvite({
         client: state.client,
         ...action.payload
@@ -1598,7 +1704,7 @@ function reducer(currentState, action) {
         !account ||
         account.userId === state.user?.id ||
         normalizeRole(account.role) === "ceo" ||
-        !["sales_rep", "store_keeper", "admin"].includes(nextRole)
+        !["sales_rep", "store_keeper", "production_manager", "production_supervisor", "admin"].includes(nextRole)
       ) return state;
 
       const previousRole = normalizeRole(account.role);
@@ -2084,6 +2190,637 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "CREATE_PRODUCTION_PLAN": {
+      if (!canManageProductionFlow(state)) return state;
+      const cadence = action.cadence === "weekly" ? "weekly" : "daily";
+      const startDate = dateOnly(action.startDate);
+      const endDate = dateOnly(action.endDate || action.startDate);
+      const lines = (Array.isArray(action.lines) ? action.lines : []).map((line) => {
+        const product = state.products.find((item) => item.id === line.productId);
+        return {
+          productId: String(line.productId || ""),
+          productName: String(product?.name || line.productName || ""),
+          quantity: Math.max(0, Number(line.quantity || 0))
+        };
+      }).filter((line) => line.productId && line.productName && line.quantity > 0);
+      const uniqueProductIds = new Set(lines.map((line) => line.productId));
+      const validProducts = lines.every((line) => state.products.some((product) => (
+        product.id === line.productId &&
+        product.status !== "inactive" &&
+        stockCategoryIdForProduct(product) === "finished_products"
+      )));
+      if (
+        !isValidISODate(startDate) || !isValidISODate(endDate) || endDate < startDate ||
+        !lines.length || uniqueProductIds.size !== lines.length || !validProducts
+      ) return state;
+
+      const plan = {
+        id: createId("PLAN"),
+        clientId: state.client?.id || "",
+        name: String(action.name || `${cadence === "weekly" ? "Weekly" : "Daily"} production plan`).trim().slice(0, 120),
+        cadence,
+        startDate,
+        endDate,
+        lines,
+        team: String(action.team || "Production Team").trim().slice(0, 120),
+        shift: String(action.shift || "Day shift").trim().slice(0, 80),
+        machine: String(action.machine || "Production line").trim().slice(0, 120),
+        notes: String(action.notes || "").trim().slice(0, 500),
+        status: "planned",
+        createdBy: currentActorName(state),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString()
+      };
+      state.productionPlans = [plan, ...(state.productionPlans || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "planned",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        summary: `${plan.createdBy} created ${plan.name} for ${lines.length} product${lines.length === 1 ? "" : "s"}`
+      });
+      return state;
+    }
+
+    case "CREATE_ASSIGNED_PRODUCTION_PLAN": {
+      if (!canManageProductionFlow(state)) return state;
+      const product = state.products.find((item) => item.id === action.productId);
+      const supervisor = (state.accounts || []).find((account) => (
+        account.id === action.supervisorId &&
+        normalizeRole(account.role) === "production_supervisor" &&
+        String(account.status || "").toLowerCase() === "active"
+      ));
+      const productionDate = dateOnly(action.productionDate);
+      const targetQuantity = Number(action.targetQuantity || 0);
+      if (
+        !product ||
+        product.status === "inactive" ||
+        stockCategoryIdForProduct(product) !== "finished_products" ||
+        !supervisor ||
+        !isValidISODate(productionDate) ||
+        !Number.isInteger(targetQuantity) ||
+        targetQuantity <= 0
+      ) return state;
+
+      const createdAt = new Date().toISOString();
+      const plan = {
+        id: createId("PLAN"),
+        clientId: state.client?.id || "",
+        name: String(action.name || `${product.name} production`).trim().slice(0, 120),
+        cadence: "daily",
+        productionDate,
+        startDate: productionDate,
+        endDate: productionDate,
+        lines: [{ productId: product.id, productName: product.name, quantity: targetQuantity }],
+        productId: product.id,
+        productName: product.name,
+        targetQuantity,
+        assignedSupervisorId: supervisor.id,
+        assignedSupervisorUserId: supervisor.userId || "",
+        assignedSupervisorName: supervisor.name,
+        notes: String(action.notes || "").trim().slice(0, 500),
+        status: "planned",
+        batchReference: "",
+        startedAt: "",
+        completedAt: "",
+        submittedAt: "",
+        approvedAt: "",
+        closedAt: "",
+        actualGoodQuantity: 0,
+        quantityDamaged: 0,
+        quantityRejected: 0,
+        variance: -targetQuantity,
+        createdBy: currentActorName(state),
+        createdAt,
+        updatedAt: createdAt
+      };
+      state.productionPlans = [plan, ...(state.productionPlans || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "assigned",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        planId: plan.id,
+        summary: `${plan.createdBy} assigned ${targetQuantity} ${product.name} to ${supervisor.name} for ${productionDate}`,
+        notificationRoles: ["production_supervisor"],
+        notificationUserIds: supervisor.userId ? [supervisor.userId] : [],
+        relatedUserIds: supervisor.userId ? [supervisor.userId] : []
+      });
+      return state;
+    }
+
+    case "START_ASSIGNED_PRODUCTION_PLAN": {
+      if (currentUserRole(state) !== "production_supervisor") return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const actor = getCurrentActor(state);
+      const assignedToActor = plan && (
+        String(plan.assignedSupervisorUserId || "") === String(actor.userId || "") ||
+        normalized(plan.assignedSupervisorName) === normalized(actor.name)
+      );
+      if (!assignedToActor || plan.status !== "planned") return state;
+      const existingReferences = [
+        ...(state.productionBatches || []).map((batch) => batch.reference),
+        ...(state.productionPlans || []).map((item) => item.batchReference)
+      ].filter(Boolean);
+      const startedAt = new Date().toISOString();
+      plan.status = "in_progress";
+      plan.batchReference = nextFormattedId("BAT-{0000}", existingReferences, "BAT");
+      plan.startedAt = startedAt;
+      plan.updatedAt = startedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "started",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        planId: plan.id,
+        summary: `${actor.name} started ${plan.name} as ${plan.batchReference}`,
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
+    case "SUBMIT_SUPERVISOR_BATCH_REPORT": {
+      if (currentUserRole(state) !== "production_supervisor") return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const actor = getCurrentActor(state);
+      const assignedToActor = plan && (
+        String(plan.assignedSupervisorUserId || "") === String(actor.userId || "") ||
+        normalized(plan.assignedSupervisorName) === normalized(actor.name)
+      );
+      const goodQuantity = Number(action.goodQuantity || 0);
+      const damagedQuantity = Number(action.damagedQuantity || 0);
+      const rejectedQuantity = Number(action.rejectedQuantity || 0);
+      const quantities = [goodQuantity, damagedQuantity, rejectedQuantity];
+      const planLine = plan?.lines?.[0];
+      const targetQuantity = Number(plan?.targetQuantity || planLine?.quantity || 0);
+      if (
+        !assignedToActor ||
+        !["in_progress", "flagged"].includes(plan.status) ||
+        quantities.some((quantity) => !Number.isInteger(quantity) || quantity < 0) ||
+        goodQuantity > targetQuantity ||
+        goodQuantity + damagedQuantity + rejectedQuantity <= 0
+      ) return state;
+      const product = state.products.find((item) => item.id === (plan.productId || planLine?.productId));
+      if (!product || stockCategoryIdForProduct(product) !== "finished_products") return state;
+
+      const submittedAt = new Date().toISOString();
+      const variance = goodQuantity - targetQuantity;
+      let batch = (state.productionBatches || []).find((item) => item.planId === plan.id && item.supervisorWorkflow);
+      if (!batch) {
+        batch = {
+          id: createId("BATCH"),
+          clientId: state.client?.id || "",
+          planId: plan.id,
+          reference: plan.batchReference || nextFormattedId("BAT-{0000}", (state.productionBatches || []).map((item) => item.reference), "BAT"),
+          batchDate: plan.productionDate || plan.startDate || todayISO(),
+          finishedProductId: product.id,
+          finishedProductName: product.name,
+          plannedQuantity: targetQuantity,
+          outputUnit: product.unit || "unit",
+          materials: [],
+          supervisorWorkflow: true,
+          recordedBy: actor.name,
+          recordedByUserId: actor.userId || "",
+          createdAt: submittedAt,
+          startedAt: plan.startedAt || submittedAt,
+          transferredAt: ""
+        };
+        state.productionBatches = [batch, ...(state.productionBatches || [])];
+      }
+      batch.quantityProduced = goodQuantity;
+      batch.quantityDamaged = damagedQuantity;
+      batch.quantityRejected = rejectedQuantity;
+      batch.quantityWasted = 0;
+      batch.variance = variance;
+      batch.notes = String(action.notes || "").trim().slice(0, 500);
+      batch.status = "submitted";
+      batch.completedAt = batch.completedAt || submittedAt;
+      batch.submittedAt = submittedAt;
+      batch.resubmittedAt = batch.reviewNote ? submittedAt : batch.resubmittedAt || "";
+      batch.reviewNote = "";
+      batch.reviewedAt = "";
+      batch.reviewedBy = "";
+
+      plan.status = "submitted";
+      plan.batchReference = batch.reference;
+      plan.actualGoodQuantity = goodQuantity;
+      plan.quantityDamaged = damagedQuantity;
+      plan.quantityRejected = rejectedQuantity;
+      plan.variance = variance;
+      plan.completedAt = plan.completedAt || submittedAt;
+      plan.submittedAt = submittedAt;
+      plan.updatedAt = submittedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "submitted",
+        recordType: "production_batch",
+        recordLabel: batch.reference,
+        planId: plan.id,
+        summary: `${actor.name} submitted ${batch.reference}: ${goodQuantity} good, ${damagedQuantity} damaged, ${rejectedQuantity} rejected`,
+        details: [`Variance against plan: ${variance}`],
+        notificationRoles: ["production_manager", "admin", "ceo"],
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
+    case "APPROVE_SUPERVISOR_BATCH_REPORT": {
+      if (!canManageProductionFlow(state)) return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId && item.supervisorWorkflow);
+      const plan = (state.productionPlans || []).find((item) => item.id === batch?.planId);
+      const product = state.products.find((item) => item.id === batch?.finishedProductId);
+      if (!batch || batch.status !== "submitted" || !plan || !product || batch.transferredAt) return state;
+      const approvedAt = new Date().toISOString();
+      const goodQuantity = Math.max(0, Number(batch.quantityProduced || 0));
+      if (goodQuantity > 0) {
+        product.stock = Number(product.stock || 0) + goodQuantity;
+        product.updatedAt = todayISO();
+        product.soldOutAt = "";
+        state.stockTransactions = [{
+          id: createId("TXN"),
+          clientId: state.client?.id || "",
+          type: "production output",
+          productId: product.id,
+          productName: product.name,
+          quantity: goodQuantity,
+          unit: product.unit || "unit",
+          amount: 0,
+          partyType: "Production batch",
+          partyName: batch.reference,
+          date: todayISO(),
+          createdAt: approvedAt,
+          recordedBy: currentActorName(state),
+          movementDirection: "in",
+          batchId: batch.id,
+          batchReference: batch.reference,
+          purpose: "Approved supervisor batch report",
+          supervisorBatchReport: true
+        }, ...(state.stockTransactions || [])];
+      }
+      batch.status = "approved";
+      batch.approvedBy = currentActorName(state);
+      batch.approvedAt = approvedAt;
+      batch.transferredBy = currentActorName(state);
+      batch.transferredAt = approvedAt;
+      batch.transferredQuantity = goodQuantity;
+      batch.reviewNote = String(action.note || "").trim().slice(0, 500);
+      plan.status = "completed";
+      plan.approvedAt = approvedAt;
+      plan.updatedAt = approvedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "production_transfer",
+        recordLabel: batch.reference,
+        planId: plan.id,
+        summary: `${batch.reference} approved; ${goodQuantity} good ${product.name} added to finished stock while ${Number(batch.quantityDamaged || 0)} damaged and ${Number(batch.quantityRejected || 0)} rejected stayed out`,
+        notificationRoles: ["production_supervisor"],
+        notificationUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : [],
+        relatedUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : []
+      });
+      return state;
+    }
+
+    case "FLAG_SUPERVISOR_BATCH_REPORT":
+    case "REJECT_SUPERVISOR_BATCH_REPORT": {
+      if (!canManageProductionFlow(state)) return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId && item.supervisorWorkflow);
+      const plan = (state.productionPlans || []).find((item) => item.id === batch?.planId);
+      const note = String(action.note || "").trim().slice(0, 500);
+      if (!batch || batch.status !== "submitted" || !plan || !note) return state;
+      const rejected = action.type === "REJECT_SUPERVISOR_BATCH_REPORT";
+      const status = rejected ? "rejected" : "flagged";
+      const reviewedAt = new Date().toISOString();
+      batch.status = status;
+      batch.reviewNote = note;
+      batch.reviewedAt = reviewedAt;
+      batch.reviewedBy = currentActorName(state);
+      plan.status = status;
+      plan.reviewNote = note;
+      plan.updatedAt = reviewedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: rejected ? "rejected" : "flagged",
+        recordType: "production_batch",
+        recordLabel: batch.reference,
+        planId: plan.id,
+        summary: `${batch.reference} ${status}: ${note}`,
+        notificationRoles: ["production_supervisor"],
+        notificationUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : [],
+        relatedUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : []
+      });
+      return state;
+    }
+
+    case "CLOSE_PRODUCTION_PLAN": {
+      if (!canManageProductionFlow(state)) return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const hasOpenIssues = (state.productionIssues || []).some((issue) => issue.planId === plan?.id && issue.status === "open");
+      if (!plan || plan.status !== "completed" || hasOpenIssues) return state;
+      plan.status = "closed";
+      plan.closedAt = new Date().toISOString();
+      plan.closedBy = currentActorName(state);
+      plan.updatedAt = plan.closedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "completed",
+        recordType: "production_plan",
+        recordLabel: plan.id,
+        planId: plan.id,
+        summary: `${plan.name} closed after approved production was completed`,
+        relatedUserIds: plan.assignedSupervisorUserId ? [plan.assignedSupervisorUserId] : []
+      });
+      return state;
+    }
+
+    case "RECORD_MANAGED_PRODUCTION_BATCH": {
+      if (!canManageProductionFlow(state)) return state;
+      const plan = (state.productionPlans || []).find((item) => item.id === action.planId && !["cancelled", "completed"].includes(item.status));
+      const finishedProduct = state.products.find((item) => item.id === action.finishedProductId);
+      const planLine = plan?.lines?.find((line) => line.productId === action.finishedProductId);
+      const reference = String(action.batchReference || "").trim().slice(0, 80);
+      const batchDate = dateOnly(action.batchDate);
+      const expiryDate = dateOnly(action.expiryDate);
+      const quantityProduced = Math.max(0, Number(action.quantityProduced || 0));
+      const quantityRejected = Math.max(0, Number(action.quantityRejected || 0));
+      const quantityDamaged = Math.max(0, Number(action.quantityDamaged || 0));
+      const quantityWasted = Math.max(0, Number(action.quantityWasted || 0));
+      const materials = (Array.isArray(action.materials) ? action.materials : []).map((material) => {
+        const product = state.products.find((item) => item.id === material.productId);
+        return {
+          product,
+          name: String(material.name || "").trim().slice(0, 120),
+          unit: String(material.unit || "").trim().slice(0, 40),
+          quantity: Math.max(0, Number(material.quantity || 0))
+        };
+      }).filter(({ product, name, quantity }) => product || name || quantity > 0);
+      const materialKeys = materials.map(({ product, name }) => product?.id || normalized(name)).filter(Boolean);
+      const validMaterials = materials.every(({ product, name, quantity }) => (
+        quantity > 0 && (
+          (product && product.status !== "inactive" && stockCategoryIdForProduct(product) === "raw_materials" && quantity <= Number(product.stock || 0)) ||
+          (!product && Boolean(name))
+        )
+      ));
+      if (
+        !plan || !planLine || !reference ||
+        (state.productionBatches || []).some((batch) => normalized(batch.reference) === normalized(reference)) ||
+        !isValidISODate(batchDate) || !isValidISODate(expiryDate) || expiryDate < batchDate ||
+        !finishedProduct || stockCategoryIdForProduct(finishedProduct) !== "finished_products" ||
+        quantityProduced <= 0 || !validMaterials || new Set(materialKeys).size !== materialKeys.length
+      ) return state;
+
+      const batchId = createId("BATCH");
+      const recordedBy = currentActorName(state);
+      const recordedMaterials = materials.map(({ product, name, unit, quantity }) => {
+        if (product) {
+          product.stock = Number(product.stock || 0) - quantity;
+          product.updatedAt = todayISO();
+        }
+        return {
+          productId: product?.id || "",
+          productName: product?.name || name,
+          quantity,
+          unit: product?.unit || unit || "unit",
+          unitCostAtUse: Number(product?.unitCost || 0),
+          inventoryLinked: Boolean(product)
+        };
+      });
+      const batch = {
+        id: batchId,
+        clientId: state.client?.id || "",
+        planId: plan.id,
+        reference,
+        batchDate,
+        expiryDate,
+        finishedProductId: finishedProduct.id,
+        finishedProductName: finishedProduct.name,
+        plannedQuantity: Number(planLine.quantity || 0),
+        quantityProduced,
+        quantityRejected,
+        quantityDamaged,
+        quantityWasted,
+        outputUnit: finishedProduct.unit || "unit",
+        materials: recordedMaterials,
+        team: String(action.team || plan.team || "Production Team").trim().slice(0, 120),
+        shift: String(action.shift || plan.shift || "Day shift").trim().slice(0, 80),
+        machine: String(action.machine || plan.machine || "Production line").trim().slice(0, 120),
+        notes: String(action.notes || "").trim().slice(0, 500),
+        qualityStatus: "pending",
+        qualityChecks: {},
+        qualityNotes: "",
+        status: "awaiting_qc",
+        recordedBy,
+        createdAt: new Date().toISOString(),
+        approvedAt: "",
+        transferredAt: ""
+      };
+      state.productionBatches = [batch, ...(state.productionBatches || [])];
+      plan.status = "in_progress";
+      plan.updatedAt = new Date().toISOString();
+      state.stockTransactions = [
+        ...recordedMaterials.map((material) => ({
+          id: createId("TXN"),
+          clientId: state.client?.id || "",
+          type: "production usage",
+          productId: material.productId,
+          productName: material.productName,
+          quantity: material.quantity,
+          unit: material.unit,
+          amount: 0,
+          partyType: "Production batch",
+          partyName: reference,
+          date: batchDate,
+          createdAt: new Date().toISOString(),
+          recordedBy,
+          movementDirection: "out",
+          batchId,
+          batchReference: reference,
+          finishedProductId: finishedProduct.id,
+          finishedProductName: finishedProduct.name,
+          purpose: "Production"
+        })),
+        ...(state.stockTransactions || [])
+      ];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "recorded",
+        recordType: "production_batch",
+        recordLabel: reference,
+        summary: `${recordedBy} recorded ${quantityProduced} ${finishedProduct.name}; QC approval pending`
+      });
+      return state;
+    }
+
+    case "RECORD_PRODUCTION_QC": {
+      if (!canManageProductionFlow(state)) return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
+      const outcome = action.outcome === "passed" ? "passed" : action.outcome === "failed" ? "failed" : "";
+      const checks = action.checks && typeof action.checks === "object" ? {
+        appearance: Boolean(action.checks.appearance),
+        weight: Boolean(action.checks.weight),
+        packaging: Boolean(action.checks.packaging),
+        safety: Boolean(action.checks.safety)
+      } : {};
+      const notes = String(action.notes || "").trim().slice(0, 500);
+      if (
+        !batch || !["awaiting_qc", "qc_failed"].includes(batch.status) || !outcome ||
+        (outcome === "passed" && !Object.values(checks).every(Boolean)) ||
+        (outcome === "failed" && !notes)
+      ) return state;
+      batch.qualityStatus = outcome;
+      batch.qualityChecks = checks;
+      batch.qualityNotes = notes;
+      batch.qualityCheckedBy = currentActorName(state);
+      batch.qualityCheckedAt = new Date().toISOString();
+      batch.status = outcome === "passed" ? "qc_passed" : "qc_failed";
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: outcome === "passed" ? "passed" : "failed",
+        recordType: "production_qc",
+        recordLabel: batch.reference,
+        summary: `${batch.reference} quality control ${outcome}`
+      });
+      return state;
+    }
+
+    case "APPROVE_PRODUCTION_BATCH": {
+      if (!canManageProductionFlow(state)) return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
+      if (!batch || batch.status !== "qc_passed" || batch.qualityStatus !== "passed") return state;
+      batch.status = "approved";
+      batch.approvedBy = currentActorName(state);
+      batch.approvedAt = new Date().toISOString();
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "production_batch",
+        recordLabel: batch.reference,
+        summary: `${batch.reference} approved for finished-goods transfer`
+      });
+      return state;
+    }
+
+    case "TRANSFER_PRODUCTION_BATCH": {
+      if (!canManageProductionFlow(state)) return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId);
+      const product = state.products.find((item) => item.id === batch?.finishedProductId);
+      if (!batch || batch.status !== "approved" || !product || batch.transferredAt) return state;
+      const quantity = Math.max(0, Number(batch.quantityProduced || 0));
+      if (quantity <= 0) return state;
+      product.stock = Number(product.stock || 0) + quantity;
+      product.updatedAt = todayISO();
+      product.soldOutAt = "";
+      batch.status = "transferred";
+      batch.transferredQuantity = quantity;
+      batch.transferredBy = currentActorName(state);
+      batch.transferredAt = new Date().toISOString();
+      state.stockTransactions = [{
+        id: createId("TXN"),
+        clientId: state.client?.id || "",
+        type: "production output",
+        productId: product.id,
+        productName: product.name,
+        quantity,
+        unit: product.unit || "unit",
+        amount: 0,
+        partyType: "Production batch",
+        partyName: batch.reference,
+        date: todayISO(),
+        createdAt: new Date().toISOString(),
+        recordedBy: currentActorName(state),
+        movementDirection: "in",
+        batchId: batch.id,
+        batchReference: batch.reference,
+        purpose: "Approved finished-goods transfer"
+      }, ...(state.stockTransactions || [])];
+      const plan = (state.productionPlans || []).find((item) => item.id === batch.planId);
+      if (plan) {
+        const transferredBatches = (state.productionBatches || []).filter((item) => item.planId === plan.id && item.status === "transferred");
+        const completed = (plan.lines || []).every((line) => {
+          const transferredQuantity = transferredBatches
+            .filter((item) => item.finishedProductId === line.productId)
+            .reduce((total, item) => total + Number(item.transferredQuantity || item.quantityProduced || 0), 0);
+          return transferredQuantity >= Number(line.quantity || 0);
+        });
+        if (completed) plan.status = "completed";
+        plan.updatedAt = new Date().toISOString();
+      }
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "transferred",
+        recordType: "production_transfer",
+        recordLabel: batch.reference,
+        summary: `${quantity} ${product.name} transferred into finished-goods stock from ${batch.reference}`
+      });
+      return state;
+    }
+
+    case "REPORT_PRODUCTION_ISSUE": {
+      const reportingRole = currentUserRole(state);
+      if (!["production_manager", "production_supervisor", "ceo"].includes(reportingRole)) return state;
+      const relatedPlan = (state.productionPlans || []).find((item) => item.id === action.planId);
+      const actor = getCurrentActor(state);
+      if (reportingRole === "production_supervisor") {
+        const assignedToActor = relatedPlan && (
+          String(relatedPlan.assignedSupervisorUserId || "") === String(actor.userId || "") ||
+          normalized(relatedPlan.assignedSupervisorName) === normalized(actor.name)
+        );
+        if (!assignedToActor || ["closed", "rejected"].includes(relatedPlan.status)) return state;
+      }
+      const issueType = ["machine_downtime", "material_shortage", "delay", "quality", "other"].includes(action.issueType)
+        ? action.issueType : "other";
+      const description = String(action.description || "").trim();
+      const downtimeMinutes = Math.max(0, Number(action.downtimeMinutes || 0));
+      if (!description || (issueType === "machine_downtime" && downtimeMinutes <= 0)) return state;
+      const issue = {
+        id: createId("ISSUE"),
+        clientId: state.client?.id || "",
+        planId: String(action.planId || ""),
+        issueType,
+        severity: ["low", "medium", "high", "critical"].includes(action.severity) ? action.severity : "medium",
+        machine: String(action.machine || "").trim().slice(0, 120),
+        description: description.slice(0, 500),
+        downtimeMinutes,
+        status: "open",
+        reportedBy: actor.name,
+        reportedByUserId: actor.userId || "",
+        reportedAt: new Date().toISOString(),
+        resolvedAt: "",
+        resolution: ""
+      };
+      state.productionIssues = [issue, ...(state.productionIssues || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "reported",
+        recordType: "production_issue",
+        recordLabel: issue.id,
+        planId: issue.planId,
+        summary: `${textLabel(issueType)} reported${issue.machine ? ` for ${issue.machine}` : ""}`,
+        notificationRoles: reportingRole === "production_supervisor" ? ["production_manager", "admin", "ceo"] : [],
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
+    case "RESOLVE_PRODUCTION_ISSUE": {
+      if (!canManageProductionFlow(state)) return state;
+      const issue = (state.productionIssues || []).find((item) => item.id === action.issueId && item.status === "open");
+      const resolution = String(action.resolution || "").trim();
+      if (!issue || !resolution) return state;
+      issue.status = "resolved";
+      issue.resolution = resolution.slice(0, 500);
+      issue.resolvedBy = currentActorName(state);
+      issue.resolvedAt = new Date().toISOString();
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "resolved",
+        recordType: "production_issue",
+        recordLabel: issue.id,
+        summary: `${textLabel(issue.issueType)} resolved`
+      });
+      return state;
+    }
+
     case "RECORD_RAW_MATERIAL_SALE": {
       if (!["ceo", "store_keeper"].includes(currentUserRole(state))) return state;
 
@@ -2250,7 +2987,7 @@ function reducer(currentState, action) {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const customerName = customer?.name || action.customerName || "Walk-in customer";
       const customerType = customer?.channel || customer?.type || action.customerType || "Customer";
-      const paymentType = "not_tracked";
+      const paymentType = String(action.paymentType || "cash").toLowerCase().includes("credit") ? "credit" : "cash";
       const requestedItems = Array.isArray(action.items) ? action.items : [];
       const saleItems = requestedItems.map((item) => {
         const product = state.products.find((candidate) => candidate.id === item.productId);
@@ -2343,6 +3080,7 @@ function reducer(currentState, action) {
       });
       transactions.forEach((transaction) => { transaction.orderId = orderId; });
       state.stockTransactions = [...transactions, ...(state.stockTransactions || [])];
+      if (paymentType === "credit") updateCreditBalance(state, customerName, totalAmount);
 
       if (action.offline) {
         state.offlineSalesQueue = [
@@ -2363,7 +3101,7 @@ function reducer(currentState, action) {
         actionType: "updated",
         recordType: "customer_supply",
         recordLabel: orderId,
-        summary: `${repName} recorded sell-through of ${transactions.reduce((total, transaction) => total + transaction.quantity, 0)} pieces across ${transactions.length} line${transactions.length === 1 ? "" : "s"} to ${customerName}; factory revenue unchanged`
+        summary: `${repName} recorded customer sales of ${transactions.reduce((total, transaction) => total + transaction.quantity, 0)} pieces across ${transactions.length} line${transactions.length === 1 ? "" : "s"} to ${customerName}`
       });
       const invoice = state.invoices.find((item) => item.orderId === orderId);
       if (invoice) appendActivityLog(state, {
@@ -2371,7 +3109,7 @@ function reducer(currentState, action) {
         actionType: "created",
         recordType: "customer_supply",
         recordLabel: invoice.id,
-        summary: `${invoice.id} customer receipt created for ${customerName} by ${repName}`
+        summary: `${invoice.id} ${paymentType === "credit" ? "customer credit invoice" : "customer receipt"} created for ${customerName} by ${repName}`
       });
       return state;
     }
@@ -2380,7 +3118,7 @@ function reducer(currentState, action) {
       const customer = state.retailers.find((item) => item.id === action.customerId);
       const quantity = Math.max(0, Number(action.quantity || 0));
       const transactionType = action.transactionType === "return" ? "return" : "sale";
-      const paymentType = "not_tracked";
+      const paymentType = transactionType === "sale" && String(action.paymentType || "cash").toLowerCase().includes("credit") ? "credit" : "cash";
       const returnDisposition = transactionType === "return"
         ? (action.returnDisposition === "to_store" ? "to_store" : "held_by_rep")
         : "";
@@ -2525,6 +3263,10 @@ function reducer(currentState, action) {
         ...(state.stockTransactions || [])
       ];
 
+      if (transactionType === "sale" && paymentType === "credit") {
+        updateCreditBalance(state, customerName, amount);
+      }
+
       if (transactionType === "sale" && action.offline) {
         state.offlineSalesQueue = [
           ...(state.offlineSalesQueue || []).filter((entry) => entry.transactionId !== transactionId),
@@ -2545,7 +3287,7 @@ function reducer(currentState, action) {
         recordType: "customer_supply",
         recordLabel: product.name,
         summary: transactionType === "sale"
-          ? `${repName} recorded sell-through of ${quantity} ${product.name} to ${customerName}; factory revenue unchanged`
+          ? `${repName} recorded a customer sale of ${quantity} ${product.name} to ${customerName}`
           : `${repName} recorded ${quantity} ${product.name} returned by ${customerName} - ${returnDisposition === "to_store" ? "to store stock" : "held for resale"}`
       });
 
@@ -2557,7 +3299,7 @@ function reducer(currentState, action) {
             actionType: "created",
             recordType: "customer_supply",
             recordLabel: invoice.id,
-            summary: `${invoice.id} customer receipt created for ${customerName} by ${repName}`
+            summary: `${invoice.id} ${paymentType === "credit" ? "customer credit invoice" : "customer receipt"} created for ${customerName} by ${repName}`
           });
         }
       }
@@ -2640,6 +3382,15 @@ function reducer(currentState, action) {
         reportDate: action.reportDate || todayISO(),
         tripLabel: action.tripLabel || "Today",
         salesAmount: Number(action.salesAmount || 0),
+        grossSales: Number(action.grossSales ?? action.salesAmount ?? 0),
+        netSales: Number(action.netSales ?? (
+          Number(action.grossSales ?? action.salesAmount ?? 0) -
+          Number(action.returnAmount || 0) -
+          Number(action.discountAmount || 0) -
+          Number(action.otherDeductions || 0)
+        )),
+        discountAmount: Number(action.discountAmount || 0),
+        otherDeductions: Number(action.otherDeductions || 0),
         cashAmount: 0,
         creditAmount: 0,
         returnAmount: Number(action.returnAmount || 0),
@@ -2666,6 +3417,13 @@ function reducer(currentState, action) {
         String(item.repName || "").toLowerCase() === String(report.repName || "").toLowerCase() &&
         item.reportDate === report.reportDate
       );
+      const existingReport = (state.salesReports || []).find(sameReport);
+      if (existingReport) {
+        report.id = action.reportId || existingReport.id;
+        report.reviewHistory = [...(existingReport.reviewHistory || [])];
+        report.flagReason = existingReport.flagReason || "";
+        report.flaggedAt = existingReport.flaggedAt || "";
+      }
 
       state.salesReports = [
         report,
@@ -2684,11 +3442,16 @@ function reducer(currentState, action) {
     }
 
     case "UPSERT_PRODUCT": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const productId = String(action.productId || "").trim();
       const existingProduct = state.products.find((item) => item.id === productId);
       const previousProduct = existingProduct ? { ...existingProduct } : null;
       const requestedStockCategory = action.stockCategory || existingProduct?.stockCategory || "finished_products";
-      const nextProductId = String(action.sku || productId || "").trim() || createId(requestedStockCategory === "equipment" ? "EQP" : "PRD");
+      const nextProductId = String(action.sku || productId || "").trim() || descriptiveProductSku({
+        name: action.productFamily || action.name,
+        sizeValue: action.sizeValue,
+        sizeUnit: action.sizeUnit || action.unit
+      }, state.products.map((product) => product.id));
       const normalizedNextProductId = nextProductId.toLowerCase();
       const duplicateProductId = state.products.some((item) => (
         item.id !== productId && String(item.id || "").trim().toLowerCase() === normalizedNextProductId
@@ -3109,8 +3872,21 @@ function reducer(currentState, action) {
       const isInternalDispatch = normalizedRecipientType.includes("internal");
       const isWalkInDispatch = normalizedRecipientType.includes("walk-in") || normalizedRecipientType.includes("walk in");
       const isRepresentativeDispatch = normalizedRecipientType.includes("representative");
-      const paymentType = isInternalDispatch ? "none" : isWalkInDispatch ? "cash" : normalized(action.paymentType || "cash");
-      const destination = String(action.destination || recipientType).trim();
+      const requestedArrangement = normalized(action.dispatchArrangement || "stock_transfer").replaceAll("-", "_");
+      const dispatchArrangement = isRepresentativeDispatch && ["rep_purchase", "refundable_deposit", "stock_transfer"].includes(requestedArrangement)
+        ? requestedArrangement
+        : isRepresentativeDispatch ? "stock_transfer" : "";
+      const depositAmount = dispatchArrangement === "refundable_deposit"
+        ? Math.max(0, Number(action.depositAmount || 0))
+        : 0;
+      const paymentType = isInternalDispatch
+        ? "none"
+        : isWalkInDispatch
+          ? "cash"
+          : isRepresentativeDispatch
+            ? dispatchArrangement === "rep_purchase" ? "cash" : dispatchArrangement === "refundable_deposit" ? "deposit" : "none"
+            : normalized(action.paymentType || "cash");
+      const destination = String(action.destination || "").trim();
       const routeId = String(action.routeId || "").trim();
       const staffName = String(action.staffName || currentActorName(state)).trim();
       const dispatchDate = dateOnly(action.dispatchDate) || todayISO();
@@ -3142,6 +3918,7 @@ function reducer(currentState, action) {
       });
       const lineKeys = dispatchItems.map((item) => `${item.product?.id || ""}:${item.packagingType}`);
       const hasDuplicateLines = new Set(lineKeys).size !== lineKeys.length;
+      const dispatchStockValue = dispatchItems.reduce((total, item) => total + Number(item.amount || 0), 0);
       const requestedByProduct = dispatchItems.reduce((totals, item) => {
         if (item.product) totals.set(item.product.id, Number(totals.get(item.product.id) || 0) + item.quantity);
         return totals;
@@ -3164,9 +3941,9 @@ function reducer(currentState, action) {
         !isValidISODate(dispatchDate) ||
         (!isInternalDispatch && !isValidISODate(expectedDeliveryAt)) ||
         (!isInternalDispatch && expectedDeliveryAt < dispatchDate) ||
-        (!isInternalDispatch && !["cash", "credit"].includes(paymentType)) ||
-        !recipientName ||
-        !destination
+        (!isInternalDispatch && !isRepresentativeDispatch && !["cash", "credit"].includes(paymentType)) ||
+        (dispatchArrangement === "refundable_deposit" && (!Number.isFinite(depositAmount) || depositAmount <= 0)) ||
+        !recipientName
       ) {
         return state;
       }
@@ -3186,6 +3963,8 @@ function reducer(currentState, action) {
           dispatchDate,
           expectedDeliveryAt,
           paymentType,
+          dispatchArrangement,
+          depositAmount,
           staffName,
           repUserId: representativeAccount?.userId || ""
         });
@@ -3212,6 +3991,10 @@ function reducer(currentState, action) {
               transactionId,
               invoiceId,
               paymentType,
+              dispatchArrangement,
+              depositAmount: dispatchArrangement === "refundable_deposit" && dispatchStockValue > 0
+                ? depositAmount * (Number(amount || 0) / dispatchStockValue)
+                : 0,
               assigned: quantity,
               sold: 0,
               returned: 0,
@@ -3239,6 +4022,14 @@ function reducer(currentState, action) {
           unitPrice,
           unitCost: Number(product.unitCost || 0),
           paymentType,
+          dispatchArrangement,
+          depositAmount: dispatchArrangement === "refundable_deposit" && dispatchStockValue > 0
+            ? depositAmount * (Number(amount || 0) / dispatchStockValue)
+            : 0,
+          financialImpact: !isRepresentativeDispatch || dispatchArrangement === "rep_purchase",
+          accountingTreatment: !isRepresentativeDispatch || dispatchArrangement === "rep_purchase"
+            ? "factory_revenue"
+            : dispatchArrangement === "refundable_deposit" ? "refundable_deposit" : "representative_custody",
           partyType: recipientType,
           partyName: recipientName,
           recipientName,
@@ -3268,19 +4059,24 @@ function reducer(currentState, action) {
       });
 
       if (orderId) {
+        const dispatchRecordDescription = isRepresentativeDispatch
+          ? dispatchArrangement === "rep_purchase"
+            ? "sales rep purchase"
+            : dispatchArrangement === "refundable_deposit" ? "stock deposit" : "stock transfer"
+          : "factory sale";
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "created",
           recordType: "order",
           recordLabel: orderId,
-          summary: `${orderId} created from factory dispatch to ${recipientName}`
+          summary: `${orderId} recorded as ${dispatchRecordDescription} for ${recipientName}`
         });
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "created",
-          recordType: "invoice",
+          recordType: isRepresentativeDispatch && dispatchArrangement === "stock_transfer" ? "stock_transfer_note" : "receipt",
           recordLabel: invoiceId,
-          summary: `${invoiceId} created for ${recipientName} (${paymentType})`
+          summary: `${invoiceId} created for ${recipientName} (${dispatchRecordDescription})`
         });
       }
 
@@ -3298,12 +4094,12 @@ function reducer(currentState, action) {
       const calculatedQuantity = quantityInPieces(product, requestedPackagingQuantity, requestedPackagingType, state.client);
       const previousQuantity = Number(transaction?.quantity || 0);
       const previousAmount = Number(transaction?.amount || 0);
-      const reason = String(action.reason || "").trim();
+      const reason = String(action.reason || "CEO adjustment").trim();
       const transactionType = normalized(transaction?.type);
       const isDispatch = transaction?.movementDirection === "out" && ["supply", "internal movement"].includes(transactionType);
       const delta = nextQuantity - previousQuantity;
 
-      if (!transaction || !product || !isDispatch || !reason || !Number.isFinite(nextQuantity) || nextQuantity <= 0 || calculatedQuantity !== nextQuantity || delta === 0) return state;
+      if (!transaction || !product || !isDispatch || !Number.isFinite(nextQuantity) || nextQuantity <= 0 || calculatedQuantity !== nextQuantity || delta === 0) return state;
 
       const assignment = (state.stockAssignments || []).find((item) => (
         item.transactionId === transaction.id || (
@@ -3802,9 +4598,18 @@ function reducer(currentState, action) {
       if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const report = state.salesReports.find((item) => item.id === action.reportId);
       if (report) {
+        const reviewedAt = new Date().toISOString();
+        const reviewNote = String(action.note || "Reviewed by CEO").trim().slice(0, 500);
         report.status = "reviewed";
-        report.reviewedAt = new Date().toISOString();
-        report.reviewNote = String(action.note || "Reviewed by CEO").trim();
+        report.reviewedAt = reviewedAt;
+        report.reviewNote = reviewNote;
+        report.reviewHistory = [{
+          id: createId("RNOTE"),
+          status: "reviewed",
+          note: reviewNote,
+          recordedBy: currentActorName(state),
+          recordedAt: reviewedAt
+        }, ...(report.reviewHistory || [])];
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "completed",
@@ -3819,22 +4624,34 @@ function reducer(currentState, action) {
     case "FLAG_SALES_REPORT": {
       if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const report = state.salesReports.find((item) => item.id === action.reportId);
-      if (report) {
+      const flagReason = String(action.note || "").trim().slice(0, 500);
+      if (report && flagReason) {
+        const flaggedAt = new Date().toISOString();
         report.status = "flagged";
-        report.reviewNote = String(action.note || "Needs correction").trim();
-        report.flaggedAt = new Date().toISOString();
+        report.reviewNote = flagReason;
+        report.flagReason = flagReason;
+        report.flaggedAt = flaggedAt;
+        report.reviewHistory = [{
+          id: createId("RNOTE"),
+          status: "flagged",
+          note: flagReason,
+          recordedBy: currentActorName(state),
+          recordedAt: flaggedAt
+        }, ...(report.reviewHistory || [])];
         appendActivityLog(state, {
           clientId: state.client?.id,
           actionType: "flagged",
           recordType: "report",
           recordLabel: report.id,
-          summary: `${report.repName} report flagged for correction`
+          summary: `${report.repName} report flagged for correction`,
+          details: flagReason
         });
       }
       return state;
     }
 
     case "RESTOCK_PRODUCT": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const product = state.products.find((item) => item.id === action.productId);
       const quantity = Math.max(0, Number(action.quantity || 0));
       if (product && quantity > 0) {
@@ -3872,6 +4689,116 @@ function reducer(currentState, action) {
           summary: `${product.name} restocked by ${quantity}`
         });
       }
+      return state;
+    }
+
+    case "SUBMIT_STOCK_ADDITION_REQUEST": {
+      if (currentUserRole(state) !== "store_keeper") return state;
+      const kind = action.kind === "restock" ? "restock" : "new_product";
+      const quantity = Math.max(0, Number(action.quantity ?? action.product?.stock ?? 0));
+      const requestedProduct = action.product && typeof action.product === "object" ? clone(action.product) : null;
+      const productId = String(action.productId || requestedProduct?.id || "").trim();
+      const existingProduct = state.products.find((item) => item.id === productId);
+      if (!productId || (kind === "restock" && (!existingProduct || quantity <= 0))) return state;
+      if (kind === "new_product" && (!requestedProduct?.name || existingProduct)) return state;
+      const hasPendingDuplicate = (state.stockAdditionRequests || []).some((request) => (
+        request.status === "pending" && request.kind === kind && request.productId === productId
+      ));
+      if (hasPendingDuplicate) return state;
+
+      const request = {
+        id: createId("SAR"),
+        clientId: state.client?.id,
+        kind,
+        productId,
+        productName: String(existingProduct?.name || requestedProduct?.name || productId),
+        quantity,
+        product: kind === "new_product" ? requestedProduct : null,
+        requestedByUserId: String(state.user?.id || ""),
+        requestedBy: currentActorName(state),
+        requestedAt: new Date().toISOString(),
+        status: "pending",
+        reviewNote: "",
+        reviewedAt: "",
+        reviewedBy: ""
+      };
+      state.stockAdditionRequests = [request, ...(state.stockAdditionRequests || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "requested",
+        recordType: "stock_addition",
+        recordLabel: request.id,
+        summary: `${request.requestedBy} requested ${kind === "restock" ? `a stock increase for ${request.productName}` : `new stock ${request.productName}`}`
+      });
+      return state;
+    }
+
+    case "APPROVE_STOCK_ADDITION_REQUEST": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
+      const request = (state.stockAdditionRequests || []).find((item) => item.id === action.requestId);
+      if (!request || request.status !== "pending") return state;
+
+      if (request.kind === "new_product") {
+        if (!request.product || state.products.some((item) => item.id === request.productId)) return state;
+        state.products = [{ ...clone(request.product), updatedAt: todayISO() }, ...state.products];
+      } else {
+        const product = state.products.find((item) => item.id === request.productId);
+        const quantity = Math.max(0, Number(request.quantity || 0));
+        if (!product || quantity <= 0) return state;
+        product.stock = Number(product.stock || 0) + quantity;
+        product.updatedAt = todayISO();
+        product.soldOutAt = "";
+        state.stockTransactions = [{
+          id: createId("TXN"),
+          type: "internal movement",
+          productId: product.id,
+          productName: product.name,
+          quantity,
+          amount: 0,
+          unitPrice: Number(product.unitPrice || 0),
+          unitCost: Number(product.unitCost || 0),
+          paymentType: "none",
+          partyType: "Factory",
+          partyName: "Approved stock replenishment",
+          recipientName: "Factory stock",
+          dispatchDestination: product.warehouse || "Factory",
+          staffResponsible: request.requestedBy,
+          date: todayISO(),
+          recordedBy: currentActorName(state),
+          movementDirection: "in",
+          creditImpact: 0
+        }, ...(state.stockTransactions || [])];
+      }
+
+      request.status = "approved";
+      request.reviewNote = String(action.note || "Approved").trim().slice(0, 500);
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "approved",
+        recordType: "stock_addition",
+        recordLabel: request.id,
+        summary: `${request.productName} stock addition approved by ${request.reviewedBy}`
+      });
+      return state;
+    }
+
+    case "REJECT_STOCK_ADDITION_REQUEST": {
+      if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
+      const request = (state.stockAdditionRequests || []).find((item) => item.id === action.requestId);
+      if (!request || request.status !== "pending") return state;
+      request.status = "rejected";
+      request.reviewNote = String(action.note || "Rejected").trim().slice(0, 500);
+      request.reviewedAt = new Date().toISOString();
+      request.reviewedBy = currentActorName(state);
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "rejected",
+        recordType: "stock_addition",
+        recordLabel: request.id,
+        summary: `${request.productName} stock addition rejected by ${request.reviewedBy}`
+      });
       return state;
     }
 
@@ -3942,9 +4869,13 @@ function reducer(currentState, action) {
       if (!state.client?.id) return state;
       const retailerId = String(action.retailerId || "").trim();
       const existingRetailer = state.retailers.find((item) => item.id === retailerId);
+      const actorRole = currentUserRole(state);
+      if (!["ceo", "sales_rep"].includes(actorRole) || (existingRetailer && actorRole === "sales_rep")) return state;
       const previousName = existingRetailer?.name;
       const nextName = String(action.name || existingRetailer?.name || "New customer").trim();
       const stateName = String(action.stateName ?? action.region ?? existingRetailer?.stateName ?? existingRetailer?.region ?? "").trim();
+      const actorName = currentActorLabel(state);
+      const changedAt = new Date().toISOString();
       const retailer = {
         id: retailerId || createId("RTL"),
         name: nextName,
@@ -3958,12 +4889,17 @@ function reducer(currentState, action) {
         contactPhone: String(action.contactPhone ?? existingRetailer?.contactPhone ?? "").trim(),
         assignedRepUserId: String(action.assignedRepUserId ?? existingRetailer?.assignedRepUserId ?? "").trim(),
         assignedRepName: String(action.assignedRepName ?? existingRetailer?.assignedRepName ?? "").trim(),
+        createdByUserId: String(existingRetailer?.createdByUserId || action.createdByUserId || state.user?.id || "").trim(),
+        createdByName: String(existingRetailer?.createdByName || action.createdByName || existingRetailer?.assignedRepName || actorName).trim(),
+        createdAt: existingRetailer?.createdAt || action.createdAt || changedAt,
+        updatedByUserId: String(state.user?.id || "").trim(),
+        updatedByName: actorName,
         fillRate: Math.max(0, Math.min(100, Number(action.fillRate ?? existingRetailer?.fillRate ?? 0))),
         outstanding: Math.max(0, Number(action.outstanding ?? existingRetailer?.outstanding ?? 0)),
         lastOrder: existingRetailer?.lastOrder || todayISO(),
         lastContact: existingRetailer?.lastContact || todayISO(),
         status: String(action.status || existingRetailer?.status || "active"),
-        updatedAt: todayISO()
+        updatedAt: changedAt
       };
 
       if (existingRetailer) {
@@ -3977,8 +4913,7 @@ function reducer(currentState, action) {
       const discountPercent = boundedPercent(action.discountPercent || 0);
       const paymentPeriodDays = normalizedPaymentPeriod(action.paymentPeriodDays || 14);
       const latePenaltyPercent = boundedPercent(action.latePenaltyPercent || 0);
-      const changedBy = currentActorLabel(state);
-      const changedAt = new Date().toISOString();
+      const changedBy = actorName;
       let creditLimit = state.creditLimits.find((item) => (
         String(item.partyName || "").trim().toLowerCase() === String(previousName || nextName).trim().toLowerCase()
       ));
@@ -4035,7 +4970,9 @@ function reducer(currentState, action) {
         actionType: existingRetailer ? "updated" : "created",
         recordType: "retailer",
         recordLabel: retailer.name,
-        summary: `${existingRetailer ? "Updated" : "Added"} customer profile`
+        summary: existingRetailer
+          ? `Updated customer profile for ${retailer.name}`
+          : `${actorName} added ${retailer.name} to the shared customer directory`
       });
 
       return state;
@@ -4072,10 +5009,56 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "UPDATE_REP_CREDIT_INVOICE": {
+      if (currentUserRole(state) !== "sales_rep") return state;
+      const invoice = state.invoices.find((item) => item.id === action.invoiceId);
+      const account = (state.accounts || []).find((item) => item.userId === state.user?.id);
+      const isOwnedByRepresentative = invoice && (
+        (invoice.repUserId && invoice.repUserId === state.user?.id) ||
+        (!invoice.repUserId && normalized(invoice.repName) === normalized(account?.name || currentActorName(state)))
+      );
+      const isRepresentativeCreditInvoice = (
+        isOwnedByRepresentative &&
+        invoice.documentType === INVOICE_TYPES.REPRESENTATIVE_CUSTOMER_INVOICE &&
+        normalized(invoice.paymentType).includes("credit")
+      );
+      const nextStatus = action.status === "paid" ? "paid" : "open";
+      const nextDueAt = dateOnly(action.dueAt);
+
+      if (!isRepresentativeCreditInvoice || !isValidISODate(nextDueAt)) return state;
+
+      const wasPaid = normalized(invoice.status) === "paid";
+      const willBePaid = nextStatus === "paid";
+      const order = state.orders.find((item) => item.id === invoice.orderId);
+      invoice.status = nextStatus;
+      invoice.dueAt = nextDueAt;
+      invoice.paymentNote = String(action.paymentNote || "").trim();
+      invoice.paidAt = willBePaid ? (invoice.paidAt || todayISO()) : "";
+      invoice.updatedAt = new Date().toISOString();
+      if (order) {
+        order.paymentStatus = nextStatus;
+        order.dueAt = nextDueAt;
+        order.paymentNote = invoice.paymentNote;
+        order.updatedAt = todayISO();
+      }
+      if (wasPaid !== willBePaid) {
+        updateCreditBalance(state, invoice.customerName, willBePaid ? -Number(invoice.amount || 0) : Number(invoice.amount || 0));
+      }
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: willBePaid ? "paid" : "updated",
+        recordType: "invoice",
+        recordLabel: invoice.id,
+        summary: `${invoice.id} customer credit invoice ${willBePaid ? "marked paid" : "updated by the sales representative"}`
+      });
+      return state;
+    }
+
     case "MARK_INVOICE_PAID": {
       const invoice = state.invoices.find((item) => item.id === action.invoiceId);
-      if (invoice) {
-        const order = state.orders.find((item) => item.id === invoice.orderId);
+      const order = state.orders.find((item) => item.id === invoice?.orderId);
+      const isCreditInvoice = String(invoice?.paymentType || order?.paymentType || "").toLowerCase().includes("credit");
+      if (invoice && currentUserRole(state) === "ceo" && isCreditInvoice) {
         const creditLimit = state.creditLimits.find((item) => normalized(item.partyName) === normalized(invoice.customerName));
         invoice.status = "paid";
         invoice.paidAt = todayISO();

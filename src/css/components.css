@@ -203,6 +203,14 @@
   font-weight: 800;
 }
 
+.field:has(input[required]:not([type="hidden"]):not(:disabled), textarea[required]:not(:disabled)) > span:first-child::after,
+.auth-field:has(input[required]:not([type="hidden"]):not(:disabled), textarea[required]:not(:disabled)) > span:first-child::after,
+label:not(.field):has(input[required]:not([type="hidden"]):not(:disabled), textarea[required]:not(:disabled)) > span:first-child::after {
+  content: " *";
+  color: var(--coral);
+  font-weight: 950;
+}
+
 .field textarea {
   width: 100%;
   min-height: 118px;
@@ -511,12 +519,13 @@
 }
 
 .status-pill {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 24px;
-  padding: 0 8px;
-  border-radius: 999px;
+  display: inline;
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent !important;
+  box-shadow: none;
   font-size: 0.72rem;
   font-weight: 850;
   text-transform: capitalize;
