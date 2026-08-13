@@ -19,7 +19,7 @@ import {
   isRepresentativeSellThroughTransaction,
   getStockHealth,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260804i";
+} from "../services/calculations.js?v=20260813a";
 import { formatCompact, formatCurrency, formatDate, formatDateTime, formatNumber, formatPercent, productSelectionLabel, statusText } from "../services/formatters.js?v=20260805h";
 import { accountForUser, currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260805b";
 import { isModuleEnabled } from "../services/features.js?v=20260804e";
@@ -1545,6 +1545,11 @@ function renderCeoDashboard(state) {
         })}
       </div>
 
+      <section class="panel">
+        ${panelHeader("Stock split", "Where finished stock currently sits")}
+        ${renderCeoStockSplit(productRows)}
+      </section>
+
       <div class="ceo-dashboard-layout">
         <section class="panel ceo-chart-panel">
           ${panelHeader("Sales trend", "Last 7 days")}
@@ -1569,10 +1574,6 @@ function renderCeoDashboard(state) {
         </details>
       </section>
 
-      <section class="panel">
-        ${panelHeader("Stock split", "Where finished stock currently sits")}
-        ${renderCeoStockSplit(productRows)}
-      </section>
     </section>
   `;
 }
@@ -1986,12 +1987,13 @@ function renderRecentOrders(state, permissions) {
   return getOrdersWithTotals(state)
     .slice(0, 5)
     .map((order) => {
+      const orderStatus = effectiveOrderStatus(order);
       const customerName = order.retailer?.name || order.customerName || "Unknown customer";
       const searchValues = [
         order.id,
         customerName,
         order.region,
-        statusText(order.status),
+        statusText(orderStatus),
         order.priority,
         order.repName,
         statusText(order.paymentType),
@@ -2009,7 +2011,7 @@ function renderRecentOrders(state, permissions) {
             <div class="muted">${escapeHtml(customerName)}</div>
           </td>
           <td>${escapeHtml(order.region)}</td>
-          <td>${statusPill(order.status)}</td>
+          <td>${statusPill(orderStatus)}</td>
           <td>${formatCurrency(order.total)}</td>
           <td>
             <div class="row-actions">
@@ -2017,7 +2019,7 @@ function renderRecentOrders(state, permissions) {
                 iconName: "arrowRight",
                 label: "Move sales order forward",
                 className: "js-advance-order",
-                disabled: order.status === "delivered" || !canAdvanceSales,
+                disabled: orderStatus === "delivered" || !canAdvanceSales,
                 data: { "order-id": order.id }
               })}
             </div>
@@ -3221,6 +3223,11 @@ function renderAdminDashboard(state) {
         ${renderCeoMetricCard({ label: "Reports", value: formatNumber(reports.length), meta: latestReport ? `Latest: ${latestReport.repName}` : "No submitted reports yet", iconName: "dashboard" })}
       </div>
 
+      <section class="panel">
+        ${panelHeader("Stock split", "Where finished stock currently sits")}
+        ${renderCeoStockSplit(productRows)}
+      </section>
+
       <div class="admin-dashboard-insight-row">
         <section class="panel ceo-chart-panel">
           ${panelHeader("Sales trend", "Last 4 days")}
@@ -3254,10 +3261,6 @@ function renderAdminDashboard(state) {
         </details>
       </section>
 
-      <section class="panel">
-        ${panelHeader("Stock split", "Where finished stock currently sits")}
-        ${renderCeoStockSplit(productRows)}
-      </section>
     </section>
   `;
 }

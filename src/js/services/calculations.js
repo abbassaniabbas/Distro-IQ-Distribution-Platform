@@ -820,6 +820,10 @@ export function buildRegionalSummary(state) {
 }
 
 export function effectiveOrderStatus(order, today = new Date().toISOString().slice(0, 10)) {
+  // A representative who pays cash at factory dispatch has purchased the stock.
+  // That factory sale is complete immediately; their later customer resale is
+  // not a pending delivery obligation for the factory.
+  if (isRepresentativeStockPurchaseOrder(order)) return "delivered";
   const status = String(order?.status || "in_transit").toLowerCase();
   const expectedDeliveryDate = dateOnly(
     order?.expectedDeliveryAt || (order?.source === "factory_dispatch" ? order?.dueAt : "")

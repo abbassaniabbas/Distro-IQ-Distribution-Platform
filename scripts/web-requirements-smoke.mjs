@@ -2022,6 +2022,11 @@ authenticateProductionReceiptFlow("admin");
 productionReceiptFlowStore.dispatch({ type: "APPROVE_STOCK_ADDITION_REQUEST", requestId: productionReceiptRequest.id });
 assert.equal(productionReceiptFlowStore.getState().products[0].stock, 98, "only CEO/Admin approval may add the Store Keeper's physical count to live stock");
 assert.equal(productionReceiptFlowStore.getState().productionBatches[0].status, "approved");
+globalThis.window.location.hash = "#/production";
+const approvedReceiptTrail = renderProduction({ state: productionReceiptFlowStore.getState() });
+assert.match(approvedReceiptTrail, /js-open-production-report-details[\s\S]*Flow Chips/, "every production receipt report must open from its row");
+assert.match(approvedReceiptTrail, /id="production-report-details-modal"/, "production reports must provide a detailed modal");
+assert.match(productionSource, /Store Keeper physical count[\s\S]*Final approval/, "the detailed production report must retain every handoff");
 
 function authenticateProductionSupervisorFixture(account) {
   productionSupervisorStore.dispatch({
@@ -2791,7 +2796,8 @@ store.dispatch({
   reason: "Restore correction fixture"
 });
 const productSizeDashboard = renderDashboard({ state: store.getState() });
-assert.ok(productSizeDashboard.indexOf("Sales trend") < productSizeDashboard.indexOf(">Products<"), "CEO Sales trend must appear above Products");
+assert.ok(productSizeDashboard.indexOf("Stock split") < productSizeDashboard.indexOf("Sales trend"), "CEO Stock split must appear above Sales trend");
+assert.ok(productSizeDashboard.indexOf("Sales trend") < productSizeDashboard.indexOf("<h2>Products</h2>"), "CEO Sales trend must appear above the main Products panel");
 assert.match(productSizeDashboard, /id="ceo-product-size-modal"/);
 assert.match(productSizeDashboard, /ceo-product-size-modal product-catalogue-size-modal/, "CEO and Admin product catalogues must use the shared image frame");
 assert.match(productSizeDashboard, /js-open-product-size-modal/);
@@ -3005,6 +3011,10 @@ assert.equal(multiDispatchStore.getState().invoices[0].documentType, "representa
 assert.match(multiDispatchStore.getState().invoices[0].id, /^SRP-\d+$/, "sales rep purchase receipts must use one prefix followed by the number");
 assert.doesNotMatch(multiDispatchStore.getState().invoices[0].id, /^SRP-REC-|^REP-STK-REC-/, "sales rep purchase receipt numbers must not contain three sections");
 assert.equal(multiDispatchStore.getState().creditLimits.find((limit) => limit.partyName === "Multi Rep").balance, 0, "representative cash purchases must not increase representative credit");
+const paidRepresentativePurchaseOrder = multiDispatchStore.getState().orders[0];
+assert.equal(paidRepresentativePurchaseOrder.status, "delivered", "a paid Sales Rep stock purchase must be completed at factory dispatch");
+assert.equal(effectiveOrderStatus(paidRepresentativePurchaseOrder), "delivered", "legacy paid Sales Rep purchases must also be treated as delivered and never become overdue");
+assert.equal(multiDispatchStore.getState().stockAssignments.find((item) => item.dispatchArrangement === "rep_purchase")?.status, "reconciled", "a paid Sales Rep purchase must not remain an outstanding factory stock assignment");
 const purchasedStockState = structuredClone(multiDispatchStore.getState());
 const purchasedAssignment = purchasedStockState.stockAssignments.find((item) => item.productId === "MULTI-A" && item.dispatchArrangement === "rep_purchase");
 const purchaseRevenue = getFinancialSalesLines(purchasedStockState).reduce((total, line) => total + Number(line.revenue || 0), 0);
@@ -3276,6 +3286,8 @@ assert.match(adminDashboard, /Overdue invoices/);
 assert.match(adminDashboard, /Recent sales orders/);
 assert.match(adminDashboard, /Today's factory stock/);
 assert.match(adminDashboard, /Stock split/);
+assert.ok(adminDashboard.indexOf("Stock split") < adminDashboard.indexOf("Sales trend"), "Admin Stock split must appear above Sales trend");
+assert.ok(adminDashboard.indexOf("Stock split") < adminDashboard.indexOf("Operational attention"), "Admin Stock split must appear above Operational attention");
 assert.match(adminDashboard, /js-toggle-product-types/);
 assert.doesNotMatch(adminDashboard, /Purchase Orders|Admin Operations/);
 const adminTeam = renderTeam({ state: multiDispatchStore.getState() });

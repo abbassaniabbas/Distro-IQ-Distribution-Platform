@@ -9,7 +9,7 @@ import {
   isRepresentativeSellThroughTransaction,
   isRepresentativeReturnEligible,
   stockCategoryIdForProduct
-} from "../services/calculations.js?v=20260804i";
+} from "../services/calculations.js?v=20260813a";
 import { currentUserRole, normalizeRole, salesRepresentativeNames } from "../services/rbac.js?v=20260805g";
 import { clearStoredState, loadStoredState, saveStoredState } from "../services/storage.js";
 import { createAccountInvite, createClientProfile, createId, descriptiveProductSku, nextFormattedId } from "../services/tenant.js?v=20260805c";
@@ -990,7 +990,7 @@ function createDispatchSalesOrder(state, {
       customerType: customer?.channel || recipientType || "Customer",
       region: customer?.stateName || customer?.region || destination || "Direct dispatch",
       priority: "Normal",
-      status: "in_transit",
+      status: isFactorySale ? "delivered" : "in_transit",
       paymentType,
       paymentStatus: representativeArrangement === "stock_transfer" ? "recorded" : isCredit ? "open" : "paid",
       creditApplied: isCredit,
@@ -999,6 +999,7 @@ function createDispatchSalesOrder(state, {
       originalExpectedDeliveryAt: expectedDeliveryAt || dispatchDate,
       createdAt: dispatchDate,
       updatedAt: dispatchDate,
+      deliveredAt: isFactorySale ? dispatchDate : "",
       repName: dispatchesToRepresentative ? recipientName : staffName,
       repUserId: dispatchesToRepresentative ? repUserId : state.user?.id || "",
       items: invoiceItems
@@ -4086,7 +4087,8 @@ function reducer(currentState, action) {
               assigned: quantity,
               sold: 0,
               returned: 0,
-              status: "open",
+              status: dispatchArrangement === "rep_purchase" ? "reconciled" : "open",
+              reconciledAt: dispatchArrangement === "rep_purchase" ? dispatchDate : "",
               varianceFlagged: false,
               varianceNote: ""
             },

@@ -7378,6 +7378,36 @@
   overflow: auto;
 }
 
+.production-report-details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+
+.production-report-details-grid > div {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-muted);
+}
+
+.production-report-details-grid span {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.js-open-production-report-details {
+  cursor: pointer;
+}
+
+.js-open-production-report-details:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
 .production-line-fieldset {
   margin: 0;
   padding: 16px;

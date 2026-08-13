@@ -1,8 +1,9 @@
 import {
   buildOrderStatusSummary,
+  effectiveOrderStatus,
   getCreditGuardForOrder,
   getOrdersWithTotals
-} from "../services/calculations.js?v=20260804i";
+} from "../services/calculations.js?v=20260813a";
 import { formatCurrency, formatDate, formatNumber, formatPercent, statusText } from "../services/formatters.js?v=20260805h";
 import { currentUserPermissions, currentUserRole } from "../services/rbac.js?v=20260801d";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
@@ -176,8 +177,9 @@ function renderOrderRows(orders, state, permissions) {
   const canManageOrderFlow = currentUserRole(state) === "ceo";
 
   return orders.map((order, index) => {
+    const orderStatus = effectiveOrderStatus(order);
     const creditGuard = getCreditGuardForOrder(order, state);
-    const canAdvanceOrder = order.status !== "delivered" && canManageOrderFlow;
+    const canAdvanceOrder = orderStatus !== "delivered" && canManageOrderFlow;
     const creditMeta = creditGuard.limitAmount
       ? `${formatPercent(creditGuard.usagePercent)} used`
       : "No limit set";
@@ -202,7 +204,7 @@ function renderOrderRows(orders, state, permissions) {
       retailer?.contactPhone,
       order.region,
       order.priority,
-      statusText(order.status),
+      statusText(orderStatus),
       statusText(creditGuard.status),
       statusText(order.paymentType),
       statusText(order.paymentStatus),
@@ -227,7 +229,7 @@ function renderOrderRows(orders, state, permissions) {
     return `
       <tr ${index >= ORDER_PAGE_SIZE ? "hidden " : ""}
         data-order-row
-        data-status="${escapeHtml(order.status)}"
+        data-status="${escapeHtml(orderStatus)}"
         data-region="${escapeHtml(order.region)}"
         data-search-index="${escapeHtml(searchIndex)}"
         data-search-suggestions="${escapeHtml(JSON.stringify(searchSuggestions))}"
@@ -242,7 +244,7 @@ function renderOrderRows(orders, state, permissions) {
           <div class="muted">${escapeHtml(order.region)} - ${escapeHtml(order.priority)}</div>
         </td>
         <td>
-          ${statusPill(order.status)}
+          ${statusPill(orderStatus)}
           ${renderDelayMeta(order)}
         </td>
         <td>
@@ -254,9 +256,9 @@ function renderOrderRows(orders, state, permissions) {
           <div class="row-actions">
             <label class="order-status-select">
               <span class="sr-only">Set sales order step</span>
-              <select class="js-order-status-select" data-order-id="${escapeHtml(order.id)}" data-current-status="${escapeHtml(order.status)}" ${canManageOrderFlow ? "" : "disabled"}>
+              <select class="js-order-status-select" data-order-id="${escapeHtml(order.id)}" data-current-status="${escapeHtml(orderStatus)}" ${canManageOrderFlow ? "" : "disabled"}>
                 ${ORDER_STATUSES.map((status) => `
-                  <option value="${escapeHtml(status)}" ${order.status === status ? "selected" : ""}>${escapeHtml(statusText(status))}</option>
+                  <option value="${escapeHtml(status)}" ${orderStatus === status ? "selected" : ""}>${escapeHtml(statusText(status))}</option>
                 `).join("")}
               </select>
             </label>
@@ -267,7 +269,7 @@ function renderOrderRows(orders, state, permissions) {
               disabled: !canAdvanceOrder,
               data: { "order-id": order.id }
             })}
-            ${order.status === "delayed"
+            ${orderStatus === "delayed"
               ? iconButton({
                   iconName: "clock",
                   label: canManageOrderFlow ? "Review delay plan" : "View delay details",
@@ -278,7 +280,7 @@ function renderOrderRows(orders, state, permissions) {
                   iconName: "clock",
                   label: "Mark delayed",
                   className: "js-delay-order",
-                  disabled: order.status === "delivered" || !canManageOrderFlow,
+                  disabled: orderStatus === "delivered" || !canManageOrderFlow,
                   data: { "order-id": order.id }
                 })}
           </div>

@@ -338,6 +338,49 @@ function renderSupervisorConfirmationModal() {
   </section></div>`;
 }
 
+function reportDetailValue(label, value) {
+  return `<div><span>${escapeHtml(label)}</span><strong>${escapeHtml(String(value || "Not recorded"))}</strong></div>`;
+}
+
+function renderProductionReportDetails(batch) {
+  const managerQuantity = Number(batch?.managerProducedQuantity ?? batch?.quantityProduced ?? 0);
+  const reportedAt = batch?.managerSubmittedAt ? formatDateTime(batch.managerSubmittedAt) : "Not recorded";
+  const confirmedAt = batch?.supervisorConfirmedAt ? formatDateTime(batch.supervisorConfirmedAt) : "Awaiting confirmation";
+  const storeSubmittedAt = batch?.storeKeeperSubmittedAt ? formatDateTime(batch.storeKeeperSubmittedAt) : "Awaiting Store Keeper receipt";
+  const approvedAt = batch?.approvedAt ? formatDateTime(batch.approvedAt) : "Awaiting CEO/Admin approval";
+  return `<section class="production-report-details">
+    <div class="production-report-details-grid">
+      ${reportDetailValue("Batch number", batch?.reference)}
+      ${reportDetailValue("Product", batch?.finishedProductName)}
+      ${reportDetailValue("Production date", batch?.batchDate ? formatDate(batch.batchDate) : "")}
+      ${reportDetailValue("Current status", textLabel(batch?.status || "manager_submitted"))}
+      ${reportDetailValue("Manager reported quantity", formatNumber(managerQuantity))}
+      ${reportDetailValue("Manager", batch?.managerReportedBy)}
+      ${reportDetailValue("Manager submitted", reportedAt)}
+      ${reportDetailValue("Good stock counted", batch?.supervisorConfirmedBy ? formatNumber(batch?.quantityProduced || 0) : "Awaiting count")}
+      ${reportDetailValue("Damaged stock", batch?.supervisorConfirmedBy ? formatNumber(batch?.quantityDamaged || 0) : "Awaiting count")}
+      ${reportDetailValue("Rejected / other stock", batch?.supervisorConfirmedBy ? formatNumber(batch?.quantityRejected || 0) : "Awaiting count")}
+      ${reportDetailValue("Confirmed by", batch?.supervisorConfirmedBy || "Awaiting confirmation")}
+      ${reportDetailValue("Supervisor confirmed", confirmedAt)}
+      ${reportDetailValue("Store Keeper physical count", batch?.storeKeeperSubmittedBy ? formatNumber(batch?.storeKeeperPhysicalQuantity || 0) : "Awaiting receipt")}
+      ${reportDetailValue("Store Keeper", batch?.storeKeeperSubmittedBy || "Awaiting receipt")}
+      ${reportDetailValue("Store receipt submitted", storeSubmittedAt)}
+      ${reportDetailValue("Final approval", batch?.approvedBy || "Awaiting approval")}
+      ${reportDetailValue("Approved / stock added", approvedAt)}
+    </div>
+    ${batch?.notes ? `<section class="panel"><h3>Manager note</h3><p>${escapeHtml(batch.notes)}</p></section>` : ""}
+    ${batch?.supervisorNotes ? `<section class="panel"><h3>Supervisor count note</h3><p>${escapeHtml(batch.supervisorNotes)}</p></section>` : ""}
+    ${batch?.storeKeeperReceiptNote ? `<section class="panel"><h3>Store Keeper receipt note</h3><p>${escapeHtml(batch.storeKeeperReceiptNote)}</p></section>` : ""}
+  </section>`;
+}
+
+function renderProductionReportDetailsModal() {
+  return `<div id="production-report-details-modal" class="stock-modal-backdrop" hidden><section class="stock-modal production-workflow-modal" role="dialog" aria-modal="true" aria-labelledby="production-report-details-title">
+    ${modalHeader("Production report", "Production receipt details", "js-close-production-report-details")}
+    <div id="production-report-details-content"></div>
+  </section></div>`;
+}
+
 function renderManagerWorkflowReports(state, role) {
   const rows = managerWorkflowBatches(state).map((batch) => {
     const managerQuantity = Number(batch.managerProducedQuantity ?? batch.quantityProduced ?? 0);
@@ -355,7 +398,7 @@ function renderManagerWorkflowReports(state, role) {
     const action = role === "production_supervisor" && batch.status === "manager_submitted"
       ? textButton({ iconName: "check", label: "Count and confirm", className: "primary js-open-supervisor-confirmation", data: { "batch-id": batch.id } })
       : "";
-    return `<tr data-search-index="${escapeHtml(`${batch.reference} ${batch.finishedProductName} ${batch.managerReportedBy} ${batch.supervisorConfirmedBy} ${batch.status}`.toLowerCase())}">
+    return `<tr class="js-open-production-report-details" data-batch-id="${escapeHtml(batch.id)}" data-search-index="${escapeHtml(`${batch.reference} ${batch.finishedProductName} ${batch.managerReportedBy} ${batch.supervisorConfirmedBy} ${batch.status}`.toLowerCase())}" tabindex="0" role="button" aria-label="View detailed report for ${escapeHtml(batch.reference)}">
       <td><strong>${escapeHtml(batch.reference)}</strong><div class="muted">${batch.managerSubmittedAt ? formatDateTime(batch.managerSubmittedAt) : "Submitted"}</div></td>
       <td><strong>${escapeHtml(batch.finishedProductName)}</strong><div class="muted">Manager: ${escapeHtml(batch.managerReportedBy || batch.recordedBy || "Production Line Manager")}</div></td>
       <td>${formatNumber(managerQuantity)}</td>
@@ -392,6 +435,7 @@ export function renderProduction({ state }) {
     ${supervisor ? renderSupervisorModals(state) : ""}
     ${role === "production_manager" ? renderManagerOutputModal(state) : ""}
     ${supervisor ? renderSupervisorConfirmationModal() : ""}
+    ${renderProductionReportDetailsModal()}
   </section>`;
 }
 
@@ -399,6 +443,8 @@ export function bindProduction({ root, store, operationalSync, signal }) {
   const role = currentUserRole(store.getState());
   const managerOutputModal = qs("#manager-output-modal", root);
   const supervisorConfirmationModal = qs("#supervisor-confirmation-modal", root);
+  const reportDetailsModal = qs("#production-report-details-modal", root);
+  const reportDetailsContent = qs("#production-report-details-content", root);
   const planModal = qs("#production-plan-modal", root);
   const reportModal = qs("#supervisor-report-modal", root);
   const issueModal = qs("#production-issue-modal", root);
@@ -438,6 +484,29 @@ export function bindProduction({ root, store, operationalSync, signal }) {
   qsa(".js-close-production-plan", root).forEach((button) => button.addEventListener("click", () => close(planModal), { signal }));
   qsa(".js-close-manager-output", root).forEach((button) => button.addEventListener("click", () => close(managerOutputModal), { signal }));
   qsa(".js-close-supervisor-confirmation", root).forEach((button) => button.addEventListener("click", () => close(supervisorConfirmationModal), { signal }));
+  qsa(".js-close-production-report-details", root).forEach((button) => button.addEventListener("click", () => close(reportDetailsModal), { signal }));
+  reportDetailsModal?.addEventListener("click", (event) => {
+    if (event.target === reportDetailsModal) close(reportDetailsModal);
+  }, { signal });
+
+  const openProductionReportDetails = (batchId) => {
+    const batch = managerWorkflowBatches(store.getState()).find((item) => item.id === batchId);
+    if (!batch || !reportDetailsContent) return;
+    reportDetailsContent.innerHTML = renderProductionReportDetails(batch);
+    open(reportDetailsModal);
+  };
+  qsa(".js-open-production-report-details", root).forEach((row) => {
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button, a, input, select, textarea, label")) return;
+      openProductionReportDetails(row.dataset.batchId);
+    }, { signal });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        openProductionReportDetails(row.dataset.batchId);
+      }
+    }, { signal });
+  });
   qsa(".js-close-supervisor-report", root).forEach((button) => button.addEventListener("click", () => close(reportModal), { signal }));
   qsa(".js-close-production-issue", root).forEach((button) => button.addEventListener("click", () => close(issueModal), { signal }));
 
