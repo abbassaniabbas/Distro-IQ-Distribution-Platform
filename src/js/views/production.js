@@ -1,5 +1,5 @@
 import { formatDate, formatDateTime, formatNumber, formatPercent, productSelectionLabel } from "../services/formatters.js?v=20260805h";
-import { currentUserRole } from "../services/rbac.js?v=20260805g";
+import { currentUserRole } from "../services/rbac.js?v=20260813a";
 import { stockCategoryIdForProduct } from "../services/calculations.js?v=20260804i";
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { metricCard, panelHeader, statusPill, table, textButton } from "../ui/components.js?v=20260724b";
@@ -285,38 +285,126 @@ function renderSupervisorModals(state) {
     </section></div>`;
 }
 
+function managerWorkflowBatches(state) {
+  return [...(state.productionBatches || [])]
+    .filter((batch) => batch.managerWorkflow === true)
+    .sort((a, b) => String(b.managerSubmittedAt || b.createdAt || "").localeCompare(String(a.managerSubmittedAt || a.createdAt || "")));
+}
+
+function managerWorkflowMetrics(state, role) {
+  const batches = managerWorkflowBatches(state);
+  const managerSubmitted = batches.filter((batch) => batch.status === "manager_submitted");
+  const supervisorConfirmed = batches.filter((batch) => batch.status === "supervisor_confirmed");
+  const awaitingApproval = batches.filter((batch) => batch.status === "store_keeper_submitted");
+  const label = role === "production_supervisor" ? "Awaiting my count" : "Awaiting supervisor count";
+  return `<div class="metric-grid production-metric-grid">
+    ${metricCard({ label, value: formatNumber(managerSubmitted.length), meta: "Manager reports awaiting independent count", iconName: "package" })}
+    ${metricCard({ label: "Supervisor confirmed", value: formatNumber(supervisorConfirmed.length), meta: "Waiting for Store Keeper receipt", iconName: "check" })}
+    ${metricCard({ label: "Store records to approve", value: formatNumber(awaitingApproval.length), meta: "CEO or Admin approval required", iconName: "orders" })}
+    ${metricCard({ label: "Completed receipts", value: formatNumber(batches.filter((batch) => batch.status === "approved").length), meta: "Added to finished-goods stock", iconName: "inventory" })}
+  </div>`;
+}
+
+function renderManagerOutputModal(state) {
+  const products = finishedProducts(state);
+  return `<div id="manager-output-modal" class="stock-modal-backdrop" hidden><section class="stock-modal production-workflow-modal" role="dialog" aria-modal="true">
+    ${modalHeader("Production output", "Submit stock produced", "js-close-manager-output")}
+    <form id="manager-output-form" class="manager-form-grid" novalidate>
+      <label class="field"><span>Product</span><select name="productId" required><option value="">Choose finished product</option>${products.map((product) => `<option value="${escapeHtml(product.id)}">${escapeHtml(productSelectionLabel(product))}</option>`).join("")}</select></label>
+      <label class="field"><span>Quantity produced</span><input name="producedQuantity" type="number" min="1" step="1" inputmode="numeric" required></label>
+      <label class="field"><span>Production date</span><input name="productionDate" type="date" value="${todayISO()}" required></label>
+      <label class="field span-full"><span>Production note</span><textarea name="notes" rows="3" placeholder="Optional batch or production note"></textarea></label>
+      <span class="field-error span-full" data-manager-output-error></span>
+      <div class="manager-form-actions span-full"><button class="button primary" type="submit">${icon("check")}<span>Submit produced stock</span></button></div>
+    </form>
+  </section></div>`;
+}
+
+function renderSupervisorConfirmationModal() {
+  return `<div id="supervisor-confirmation-modal" class="stock-modal-backdrop" hidden><section class="stock-modal production-workflow-modal" role="dialog" aria-modal="true">
+    ${modalHeader("Physical count", "Confirm produced stock received", "js-close-supervisor-confirmation")}
+    <form id="supervisor-confirmation-form" class="manager-form-grid" novalidate>
+      <input name="batchId" type="hidden">
+      <label class="field"><span>Batch number</span><input name="batchReference" readonly></label>
+      <label class="field"><span>Product</span><input name="productName" readonly></label>
+      <label class="field"><span>Manager reported</span><input name="managerProducedQuantity" readonly></label>
+      <label class="field"><span>Good stock counted</span><input name="goodQuantity" type="number" min="0" step="1" value="0" required></label>
+      <label class="field"><span>Damaged stock</span><input name="damagedQuantity" type="number" min="0" step="1" value="0" required></label>
+      <label class="field"><span>Rejected / other stock</span><input name="rejectedQuantity" type="number" min="0" step="1" value="0" required></label>
+      <label class="field span-full"><span>Count note</span><textarea name="notes" rows="3" placeholder="Optional count or condition note"></textarea></label>
+      <span class="field-error span-full" data-supervisor-confirmation-error></span>
+      <div class="manager-form-actions span-full"><button class="button primary" type="submit">${icon("check")}<span>Confirm and file report</span></button></div>
+    </form>
+  </section></div>`;
+}
+
+function renderManagerWorkflowReports(state, role) {
+  const rows = managerWorkflowBatches(state).map((batch) => {
+    const managerQuantity = Number(batch.managerProducedQuantity ?? batch.quantityProduced ?? 0);
+    const counted = Number(batch.quantityProduced || 0);
+    const confirmation = batch.supervisorConfirmedBy
+      ? `${batch.supervisorConfirmedBy}<div class="muted">${batch.supervisorConfirmedAt ? formatDateTime(batch.supervisorConfirmedAt) : "Confirmed"}</div>`
+      : '<span class="muted">Awaiting confirmation</span>';
+    const storeState = batch.status === "approved"
+      ? "Added to stock"
+      : batch.storeKeeperSubmittedBy
+        ? `Awaiting CEO/Admin approval<div class="muted">Recorded by ${escapeHtml(batch.storeKeeperSubmittedBy)}</div>`
+        : batch.status === "supervisor_confirmed"
+          ? "Awaiting Store Keeper physical receipt"
+          : "Waiting for supervisor";
+    const action = role === "production_supervisor" && batch.status === "manager_submitted"
+      ? textButton({ iconName: "check", label: "Count and confirm", className: "primary js-open-supervisor-confirmation", data: { "batch-id": batch.id } })
+      : "";
+    return `<tr data-search-index="${escapeHtml(`${batch.reference} ${batch.finishedProductName} ${batch.managerReportedBy} ${batch.supervisorConfirmedBy} ${batch.status}`.toLowerCase())}">
+      <td><strong>${escapeHtml(batch.reference)}</strong><div class="muted">${batch.managerSubmittedAt ? formatDateTime(batch.managerSubmittedAt) : "Submitted"}</div></td>
+      <td><strong>${escapeHtml(batch.finishedProductName)}</strong><div class="muted">Manager: ${escapeHtml(batch.managerReportedBy || batch.recordedBy || "Production Line Manager")}</div></td>
+      <td>${formatNumber(managerQuantity)}</td>
+      <td><strong>${batch.supervisorConfirmedBy ? `${formatNumber(counted)} good` : "Not yet counted"}</strong>${batch.supervisorConfirmedBy ? `<div class="muted">${formatNumber(batch.quantityDamaged || 0)} damaged · ${formatNumber(batch.quantityRejected || 0)} other</div>` : ""}</td>
+      <td>${confirmation}</td>
+      <td>${statusPill(batch.status || "manager_submitted")}<div class="muted">${storeState}</div></td>
+      <td><div class="row-actions">${action}</div></td>
+    </tr>`;
+  });
+  const heading = role === "production_supervisor" ? "Manager output awaiting confirmation" : "Production receipt trail";
+  const subtitle = role === "production_supervisor"
+    ? "Independently count the reported output, record damaged or other stock, and send the report to the Store Keeper."
+    : "Manager submission, supervisor confirmation, Store Keeper receipt, and final stock approval are retained together.";
+  return `<section class="panel">${panelHeader(heading, subtitle)}${table(["Batch", "Product / manager", "Manager output", "Supervisor count", "Confirmed by", "Status", "Actions"], rows, "No production output has been submitted")}</section>`;
+}
+
 export function renderProduction({ state }) {
   const role = currentUserRole(state);
-  if (!["production_manager", "production_supervisor", "ceo"].includes(role)) {
+  if (!["production_manager", "production_supervisor", "admin", "ceo"].includes(role)) {
     return `<section class="view"><section class="panel"><div class="empty-state">Production access is required.</div></section></section>`;
   }
-  const tabs = role === "production_supervisor" ? SUPERVISOR_TABS : MANAGER_TABS;
-  const tab = activeTab(role);
   const supervisor = role === "production_supervisor";
-  const submittedReportCount = (state.productionBatches || []).filter((batch) => batch.supervisorWorkflow && batch.status === "submitted").length;
   return `<section class="view production-view ${supervisor ? "production-supervisor-view" : "production-manager-view"}">
     <section class="ceo-command-strip production-command-strip">
-      <div><span class="eyebrow">${supervisor ? "Production Supervisor portal" : role === "ceo" ? "CEO production oversight" : "Production Line Manager portal"}</span><h2>${supervisor ? "Assigned production" : "Production control"}</h2><p>${supervisor ? "Run assigned plans; reports and issues notify the Production Line Manager, Admin, and CEO." : "Assign production, review batch reports, resolve issues, and control finished-goods approval."}</p></div>
+      <div><span class="eyebrow">${supervisor ? "Production Supervisor portal" : role === "production_manager" ? "Production Line Manager portal" : role === "admin" ? "Admin production oversight" : "CEO production oversight"}</span><h2>${supervisor ? "Confirm produced stock" : role === "production_manager" ? "Submit produced stock" : "Production receipt oversight"}</h2><p>${supervisor ? "Count the manager's reported output, identify damaged or other stock, and file the confirmation for the Store Keeper." : role === "production_manager" ? "Submit only the quantity produced. The Production Supervisor independently confirms it before stock can move forward." : "Follow each production report through supervisor count, Store Keeper receipt, and final stock approval."}</p></div>
       <div class="row-actions">
-        ${supervisor
-          ? textButton({ iconName: "alert", label: "Report issue", className: "js-open-production-issue" })
-          : `<a class="button ${submittedReportCount ? "primary" : ""}" href="#/production?tab=reports">${icon("check")}<span>Review submitted reports${submittedReportCount ? ` (${formatNumber(submittedReportCount)})` : ""}</span></a>${textButton({ iconName: "orders", label: "Create plan", className: `${submittedReportCount ? "" : "primary "}js-open-production-plan` })}`}
+        ${role === "production_manager" ? textButton({ iconName: "package", label: "Record produced stock", className: "primary js-open-manager-output" }) : ""}
+        ${supervisor ? textButton({ iconName: "alert", label: "Report issue", className: "js-open-production-issue" }) : ""}
       </div>
     </section>
     <div class="field-error production-sync-status" data-production-sync-status role="status" aria-live="polite"></div>
-    ${supervisor ? supervisorMetrics(state) : managerMetrics(state)}
-    <nav class="subtab-nav stock-subtabs" aria-label="Production pages">${tabs.map((item) => `<a class="subtab-link ${item.id === tab ? "is-active" : ""}" href="#/production?tab=${item.id}" aria-current="${item.id === tab ? "page" : "false"}">${escapeHtml(item.label)}</a>`).join("")}</nav>
-    ${tab === "issues" ? renderIssues(state, role) : supervisor ? renderSupervisorPlans(state) : tab === "reports" ? renderManagerReports(state) : renderManagerPlans(state)}
-    ${supervisor ? renderSupervisorModals(state) : renderManagerModal(state)}
+    ${managerWorkflowMetrics(state, role)}
+    ${renderManagerWorkflowReports(state, role)}
+    ${supervisor ? renderSupervisorModals(state) : ""}
+    ${role === "production_manager" ? renderManagerOutputModal(state) : ""}
+    ${supervisor ? renderSupervisorConfirmationModal() : ""}
   </section>`;
 }
 
 export function bindProduction({ root, store, operationalSync, signal }) {
   const role = currentUserRole(store.getState());
+  const managerOutputModal = qs("#manager-output-modal", root);
+  const supervisorConfirmationModal = qs("#supervisor-confirmation-modal", root);
   const planModal = qs("#production-plan-modal", root);
   const reportModal = qs("#supervisor-report-modal", root);
   const issueModal = qs("#production-issue-modal", root);
   const planForm = qs("#assigned-production-plan-form", root);
+  const managerOutputForm = qs("#manager-output-form", root);
+  const supervisorConfirmationForm = qs("#supervisor-confirmation-form", root);
   const reportForm = qs("#supervisor-batch-report-form", root);
   const issueForm = qs("#production-issue-form", root);
   const syncStatus = qs("[data-production-sync-status]", root);
@@ -345,8 +433,11 @@ export function bindProduction({ root, store, operationalSync, signal }) {
   };
 
   qs(".js-open-production-plan", root)?.addEventListener("click", () => open(planModal), { signal });
+  qs(".js-open-manager-output", root)?.addEventListener("click", () => open(managerOutputModal), { signal });
   qs(".js-open-production-issue", root)?.addEventListener("click", () => open(issueModal), { signal });
   qsa(".js-close-production-plan", root).forEach((button) => button.addEventListener("click", () => close(planModal), { signal }));
+  qsa(".js-close-manager-output", root).forEach((button) => button.addEventListener("click", () => close(managerOutputModal), { signal }));
+  qsa(".js-close-supervisor-confirmation", root).forEach((button) => button.addEventListener("click", () => close(supervisorConfirmationModal), { signal }));
   qsa(".js-close-supervisor-report", root).forEach((button) => button.addEventListener("click", () => close(reportModal), { signal }));
   qsa(".js-close-production-issue", root).forEach((button) => button.addEventListener("click", () => close(issueModal), { signal }));
 
@@ -367,6 +458,71 @@ export function bindProduction({ root, store, operationalSync, signal }) {
       notes: data.get("notes"),
       message: "Production plan created and assigned"
     }, { errorTarget: error, onSuccess: () => close(planModal) });
+  }, { signal });
+
+  managerOutputForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(managerOutputForm);
+    const productId = String(data.get("productId") || "");
+    const producedQuantity = Number(data.get("producedQuantity") || 0);
+    const productionDate = String(data.get("productionDate") || "");
+    const error = qs("[data-manager-output-error]", managerOutputForm);
+    if (!productId || !Number.isInteger(producedQuantity) || producedQuantity <= 0 || !productionDate) {
+      if (error) error.textContent = "Choose a product, enter the whole quantity produced, and select the production date.";
+      return;
+    }
+    await dispatchAndConfirm({
+      type: "SUBMIT_MANAGER_PRODUCTION_REPORT",
+      productId,
+      producedQuantity,
+      productionDate,
+      notes: data.get("notes"),
+      message: "Produced stock submitted to the Production Supervisor, Admin, and CEO"
+    }, { errorTarget: error, onSuccess: () => close(managerOutputModal) });
+  }, { signal });
+
+  qsa(".js-open-supervisor-confirmation", root).forEach((button) => button.addEventListener("click", () => {
+    const batch = managerWorkflowBatches(store.getState()).find((item) => item.id === button.dataset.batchId);
+    if (!batch || !supervisorConfirmationForm) return;
+    const managerQuantity = Number(batch.managerProducedQuantity ?? batch.quantityProduced ?? 0);
+    supervisorConfirmationForm.elements.batchId.value = batch.id;
+    supervisorConfirmationForm.elements.batchReference.value = batch.reference || "";
+    supervisorConfirmationForm.elements.productName.value = batch.finishedProductName || "";
+    supervisorConfirmationForm.elements.managerProducedQuantity.value = managerQuantity;
+    ["goodQuantity", "damagedQuantity", "rejectedQuantity"].forEach((name) => {
+      supervisorConfirmationForm.elements[name].max = String(managerQuantity);
+      supervisorConfirmationForm.elements[name].value = "0";
+    });
+    supervisorConfirmationForm.elements.notes.value = "";
+    open(supervisorConfirmationModal);
+  }, { signal }));
+
+  supervisorConfirmationForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const data = new FormData(supervisorConfirmationForm);
+    const managerQuantity = Number(data.get("managerProducedQuantity") || 0);
+    const goodQuantity = Number(data.get("goodQuantity") || 0);
+    const damagedQuantity = Number(data.get("damagedQuantity") || 0);
+    const rejectedQuantity = Number(data.get("rejectedQuantity") || 0);
+    const countedTotal = goodQuantity + damagedQuantity + rejectedQuantity;
+    const error = qs("[data-supervisor-confirmation-error]", supervisorConfirmationForm);
+    if ([goodQuantity, damagedQuantity, rejectedQuantity].some((quantity) => !Number.isInteger(quantity) || quantity < 0) || countedTotal <= 0) {
+      if (error) error.textContent = "Enter whole-number good, damaged, and other quantities. The total count must be greater than zero.";
+      return;
+    }
+    if (countedTotal > managerQuantity) {
+      if (error) error.textContent = `Your total count cannot exceed the manager's reported ${formatNumber(managerQuantity)} units.`;
+      return;
+    }
+    await dispatchAndConfirm({
+      type: "CONFIRM_MANAGER_PRODUCTION_REPORT",
+      batchId: data.get("batchId"),
+      goodQuantity,
+      damagedQuantity,
+      rejectedQuantity,
+      notes: data.get("notes"),
+      message: "Physical count confirmed and sent to the Store Keeper, Admin, and CEO"
+    }, { errorTarget: error, onSuccess: () => close(supervisorConfirmationModal) });
   }, { signal });
 
   qsa(".js-start-production-plan", root).forEach((button) => button.addEventListener("click", async () => {
@@ -482,5 +638,5 @@ export function bindProduction({ root, store, operationalSync, signal }) {
     );
   }, { signal }));
 
-  if (!["production_manager", "production_supervisor", "ceo"].includes(role)) return;
+  if (!["production_manager", "production_supervisor", "admin", "ceo"].includes(role)) return;
 }

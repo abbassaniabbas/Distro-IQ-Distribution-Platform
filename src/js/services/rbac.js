@@ -14,12 +14,12 @@ export const ROLE_OPTIONS = [
   {
     value: "production_manager",
     label: "Production Line Manager",
-    description: "Production plans, work assignments, batches, quality control, finished-goods transfer, issues, and reports"
+    description: "Submit quantities produced for independent confirmation and stock receiving"
   },
   {
     value: "production_supervisor",
     label: "Production Supervisor",
-    description: "Record completed finished products"
+    description: "Count, confirm, and report received production output"
   },
   {
     value: "admin",
@@ -148,7 +148,7 @@ const ROLE_PERMISSIONS = {
     canViewAssignedProduction: true
   },
   admin: {
-    nav: ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"],
+    nav: ["dashboard", "orders", "inventory", "production", "retailers", "invoices", "team", "activity-log", "settings"],
     canViewCompanyWide: true,
     canLogSalesReturns: false,
     canManageProducts: false,
@@ -285,7 +285,9 @@ export function scopeStateForCurrentRole(state) {
       (accountName && String(plan.assignedSupervisorName || "").trim().toLowerCase() === accountName)
     ));
     const planIds = new Set(productionPlans.map((plan) => plan.id));
-    const productionBatches = (state.productionBatches || []).filter((batch) => planIds.has(batch.planId));
+    const productionBatches = (state.productionBatches || []).filter((batch) => (
+      planIds.has(batch.planId) || batch.managerWorkflow === true
+    ));
     const productionIssues = (state.productionIssues || []).filter((issue) => (
       planIds.has(issue.planId) ||
       (userId && String(issue.reportedByUserId || "") === userId)

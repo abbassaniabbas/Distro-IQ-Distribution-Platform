@@ -14,7 +14,7 @@ import {
   productSelectionLabel,
   statusText
 } from "../services/formatters.js?v=20260805h";
-import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js?v=20260805b";
+import { currentUserPermissions, currentUserRole, salesRepresentativeNames } from "../services/rbac.js?v=20260813a";
 import { getInvoiceRecords, openInvoiceQuickView } from "../services/invoices.js?v=20260804i";
 import { loadSharedProductImages, purgeSharedProductImages, saveSharedProductImage } from "../services/backend.js";
 import { productImageStorageKey, removeProductImage, saveProductImage } from "../services/product-images.js";
@@ -26,7 +26,8 @@ import { LOGO_ACCEPT, LOGO_HELP_TEXT, readLogoFile, validateLogoFile } from "../
 import { escapeHtml, qs, qsa } from "../ui/dom.js";
 import { iconButton, panelHeader, progressBar, statusPill, table, textButton } from "../ui/components.js";
 import { icon } from "../ui/icons.js?v=20260722";
-import { confirmActionDialog, requestTextDialog } from "../ui/action-dialog.js";
+import { confirmActionDialog, requestNumberDialog, requestTextDialog } from "../ui/action-dialog.js";
+import { showToast } from "../ui/toast.js";
 import { bindAdjustments, renderAdjustmentContent } from "./adjustments.js?v=20260809a";
 import {
   enabledPackagingTypes,
@@ -480,7 +481,7 @@ function renderStockProductModal(state, permissions) {
         </div>
         <label class="field stock-sku-field">
           <span>SKU</span>
-          <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products, state.client?.skuFormat))}" readonly required>
+          <input name="sku" value="${escapeHtml(nextAutomaticProductId(state.products, state.client?.skuFormat))}" required>
         </label>
         <label class="field">
           <span>Stock category</span>
@@ -1787,6 +1788,26 @@ function renderStockAdditionApprovalQueue(state) {
   `;
 }
 
+function renderProductionReceiptQueue(state) {
+  if (currentUserRole(state) !== "store_keeper") return "";
+  const batches = [...(state.productionBatches || [])]
+    .filter((batch) => batch.managerWorkflow === true && batch.status === "supervisor_confirmed")
+    .sort((a, b) => String(b.supervisorConfirmedAt || "").localeCompare(String(a.supervisorConfirmedAt || "")));
+  const rows = batches.map((batch) => `
+    <tr data-search-index="${escapeHtml(`${batch.reference} ${batch.finishedProductName} ${batch.supervisorConfirmedBy}`.toLowerCase())}">
+      <td><strong>${escapeHtml(batch.reference)}</strong><div class="muted">${batch.supervisorConfirmedAt ? formatDate(String(batch.supervisorConfirmedAt).slice(0, 10)) : "Confirmed"}</div></td>
+      <td><strong>${escapeHtml(batch.finishedProductName)}</strong><div class="muted">Manager reported ${formatNumber(batch.managerProducedQuantity || 0)}</div></td>
+      <td><strong>${formatNumber(batch.quantityProduced || 0)} good</strong><div class="muted">${formatNumber(batch.quantityDamaged || 0)} damaged · ${formatNumber(batch.quantityRejected || 0)} other</div></td>
+      <td>${escapeHtml(batch.supervisorConfirmedBy || "Production Supervisor")}</td>
+      <td><div class="row-actions">${textButton({ iconName: "check", label: "Confirm physical count", className: "primary js-confirm-production-receipt", data: { "batch-id": batch.id } })}</div></td>
+    </tr>
+  `);
+  return `<section class="panel production-receipt-queue">
+    ${panelHeader("Production stock awaiting physical receipt", "Verify the supervisor's counted good stock in the store, then submit your own physical count for CEO or Admin approval.")}
+    ${table(["Batch", "Product / manager output", "Supervisor count", "Supervisor", "Action"], rows, "No supervisor-confirmed production stock is awaiting receipt")}
+  </section>`;
+}
+
 function renderStockHealthPage(state, permissions) {
   const canAddStock = permissions.canManageProducts || permissions.canAddStock;
   const visibleProducts = permissions.canManageProducts
@@ -1794,6 +1815,7 @@ function renderStockHealthPage(state, permissions) {
     : state.products.filter((product) => product.status !== "inactive");
 
   return `
+    ${renderProductionReceiptQueue(state)}
     ${renderStockAdditionApprovalQueue(state)}
     <section class="panel inventory-layout">
       <div class="toolbar stock-health-toolbar">
@@ -3250,6 +3272,7 @@ export function bindInventory({ root, store, operationalSync, signal }) {
     productForm.reset();
     productForm.elements.productId.value = "";
     productForm.elements.sku.value = nextAutomaticProductId(store.getState().products, store.getState().client?.skuFormat);
+    delete productForm.elements.sku.dataset.manuallyEdited;
     productForm.elements.name.readOnly = false;
     sessionAddedProductIds = [];
     activeProductFamily = "";
@@ -3469,6 +3492,7 @@ export function bindInventory({ root, store, operationalSync, signal }) {
 
   function updateDescriptiveSku() {
     if (!productForm || String(productForm.elements.productId?.value || "").trim()) return;
+    if (productForm.elements.sku?.dataset.manuallyEdited === "true") return;
     const selectedUnit = String(productForm.elements.sizeUnit?.value || "").trim();
     const sizeUnit = selectedUnit === "other"
       ? String(productForm.elements.sizeUnitOther?.value || "").trim()
@@ -3483,6 +3507,10 @@ export function bindInventory({ root, store, operationalSync, signal }) {
   ["name", "sizeValue", "sizeUnit", "sizeUnitOther"].forEach((fieldName) => {
     productForm?.elements[fieldName]?.addEventListener("input", updateDescriptiveSku);
     productForm?.elements[fieldName]?.addEventListener("change", updateDescriptiveSku);
+  });
+
+  productForm?.elements.sku?.addEventListener("input", () => {
+    productForm.elements.sku.dataset.manuallyEdited = "true";
   });
 
   productForm?.addEventListener("submit", async (event) => {
@@ -3831,6 +3859,7 @@ export function bindInventory({ root, store, operationalSync, signal }) {
     if (productMessage) productMessage.textContent = "";
     productForm.elements.productId.value = product.id;
     productForm.elements.sku.value = product.id;
+    delete productForm.elements.sku.dataset.manuallyEdited;
     productForm.elements.name.value = stockProductBaseName(product);
     productForm.elements.name.readOnly = false;
     productForm.elements.productType.value = product.productType || "";
@@ -4272,6 +4301,40 @@ export function bindInventory({ root, store, operationalSync, signal }) {
   qsa(".js-restock-product", root).forEach((button) => {
     button.addEventListener("click", () => {
       openRestockModal(button.dataset.productId);
+    });
+  });
+
+  qsa(".js-confirm-production-receipt", root).forEach((button) => {
+    button.addEventListener("click", async () => {
+      const batch = (store.getState().productionBatches || []).find((item) => item.id === button.dataset.batchId && item.managerWorkflow);
+      if (!batch || batch.status !== "supervisor_confirmed") return;
+      const physicalQuantity = await requestNumberDialog({
+        title: "Confirm physical production count",
+        message: `${batch.finishedProductName}: the supervisor confirmed ${formatNumber(batch.quantityProduced || 0)} good units. Enter the quantity physically present in the store.`,
+        label: "Physical good-stock count",
+        min: "1",
+        step: "1",
+        confirmLabel: "Continue"
+      });
+      if (physicalQuantity === null) return;
+      const quantity = Number(physicalQuantity);
+      const confirmedGood = Number(batch.quantityProduced || 0);
+      if (!Number.isInteger(quantity) || quantity <= 0 || quantity > confirmedGood) {
+        showToast(`Enter a whole number from 1 to ${formatNumber(confirmedGood)}. The physical count cannot exceed the supervisor's confirmed good stock.`);
+        return;
+      }
+      const approved = await confirmActionDialog({
+        title: "Submit physical stock receipt?",
+        message: `${formatNumber(quantity)} ${batch.finishedProductName} will be sent to the CEO or Admin for approval. It will not be added to live stock until they approve it.`,
+        confirmLabel: "Submit for approval"
+      });
+      if (!approved) return;
+      store.dispatch({
+        type: "SUBMIT_PRODUCTION_STORE_RECEIPT",
+        batchId: batch.id,
+        physicalQuantity: quantity,
+        message: "Physical production receipt sent for CEO or Admin approval"
+      });
     });
   });
 

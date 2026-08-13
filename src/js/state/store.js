@@ -2339,6 +2339,94 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "SUBMIT_MANAGER_PRODUCTION_REPORT": {
+      if (currentUserRole(state) !== "production_manager") return state;
+      const product = state.products.find((item) => item.id === action.productId);
+      const quantityProduced = Number(action.producedQuantity || 0);
+      const productionDate = dateOnly(action.productionDate);
+      if (
+        !product ||
+        product.status === "inactive" ||
+        stockCategoryIdForProduct(product) !== "finished_products" ||
+        !Number.isInteger(quantityProduced) || quantityProduced <= 0 || !isValidISODate(productionDate)
+      ) return state;
+
+      const actor = getCurrentActor(state);
+      const submittedAt = new Date().toISOString();
+      const reference = nextFormattedId("BAT-{0000}", (state.productionBatches || []).map((batch) => batch.reference), "BAT");
+      const batch = {
+        id: createId("BATCH"),
+        clientId: state.client?.id || "",
+        reference,
+        batchDate: productionDate,
+        finishedProductId: product.id,
+        finishedProductName: product.name,
+        outputUnit: product.unit || "unit",
+        managerWorkflow: true,
+        managerProducedQuantity: quantityProduced,
+        managerReportedBy: actor.name,
+        managerReportedByUserId: actor.userId || "",
+        managerSubmittedAt: submittedAt,
+        quantityProduced,
+        quantityDamaged: 0,
+        quantityRejected: 0,
+        notes: String(action.notes || "").trim().slice(0, 500),
+        status: "manager_submitted",
+        storeReceiptStatus: "awaiting_supervisor",
+        createdAt: submittedAt,
+        updatedAt: submittedAt
+      };
+      state.productionBatches = [batch, ...(state.productionBatches || [])];
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "submitted",
+        recordType: "production_output",
+        recordLabel: batch.reference,
+        summary: `${actor.name} submitted ${quantityProduced} ${product.name} produced for supervisor confirmation`,
+        notificationRoles: ["production_supervisor", "admin", "ceo"],
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
+    case "CONFIRM_MANAGER_PRODUCTION_REPORT": {
+      if (currentUserRole(state) !== "production_supervisor") return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId && item.managerWorkflow);
+      const managerProducedQuantity = Number(batch?.managerProducedQuantity ?? 0);
+      const goodQuantity = Number(action.goodQuantity || 0);
+      const damagedQuantity = Number(action.damagedQuantity || 0);
+      const rejectedQuantity = Number(action.rejectedQuantity || 0);
+      const countedTotal = goodQuantity + damagedQuantity + rejectedQuantity;
+      if (
+        !batch || batch.status !== "manager_submitted" ||
+        [goodQuantity, damagedQuantity, rejectedQuantity].some((quantity) => !Number.isInteger(quantity) || quantity < 0) ||
+        countedTotal <= 0 || countedTotal > managerProducedQuantity
+      ) return state;
+
+      const actor = getCurrentActor(state);
+      const confirmedAt = new Date().toISOString();
+      batch.quantityProduced = goodQuantity;
+      batch.quantityDamaged = damagedQuantity;
+      batch.quantityRejected = rejectedQuantity;
+      batch.supervisorConfirmedBy = actor.name;
+      batch.supervisorConfirmedByUserId = actor.userId || "";
+      batch.supervisorConfirmedAt = confirmedAt;
+      batch.supervisorNotes = String(action.notes || "").trim().slice(0, 500);
+      batch.status = "supervisor_confirmed";
+      batch.storeReceiptStatus = "awaiting_store_keeper";
+      batch.updatedAt = confirmedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "confirmed",
+        recordType: "production_output",
+        recordLabel: batch.reference,
+        summary: `${actor.name} confirmed ${batch.reference}: ${goodQuantity} good, ${damagedQuantity} damaged, ${rejectedQuantity} other`,
+        notificationRoles: ["store_keeper", "admin", "ceo"],
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
     case "SUBMIT_SUPERVISOR_BATCH_REPORT": {
       if (currentUserRole(state) !== "production_supervisor") return state;
       const plan = (state.productionPlans || []).find((item) => item.id === action.planId);
@@ -4733,6 +4821,59 @@ function reducer(currentState, action) {
       return state;
     }
 
+    case "SUBMIT_PRODUCTION_STORE_RECEIPT": {
+      if (currentUserRole(state) !== "store_keeper") return state;
+      const batch = (state.productionBatches || []).find((item) => item.id === action.batchId && item.managerWorkflow);
+      const physicalQuantity = Number(action.physicalQuantity || 0);
+      const confirmedGoodQuantity = Number(batch?.quantityProduced || 0);
+      const product = state.products.find((item) => item.id === batch?.finishedProductId);
+      if (
+        !batch || batch.status !== "supervisor_confirmed" || !product ||
+        !Number.isInteger(physicalQuantity) || physicalQuantity <= 0 || physicalQuantity > confirmedGoodQuantity
+      ) return state;
+      const actor = getCurrentActor(state);
+      const receivedAt = new Date().toISOString();
+      const request = {
+        id: createId("SAR"),
+        clientId: state.client?.id,
+        kind: "production_receipt",
+        productionBatchId: batch.id,
+        batchReference: batch.reference,
+        productId: product.id,
+        productName: product.name,
+        quantity: physicalQuantity,
+        supervisorConfirmedQuantity: confirmedGoodQuantity,
+        managerProducedQuantity: Number(batch.managerProducedQuantity || 0),
+        requestedByUserId: String(state.user?.id || ""),
+        requestedBy: actor.name,
+        requestedAt: receivedAt,
+        physicalReceiptNote: String(action.note || "").trim().slice(0, 500),
+        status: "pending",
+        reviewNote: "",
+        reviewedAt: "",
+        reviewedBy: ""
+      };
+      state.stockAdditionRequests = [request, ...(state.stockAdditionRequests || [])];
+      batch.status = "store_keeper_submitted";
+      batch.storeReceiptStatus = "awaiting_ceo_admin_approval";
+      batch.storeKeeperSubmittedBy = actor.name;
+      batch.storeKeeperSubmittedByUserId = actor.userId || "";
+      batch.storeKeeperSubmittedAt = receivedAt;
+      batch.storeKeeperPhysicalQuantity = physicalQuantity;
+      batch.storeKeeperReceiptNote = request.physicalReceiptNote;
+      batch.updatedAt = receivedAt;
+      appendActivityLog(state, {
+        clientId: state.client?.id,
+        actionType: "submitted",
+        recordType: "production_store_receipt",
+        recordLabel: batch.reference,
+        summary: `${actor.name} physically confirmed ${physicalQuantity} ${product.name} from ${batch.reference}; CEO or Admin approval is required before stock is added`,
+        notificationRoles: ["admin", "ceo"],
+        relatedUserIds: actor.userId ? [actor.userId] : []
+      });
+      return state;
+    }
+
     case "APPROVE_STOCK_ADDITION_REQUEST": {
       if (!["ceo", "admin"].includes(currentUserRole(state))) return state;
       const request = (state.stockAdditionRequests || []).find((item) => item.id === action.requestId);
@@ -4774,6 +4915,18 @@ function reducer(currentState, action) {
       request.reviewNote = String(action.note || "Approved").trim().slice(0, 500);
       request.reviewedAt = new Date().toISOString();
       request.reviewedBy = currentActorName(state);
+      if (request.kind === "production_receipt") {
+        const batch = (state.productionBatches || []).find((item) => item.id === request.productionBatchId && item.managerWorkflow);
+        if (batch) {
+          batch.status = "approved";
+          batch.storeReceiptStatus = "stock_added";
+          batch.approvedAt = request.reviewedAt;
+          batch.approvedBy = request.reviewedBy;
+          batch.transferredAt = request.reviewedAt;
+          batch.transferredQuantity = Number(request.quantity || 0);
+          batch.updatedAt = request.reviewedAt;
+        }
+      }
       appendActivityLog(state, {
         clientId: state.client?.id,
         actionType: "approved",
@@ -4792,6 +4945,15 @@ function reducer(currentState, action) {
       request.reviewNote = String(action.note || "Rejected").trim().slice(0, 500);
       request.reviewedAt = new Date().toISOString();
       request.reviewedBy = currentActorName(state);
+      if (request.kind === "production_receipt") {
+        const batch = (state.productionBatches || []).find((item) => item.id === request.productionBatchId && item.managerWorkflow);
+        if (batch) {
+          batch.status = "supervisor_confirmed";
+          batch.storeReceiptStatus = "awaiting_store_keeper";
+          batch.storeKeeperRejectionNote = request.reviewNote;
+          batch.updatedAt = request.reviewedAt;
+        }
+      }
       appendActivityLog(state, {
         clientId: state.client?.id,
         actionType: "rejected",

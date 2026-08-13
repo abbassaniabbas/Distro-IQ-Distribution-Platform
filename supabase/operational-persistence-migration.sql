@@ -132,6 +132,33 @@ begin
     raise exception 'Only a Store Keeper can submit a stock addition request';
   end if;
 
+  if upper(trim(p_action_type)) = 'SUBMIT_PRODUCTION_STORE_RECEIPT'
+    and v_role <> 'store_keeper' then
+    raise exception 'Only a Store Keeper can submit a physical production receipt';
+  end if;
+
+  if upper(trim(p_action_type)) = 'SUBMIT_PRODUCTION_STORE_RECEIPT'
+    and not (
+      exists (
+        select 1
+        from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as batch_item(value)
+        where batch_item.value ->> 'collection' = 'productionBatches'
+          and coalesce(batch_item.value -> 'data' ->> 'managerWorkflow', 'false') = 'true'
+          and coalesce(batch_item.value -> 'data' ->> 'status', '') = 'store_keeper_submitted'
+          and coalesce(batch_item.value -> 'data' ->> 'storeKeeperSubmittedByUserId', '') = auth.uid()::text
+      )
+      and exists (
+        select 1
+        from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as receipt_item(value)
+        where receipt_item.value ->> 'collection' = 'stockAdditionRequests'
+          and coalesce(receipt_item.value -> 'data' ->> 'kind', '') = 'production_receipt'
+          and coalesce(receipt_item.value -> 'data' ->> 'status', '') = 'pending'
+          and coalesce(receipt_item.value -> 'data' ->> 'requestedByUserId', '') = auth.uid()::text
+      )
+    ) then
+    raise exception 'A Store Keeper may submit only their physical receipt for supervisor-confirmed production stock';
+  end if;
+
   if upper(trim(p_action_type)) in ('APPROVE_STOCK_ADDITION_REQUEST', 'REJECT_STOCK_ADDITION_REQUEST')
     and v_role not in ('ceo', 'admin') then
     raise exception 'Only an Admin or CEO can review a stock addition request';
@@ -154,7 +181,8 @@ begin
       'TRANSFER_PRODUCTION_BATCH', 'REPORT_PRODUCTION_ISSUE',
       'RESOLVE_PRODUCTION_ISSUE', 'CREATE_ASSIGNED_PRODUCTION_PLAN',
       'APPROVE_SUPERVISOR_BATCH_REPORT', 'FLAG_SUPERVISOR_BATCH_REPORT',
-      'REJECT_SUPERVISOR_BATCH_REPORT', 'CLOSE_PRODUCTION_PLAN'
+      'REJECT_SUPERVISOR_BATCH_REPORT', 'CLOSE_PRODUCTION_PLAN',
+      'SUBMIT_MANAGER_PRODUCTION_REPORT'
     ) then
     raise exception 'Production Line Manager access is limited to production workflows';
   end if;
@@ -162,6 +190,7 @@ begin
   if v_role = 'production_supervisor'
     and upper(trim(p_action_type)) not in (
       'START_ASSIGNED_PRODUCTION_PLAN', 'SUBMIT_SUPERVISOR_BATCH_REPORT',
+      'CONFIRM_MANAGER_PRODUCTION_REPORT',
       'REPORT_PRODUCTION_ISSUE'
     ) then
     raise exception 'Production Supervisor access is limited to assigned production work';
@@ -181,6 +210,11 @@ begin
       ) or (
         supervisor_item.value ->> 'collection' = 'productionBatches'
         and coalesce(supervisor_item.value -> 'data' ->> 'recordedByUserId', '') <> auth.uid()::text
+        and not (
+          upper(trim(p_action_type)) = 'CONFIRM_MANAGER_PRODUCTION_REPORT'
+          and coalesce(supervisor_item.value -> 'data' ->> 'supervisorConfirmedByUserId', '') = auth.uid()::text
+          and coalesce(supervisor_item.value -> 'data' ->> 'managerWorkflow', 'false') = 'true'
+        )
       ) or (
         supervisor_item.value ->> 'collection' = 'productionIssues'
         and coalesce(supervisor_item.value -> 'data' ->> 'reportedByUserId', '') <> auth.uid()::text
@@ -205,6 +239,26 @@ begin
     raise exception 'Good quantity cannot exceed the planned production quantity';
   end if;
 
+  if v_role = 'production_supervisor'
+    and upper(trim(p_action_type)) = 'CONFIRM_MANAGER_PRODUCTION_REPORT'
+    and exists (
+      select 1
+      from jsonb_array_elements(coalesce(p_records, '[]'::jsonb)) as batch_item(value)
+      join public.workspace_operational_records as saved_batch
+        on saved_batch.client_id = p_client_id
+        and saved_batch.collection_name = 'productionBatches'
+        and saved_batch.record_id = batch_item.value ->> 'id'
+      where batch_item.value ->> 'collection' = 'productionBatches'
+        and coalesce(saved_batch.record_data ->> 'status', '') = 'manager_submitted'
+        and (
+          coalesce(nullif(batch_item.value -> 'data' ->> 'quantityProduced', '')::numeric, 0)
+          + coalesce(nullif(batch_item.value -> 'data' ->> 'quantityDamaged', '')::numeric, 0)
+          + coalesce(nullif(batch_item.value -> 'data' ->> 'quantityRejected', '')::numeric, 0)
+        ) > coalesce(nullif(saved_batch.record_data ->> 'managerProducedQuantity', '')::numeric, 0)
+    ) then
+    raise exception 'Supervisor count cannot exceed the quantity reported by the Production Line Manager';
+  end if;
+
   v_allowed_collections := case v_role
     when 'ceo' then array[
       'products', 'stockCategories', 'stockAssignments', 'stockTransactions',
@@ -216,7 +270,7 @@ begin
       'products', 'stockAssignments', 'stockTransactions', 'retailers', 'orders',
       'invoices', 'salesReports', 'correctionRequests', 'stockRequests',
       'stockAdditionRequests', 'purchaseOrders', 'procurementOrders', 'routes', 'creditLimits',
-      'creditLimitHistory', 'activityLogs'
+      'creditLimitHistory', 'productionBatches', 'productionPlans', 'productionIssues', 'activityLogs'
     ]
     when 'store_keeper' then array[
       'products', 'stockCategories', 'stockAssignments', 'stockTransactions',

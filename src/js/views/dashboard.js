@@ -31,7 +31,7 @@ import { icon } from "../ui/icons.js?v=20260722";
 import { requestNumberDialog, requestTextDialog } from "../ui/action-dialog.js";
 import { bindCeoDataDeletion, ceoDeleteControls, ceoSelectAllCheckbox, ceoSelectionCell } from "../ui/ceo-data-deletion.js?v=20260724b";
 import { effectivePiecePrice, packagingLineAmount, packagingMultiplier, packagingOption, packagingQuantityLabel, packagingUnitPrice, productPackagingTypes, quantityInPieces } from "../services/packaging.js";
-import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260809a";
+import { bindInventory, renderCeoQuickStockActions, renderRecordCorrectionModal, renderStoreKeeperDispatchAction } from "./inventory.js?v=20260813a";
 
 const WALK_IN_CUSTOMER_ID = "__walk_in__";
 

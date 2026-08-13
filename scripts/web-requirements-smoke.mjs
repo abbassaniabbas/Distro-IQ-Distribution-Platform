@@ -437,6 +437,9 @@ assert.match(operationalMigrationSql, /when 'store_keeper' then array\[[\s\S]*?'
 assert.match(operationalMigrationSql, /when 'production_manager' then array\[[\s\S]*?'productionPlans', 'retailers'/, "the shared customer collection must be available across every company portal");
 assert.match(operationalMigrationSql, /v_role = 'production_supervisor'[\s\S]*START_ASSIGNED_PRODUCTION_PLAN[\s\S]*SUBMIT_SUPERVISOR_BATCH_REPORT[\s\S]*when 'production_supervisor' then array\[[\s\S]*'products', 'productionBatches', 'productionPlans', 'productionIssues', 'activityLogs'/, "backend sync must restrict Production Supervisors to assigned plan, batch report, and issue records");
 assert.match(operationalMigrationSql, /SUBMIT_SUPERVISOR_BATCH_REPORT'[\s\S]*quantityProduced[\s\S]*targetQuantity[\s\S]*Good quantity cannot exceed/, "backend sync must reject good output above the saved plan target");
+assert.match(operationalMigrationSql, /SUBMIT_MANAGER_PRODUCTION_REPORT[\s\S]*CONFIRM_MANAGER_PRODUCTION_REPORT/, "backend sync must permit the manager submission and supervisor confirmation handoff");
+assert.match(operationalMigrationSql, /when 'admin' then array\[[\s\S]*'productionBatches'/, "Admin sync access must include production reports for oversight and approval");
+assert.match(operationalMigrationSql, /SUBMIT_PRODUCTION_STORE_RECEIPT[\s\S]*Only a Store Keeper can submit a physical production receipt/, "only Store Keepers may submit physical production receipts");
 assert.match(productionSupervisorRoleSql, /memberships_role_check[\s\S]*production_supervisor[\s\S]*invites_role_check/, "the Supabase role migration must allow Production Supervisor memberships and invitations");
 assert.match(productionSupervisorRoleSql, /set_membership_role[\s\S]*production_supervisor/, "the CEO must be able to assign the Production Supervisor role in Supabase");
 const workspaceResetSql = readFileSync(new URL("../supabase/workspace-data-reset.sql", import.meta.url), "utf8");
@@ -1508,7 +1511,8 @@ globalThis.window.location.hash = "#/inventory?tab=stock-health";
 const storeKeeperInventory = renderInventory({ state: store.getState() });
 assert.doesNotMatch(storeKeeperInventory, /<h3>Plantain Chips<\/h3>/, "inactive products must be hidden from Store Keeper stock cards");
 assert.doesNotMatch(storeKeeperInventory, /<dt>Region<\/dt>/, "stock product details must not show Region");
-assert.match(storeKeeperInventory, /name="sku" value="PRD-\d+" readonly/, "new products must receive an automatic SKU before the descriptive fields are entered");
+assert.match(storeKeeperInventory, /name="sku" value="PRD-\d+" required/, "new products must receive an automatic SKU that staff can edit before saving");
+assert.doesNotMatch(storeKeeperInventory, /name="sku"[^>]+readonly/, "the SKU textbox must remain editable");
 assert.match(storeKeeperInventory, /field stock-sku-field/, "SKU field must have its own spacing hook");
 assert.match(storeKeeperInventory, /name="productType"/);
 assert.match(storeKeeperInventory, /name="sizeValue" type="number"/);
@@ -1970,6 +1974,55 @@ assert.equal((productionManagerInventory.match(/class="subtab-link/g) || []).len
 assert.doesNotMatch(productionManagerInventory, /js-open-stock-modal|js-restock-product|Factory dispatch/);
 
 const productionSupervisorStore = createStore();
+
+// New independent-count flow: produced stock must not reach live inventory
+// until the Supervisor, Store Keeper, and CEO/Admin have each completed their handoff.
+const productionReceiptFlowStore = createStore();
+function authenticateProductionReceiptFlow(role) {
+  const account = accounts.find((item) => item.role === role);
+  productionReceiptFlowStore.dispatch({
+    type: "SET_AUTHENTICATED_WORKSPACE",
+    session: { user: { id: account.userId } },
+    user: { id: account.userId, email: account.email, user_metadata: { full_name: account.name } },
+    client,
+    accounts,
+    invites: [],
+    featureModules: [],
+    messages: [],
+    activityLogs: []
+  });
+}
+authenticateProductionReceiptFlow("production_manager");
+productionReceiptFlowStore.dispatch({
+  type: "SET_OPERATIONAL_RECORDS",
+  collections: {
+    products: [{ id: "FLOW-FIN", name: "Flow Chips", productType: "Original", size: "120g", stockCategory: "finished_products", category: "Finished Products", stock: 10, unit: "pieces", unitCost: 50, unitPrice: 100, status: "active" }],
+    productionBatches: [], productionPlans: [], productionIssues: [], stockAdditionRequests: [], stockTransactions: [], activityLogs: []
+  }
+});
+productionReceiptFlowStore.dispatch({ type: "SUBMIT_MANAGER_PRODUCTION_REPORT", productId: "FLOW-FIN", producedQuantity: 100, productionDate: "2026-08-12", notes: "Manager output" });
+let receiptFlowBatch = productionReceiptFlowStore.getState().productionBatches[0];
+assert.equal(receiptFlowBatch.status, "manager_submitted", "the manager's quantity must await supervisor confirmation");
+assert.equal(productionReceiptFlowStore.getState().products[0].stock, 10, "manager submission must not add stock");
+assert.deepEqual(productionReceiptFlowStore.getState().activityLogs[0].notificationRoles, ["production_supervisor", "admin", "ceo"], "manager output must immediately notify the Supervisor, Admin, and CEO");
+authenticateProductionReceiptFlow("production_supervisor");
+productionReceiptFlowStore.dispatch({ type: "CONFIRM_MANAGER_PRODUCTION_REPORT", batchId: receiptFlowBatch.id, goodQuantity: 90, damagedQuantity: 5, rejectedQuantity: 5, notes: "Counted by supervisor" });
+receiptFlowBatch = productionReceiptFlowStore.getState().productionBatches[0];
+assert.equal(receiptFlowBatch.status, "supervisor_confirmed", "supervisor confirmation must wait for Store Keeper receipt");
+assert.equal(receiptFlowBatch.supervisorConfirmedByUserId, "user-production-supervisor");
+assert.equal(productionReceiptFlowStore.getState().products[0].stock, 10, "supervisor confirmation must not add stock");
+assert.deepEqual(productionReceiptFlowStore.getState().activityLogs[0].notificationRoles, ["store_keeper", "admin", "ceo"], "supervisor confirmation must notify Store Keeper, Admin, and CEO");
+authenticateProductionReceiptFlow("store_keeper");
+productionReceiptFlowStore.dispatch({ type: "SUBMIT_PRODUCTION_STORE_RECEIPT", batchId: receiptFlowBatch.id, physicalQuantity: 88, note: "Physical store count" });
+const productionReceiptRequest = productionReceiptFlowStore.getState().stockAdditionRequests[0];
+assert.equal(productionReceiptRequest.kind, "production_receipt");
+assert.equal(productionReceiptRequest.status, "pending", "Store Keeper physical receipts must require CEO/Admin approval");
+assert.equal(productionReceiptFlowStore.getState().products[0].stock, 10, "Store Keeper submission must not add stock before approval");
+authenticateProductionReceiptFlow("admin");
+productionReceiptFlowStore.dispatch({ type: "APPROVE_STOCK_ADDITION_REQUEST", requestId: productionReceiptRequest.id });
+assert.equal(productionReceiptFlowStore.getState().products[0].stock, 98, "only CEO/Admin approval may add the Store Keeper's physical count to live stock");
+assert.equal(productionReceiptFlowStore.getState().productionBatches[0].status, "approved");
+
 function authenticateProductionSupervisorFixture(account) {
   productionSupervisorStore.dispatch({
     type: "SET_AUTHENTICATED_WORKSPACE",
@@ -2000,7 +2053,7 @@ productionSupervisorStore.dispatch({
 });
 globalThis.window.location.hash = "#/production?tab=plans";
 const assignedPlanManagerPage = renderProduction({ state: productionSupervisorStore.getState() });
-assert.match(assignedPlanManagerPage, /Create and assign production plan[\s\S]*Product[\s\S]*Target quantity[\s\S]*Production date[\s\S]*Production Supervisor/);
+assert.match(assignedPlanManagerPage, /Submit stock produced[\s\S]*Product[\s\S]*Quantity produced[\s\S]*Production date/);
 assert.match(assignedPlanManagerPage, /Supervisor Chips — Original — 120g/, "production planning must identify the selected product by name, type, and size");
 assert.doesNotMatch(assignedPlanManagerPage, /Record completed production|Raw materials issued|Confirm batch quality/, "the manager must no longer enter supervisor batch output");
 productionSupervisorStore.dispatch({
@@ -2026,8 +2079,9 @@ assert.deepEqual(currentUserPermissions(productionSupervisorStore.getState()).na
 assert.equal(currentUserPermissions(productionSupervisorStore.getState()).canStartAssignedProduction, true);
 globalThis.window.location.hash = "#/production?tab=plans";
 const productionSupervisorPage = renderProduction({ state: scopedSupervisorState });
-assert.match(productionSupervisorPage, /My assigned production plans[\s\S]*Supervisor Chips[\s\S]*Start plan/);
-assert.doesNotMatch(productionSupervisorPage, /Create and assign production plan|Approve and transfer/, "supervisors must not receive manager planning or approval controls");
+assert.match(productionSupervisorPage, /Manager output awaiting confirmation/);
+assert.match(productionSupervisorPage, /Confirm produced stock/);
+assert.doesNotMatch(productionSupervisorPage, /Submit stock produced|Approve and transfer/, "supervisors must not receive manager submission or stock-approval controls");
 const productionSupervisorSettings = renderSettings({ state: scopedSupervisorState });
 assert.match(productionSupervisorSettings, /My profile/, "Production Supervisors must have access to their profile settings");
 assert.doesNotMatch(productionSupervisorSettings, /Factory Settings/, "Production Supervisors must not receive factory configuration controls");
@@ -2101,23 +2155,23 @@ const ceoIssueNotification = getTopbarNotificationItems(productionSupervisorStor
 assert.ok(ceoIssueNotification, "the CEO must receive production issue notifications linked to the issue screen");
 assert.ok(currentUserPermissions(productionSupervisorStore.getState()).nav.includes("production"), "the CEO must have direct Production navigation");
 globalThis.window.location.hash = "#/production?tab=reports";
-assert.match(renderProduction({ state: productionSupervisorStore.getState() }), /CEO production oversight[\s\S]*Approve[\s\S]*Flag[\s\S]*Reject/, "the CEO must receive the Production Line Manager report-review controls");
+assert.match(renderProduction({ state: productionSupervisorStore.getState() }), /CEO production oversight[\s\S]*Production receipt trail/, "the CEO must see the production receipt trail");
 authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_manager"));
 const managerSubmissionNotification = getTopbarNotificationItems(productionSupervisorStore.getState()).find((item) => item.body.includes(submittedSupervisorBatch.reference));
 assert.ok(managerSubmissionNotification, "the Production Line Manager must be notified when a supervisor submits a batch report");
 assert.equal(managerSubmissionNotification.href, "#/production?tab=reports", "the manager submission notification must open the actual report review screen");
 assert.match(renderDashboard({ state: productionSupervisorStore.getState() }), /Review submitted reports \(1\)/, "the manager dashboard must provide a direct report-review action");
 globalThis.window.location.hash = "#/production?tab=plans";
-assert.match(renderProduction({ state: productionSupervisorStore.getState() }), /Review report/, "a submitted plan must link the manager directly to its report decision screen");
+assert.match(renderProduction({ state: productionSupervisorStore.getState() }), /Production receipt trail/, "the manager must retain the production receipt trail");
 globalThis.window.location.hash = "#/production?tab=reports";
 const submittedReportManagerPage = renderProduction({ state: productionSupervisorStore.getState() });
-assert.match(submittedReportManagerPage, /Submitted batch reports[\s\S]*Approve[\s\S]*Flag[\s\S]*Reject/);
+assert.match(submittedReportManagerPage, /Production receipt trail/);
 productionSupervisorStore.dispatch({ type: "FLAG_SUPERVISOR_BATCH_REPORT", batchId: submittedSupervisorBatch.id, note: "Confirm the damaged quantity" });
 assert.equal(productionSupervisorStore.getState().productionBatches.find((batch) => batch.id === submittedSupervisorBatch.id)?.status, "flagged");
 
 authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_supervisor"));
 const flaggedSupervisorPage = renderProduction({ state: scopeStateForCurrentRole(productionSupervisorStore.getState()) });
-assert.match(flaggedSupervisorPage, /Confirm the damaged quantity[\s\S]*Correct and resubmit/);
+assert.match(flaggedSupervisorPage, /Manager output awaiting confirmation/);
 productionSupervisorStore.dispatch({ type: "SUBMIT_SUPERVISOR_BATCH_REPORT", planId: assignedSupervisorPlan.id, goodQuantity: 94, damagedQuantity: 2, rejectedQuantity: 4, notes: "Corrected totals" });
 
 authenticateProductionSupervisorFixture(accounts.find((account) => account.role === "production_manager"));
@@ -2174,9 +2228,9 @@ productionWorkflowStore.dispatch({
 });
 globalThis.window.location.hash = "#/production?tab=plans";
 const productionPlanPage = renderProduction({ state: productionWorkflowStore.getState() });
-assert.match(productionPlanPage, /Create and assign production plan/);
-assert.match(productionPlanPage, /Product[\s\S]*Target quantity[\s\S]*Production date[\s\S]*Production Supervisor/);
-assert.match(productionPlanPage, /Monitor target quantity against completed good output/);
+assert.match(productionPlanPage, /Submit stock produced/);
+assert.match(productionPlanPage, /Product[\s\S]*Quantity produced[\s\S]*Production date/);
+assert.match(productionPlanPage, /Manager submission, supervisor confirmation, Store Keeper receipt, and final stock approval/);
 assert.doesNotMatch(productionPlanPage, /Raw materials issued for this batch|Confirm batch quality|Record completed production/);
 
 productionWorkflowStore.dispatch({
@@ -2236,8 +2290,8 @@ assert.equal(productionWorkflowStore.getState().productionIssues.find((issue) =>
 
 globalThis.window.location.hash = "#/production?tab=reports";
 const productionReportPage = renderProduction({ state: productionWorkflowStore.getState() });
-assert.match(productionReportPage, /Submitted batch reports/);
-assert.match(productionReportPage, /approval automatically transfers good output into finished stock/);
+assert.match(productionReportPage, /Production receipt trail/);
+assert.match(productionReportPage, /Manager submission, supervisor confirmation, Store Keeper receipt, and final stock approval/);
 assert.equal(getScopedActivityLogs(productionWorkflowStore.getState()).some((entry) => entry.recordType === "production_transfer"), true, "Production Line Manager activity must include finished-goods transfers");
 
 productionWorkflowStore.dispatch({
@@ -3197,7 +3251,7 @@ assert.match(ceoStockRequests, new RegExp(`${stockRequest.id}[\\s\\S]*1 carton \
 
 authenticateMulti("multi-admin-user");
 assert.equal(currentUserRole(multiDispatchStore.getState()), "admin", "Admin must remain a distinct role");
-assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "orders", "inventory", "retailers", "invoices", "team", "activity-log", "settings"]);
+assert.deepEqual(currentUserPermissions(multiDispatchStore.getState()).nav, ["dashboard", "orders", "inventory", "production", "retailers", "invoices", "team", "activity-log", "settings"]);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canCoordinateStockRequests, false);
 assert.equal(currentUserPermissions(multiDispatchStore.getState()).canDispatchStock, false);
 globalThis.window.location.hash = "#/inventory?tab=stock-requests";

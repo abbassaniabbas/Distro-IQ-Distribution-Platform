@@ -46,7 +46,7 @@ const ROLE_COLLECTIONS = {
     "products", "stockAssignments", "stockTransactions", "retailers", "orders",
     "invoices", "salesReports", "correctionRequests", "stockRequests",
     "stockAdditionRequests", "purchaseOrders", "procurementOrders", "routes", "creditLimits",
-    "creditLimitHistory", "activityLogs"
+    "creditLimitHistory", "productionBatches", "productionPlans", "productionIssues", "activityLogs"
   ]),
   store_keeper: new Set([
     "products", "stockCategories", "stockAssignments", "stockTransactions",
@@ -75,6 +75,7 @@ const RETRY_DELAY_MS = 5000;
 const SUPERVISOR_SYNC_ACTIONS = new Set([
   "START_ASSIGNED_PRODUCTION_PLAN",
   "SUBMIT_SUPERVISOR_BATCH_REPORT",
+  "CONFIRM_MANAGER_PRODUCTION_REPORT",
   "REPORT_PRODUCTION_ISSUE"
 ]);
 const SUPERVISOR_WRITE_COLLECTIONS = new Set([
@@ -92,6 +93,7 @@ const MANAGER_SYNC_ACTIONS = new Set([
   "REPORT_PRODUCTION_ISSUE",
   "RESOLVE_PRODUCTION_ISSUE",
   "CREATE_ASSIGNED_PRODUCTION_PLAN",
+  "SUBMIT_MANAGER_PRODUCTION_REPORT",
   "APPROVE_SUPERVISOR_BATCH_REPORT",
   "FLAG_SUPERVISOR_BATCH_REPORT",
   "REJECT_SUPERVISOR_BATCH_REPORT",
@@ -351,7 +353,7 @@ export function sanitizePersistedOperationalQueue(savedQueue, role, userId) {
       const data = record?.data || {};
       if (!SUPERVISOR_WRITE_COLLECTIONS.has(collection)) return false;
       if (collection === "productionPlans") return String(data.assignedSupervisorUserId || "") === actorUserId;
-      if (collection === "productionBatches") return String(data.recordedByUserId || "") === actorUserId;
+      if (collection === "productionBatches") return String(data.recordedByUserId || data.supervisorConfirmedByUserId || "") === actorUserId;
       if (collection === "productionIssues") return String(data.reportedByUserId || "") === actorUserId;
       return String(data.actorUserId || "") === actorUserId;
     });
