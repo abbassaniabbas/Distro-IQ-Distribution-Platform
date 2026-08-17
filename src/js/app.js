@@ -26,7 +26,7 @@ import { renderActivityLog, bindActivityLog } from "./views/activity-log.js?v=20
 import { renderAdminOperations, bindAdminOperations } from "./views/admin-operations.js?v=20260805h";
 import { renderAuth, bindAuth, renderForgotPassword, bindForgotPassword } from "./views/auth.js?v=20260804m";
 import { renderBackendSetup, bindBackendSetup } from "./views/backend-setup.js";
-import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260813b";
+import { renderDashboard, bindDashboard } from "./views/dashboard.js?v=20260817b";
 import { renderFinance, bindFinance } from "./views/finance.js?v=20260809a";
 import { renderInventory, bindInventory } from "./views/inventory.js?v=20260813a";
 import { renderInvoices, bindInvoices } from "./views/invoices.js?v=20260805h";

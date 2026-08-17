@@ -1872,14 +1872,20 @@ const separatedStockSplit = renderDashboard({
     creditLimits: []
   }
 });
-assert.match(separatedStockSplit, /data-stock-split="representatives"[\s\S]*?<span class="strong">20<\/span>/, "representative-held stock must remain in the representative stock split");
+assert.match(separatedStockSplit, /data-stock-split="representatives"[\s\S]*?<span class="ceo-stock-split-value">20<\/span>/, "representative-held stock must remain in the representative stock split");
 assert.match(separatedStockSplit, /Sales rep/, "the stock split must use the shorter sales-rep label");
-assert.match(separatedStockSplit, /data-stock-split="supermarkets"[\s\S]*?<span class="strong">7<\/span>/, "representative dispatches must not be added to supermarket stock");
+assert.match(separatedStockSplit, /data-stock-split="supermarkets"[\s\S]*?<span class="ceo-stock-split-value">7<\/span>/, "representative dispatches must not be added to supermarket stock");
 assert.match(separatedStockSplit, /factory stock available/i, "CEO Stock must be labelled as factory-only stock");
 assert.match(separatedStockSplit, /(?:metric-value|ceo-metric-secondary)">80 pieces<\/div>/, "CEO Stock must show only the 80 pieces remaining at the factory after dispatch");
-assert.match(separatedStockSplit, /ceo-stock-split-total[\s\S]*Total stock produced[\s\S]*progress-track[\s\S]*<span class="strong">107<\/span>/, "total produced stock must use the same line-and-value treatment as the other stock splits");
+assert.match(separatedStockSplit, /ceo-stock-split-vertical-chart[\s\S]*ceo-stock-split-total[\s\S]*ceo-stock-split-value">107[\s\S]*Total stock produced/, "total produced stock must appear as the first column in the vertical stock chart");
 assert.match(separatedStockSplit, /id="ceo-stock-split-modal"[\s\S]*data-stock-split-family="Split Test Chips"/, "the stock split modal must list product-level splits");
+assert.match(separatedStockSplit, /js-open-stock-split-custody-modal[\s\S]*data-stock-split="representatives"/, "the sales-rep stock split column must open its custody list");
+assert.match(separatedStockSplit, /data-stock-split-custody-list="representatives"[\s\S]*Amina Rep[\s\S]*Split Test Chips[\s\S]*20 pieces/, "the sales-rep custody list must show each representative, product, and quantity");
+assert.match(separatedStockSplit, /data-stock-split-custody-list="supermarkets"[\s\S]*Central Supermarket[\s\S]*Split Test Chips[\s\S]*7 pieces/, "the supermarket custody list must show each supermarket, product, and quantity");
+assert.match(separatedStockSplit, /stock-split-product-trend-track[\s\S]*stock-split-product-trend-bar/, "product cards in the total stock modal must use horizontal trend-style bars");
 assert.match(separatedStockSplit, /data-stock-split-size-view="Split Test Chips"[\s\S]*Split Test Chips[\s\S]*Standard/, "each product must drill down to size-level stock splits");
+assert.match(separatedStockSplit, /data-stock-split-size-view="Split Test Chips"[\s\S]*stock-split-product-trend-track/, "size-level stock cards must use the same horizontal trend-bar treatment as products");
+assert.match(separatedStockSplit, /js-back-stock-split-products[\s\S]*Return to products/, "the size view must offer a clear return control instead of leaving the product list visible");
 globalThis.window.location.hash = "#/activity-log?tab=submitted-reports";
 const ceoSubmittedReports = renderActivityLog({ state: store.getState() });
 assert.match(ceoSubmittedReports, /Activity log pages/);

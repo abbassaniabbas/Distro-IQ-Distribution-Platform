@@ -988,7 +988,97 @@ function renderStockSplitBars(metrics, { includeTotal = true, compact = false } 
   `;
 }
 
-function renderCeoStockSplit(productRows) {
+function renderStockSplitProductTrendBar(metrics, maxValue) {
+  const total = Number(metrics.total || 0);
+  const percent = (total / Math.max(Number(maxValue || 0), 1)) * 100;
+  return `<div class="stock-split-product-trend" aria-label="${formatNumber(total)} total stock produced">
+    <span class="stock-split-product-trend-track"><span class="stock-split-product-trend-bar" style="width: ${Math.max(total ? 8 : 0, percent)}%"></span></span>
+    <span class="stock-split-product-trend-value">${formatNumber(total)}</span>
+    <small>Factory ${formatNumber(metrics.factory)} · Sales rep ${formatNumber(metrics.representatives)} · Supermarkets ${formatNumber(metrics.supermarkets)}</small>
+  </div>`;
+}
+
+function stockSplitCustodyGroups(state, custodyType) {
+  const productMap = getProductMap(state.products || []);
+  const groups = new Map();
+  const addStock = (holderKey, holderName, productId, quantity) => {
+    const product = productMap.get(productId);
+    const units = Number(quantity || 0);
+    if (!product || stockCategoryIdForProduct(product) !== "finished_products" || units <= 0) return;
+
+    const group = groups.get(holderKey) || { name: holderName, items: new Map() };
+    const item = group.items.get(productId) || { product, quantity: 0 };
+    item.quantity += units;
+    group.items.set(productId, item);
+    groups.set(holderKey, group);
+  };
+
+  if (custodyType === "representatives") {
+    (state.stockAssignments || []).forEach((assignment) => {
+      const holderName = assignment.repName || "Sales representative";
+      addStock(`rep:${normalized(holderName)}`, holderName, assignment.productId, assignmentOutstanding(assignment));
+    });
+  } else {
+    const retailersById = getRetailerMap(state.retailers || []);
+    ceoActualSalesOrders(state).forEach((order) => {
+      const recipientType = normalized(order.customerType);
+      const isSupermarket = !isRepresentativeSellThroughOrder(order, state) && (
+        recipientType.includes("supermarket") ||
+        Boolean(order.retailerId && retailersById.has(order.retailerId))
+      );
+      if (!isSupermarket) return;
+
+      const retailer = retailersById.get(order.retailerId);
+      const holderName = retailer?.name || order.customerName || "Supermarket";
+      const holderKey = `supermarket:${order.retailerId || normalized(holderName)}`;
+      (order.items || []).forEach((item) => addStock(holderKey, holderName, item.productId, item.quantity));
+    });
+  }
+
+  return [...groups.values()]
+    .map(({ name, items }) => {
+      const stockItems = [...items.values()].sort((a, b) => (
+        b.quantity - a.quantity || productSelectionLabel(a.product).localeCompare(productSelectionLabel(b.product))
+      ));
+      return {
+        name,
+        items: stockItems,
+        total: stockItems.reduce((total, item) => total + item.quantity, 0)
+      };
+    })
+    .sort((a, b) => b.total - a.total || a.name.localeCompare(b.name));
+}
+
+function renderStockSplitCustodyList(state, custodyType) {
+  const isRepresentative = custodyType === "representatives";
+  const groups = stockSplitCustodyGroups(state, custodyType);
+  const title = isRepresentative ? "Sales representative stock" : "Supermarket stock";
+  const holderLabel = isRepresentative ? "Sales representative" : "Supermarket";
+
+  return `
+    <section class="stock-split-custody-view" data-stock-split-custody-list="${escapeHtml(custodyType)}" hidden>
+      <button class="button subtle js-back-stock-split-products" type="button">${icon("arrowLeft")}<span>Return to products</span></button>
+      <div class="stock-split-size-heading"><span class="eyebrow">Stock in custody</span><h3>${escapeHtml(title)}</h3></div>
+      <div class="stock-split-custody-list">
+        ${groups.length ? groups.map((group) => `
+          <article class="stock-split-custody-card">
+            <header>
+              <span><small>${escapeHtml(holderLabel)}</small><strong>${escapeHtml(group.name)}</strong></span>
+              <b>${formatNumber(group.total)} pieces</b>
+            </header>
+            <ul>
+              ${group.items.map(({ product, quantity }) => `
+                <li><span><strong>${escapeHtml(productSelectionLabel(product))}</strong><small>${escapeHtml(product.id)}</small></span><b>${formatNumber(quantity)} pieces</b></li>
+              `).join("")}
+            </ul>
+          </article>
+        `).join("") : `<div class="empty-state">No finished stock is currently held by a ${escapeHtml(holderLabel.toLowerCase())}.</div>`}
+      </div>
+    </section>
+  `;
+}
+
+function renderCeoStockSplit(state, productRows) {
   const finishedRows = productRows.filter((row) => stockCategoryIdForProduct(row.product) === "finished_products");
   const overall = stockSplitMetrics(finishedRows);
   const families = new Map();
@@ -999,15 +1089,33 @@ function renderCeoStockSplit(productRows) {
     familyRows.push(row);
     families.set(family, familyRows);
   });
+  const familyEntries = [...families.entries()].map(([family, familyRows]) => ({
+    family,
+    familyRows,
+    metrics: stockSplitMetrics(familyRows)
+  }));
+  const largestProductStock = Math.max(...familyEntries.map((entry) => entry.metrics.total), 1);
+
+  const chartRows = [
+    { key: "total", label: "Total stock produced", value: overall.total, tone: "good", interactive: true },
+    { key: "factory", label: "Factory", value: overall.factory, tone: "good" },
+    { key: "representatives", label: "Sales rep", value: overall.representatives, tone: overall.representatives > overall.factory ? "warning" : "good", interactive: true },
+    { key: "supermarkets", label: "Supermarkets", value: overall.supermarkets, tone: "good", interactive: true }
+  ];
+  const maxValue = Math.max(overall.total, 1);
 
   return `
-    <div class="ceo-stock-split-summary">
-      <button class="ceo-stock-split-total ceo-stock-row js-open-stock-split-modal" type="button" aria-haspopup="dialog" title="View stock split by product">
-        <strong>Total stock produced</strong>
-        ${progressBar(100, "good")}
-        <span class="strong">${formatNumber(overall.total)}</span>
-      </button>
-      ${renderStockSplitBars(overall, { includeTotal: false })}
+    <div class="ceo-stock-split-summary ceo-stock-split-vertical-chart" role="group" aria-label="Vertical chart showing finished stock at factory, with sales representatives, and at supermarkets">
+      ${chartRows.map((row) => {
+        const content = `
+          <span class="ceo-stock-split-value">${formatNumber(row.value)}</span>
+          <span class="ceo-stock-split-column-track"><span class="ceo-stock-split-column-fill ${escapeHtml(row.tone)}" style="height: ${Math.max(row.value ? 8 : 0, (row.value / maxValue) * 100)}%"></span></span>
+          <strong>${escapeHtml(row.label)}</strong>
+        `;
+        return row.interactive
+          ? `<button class="ceo-stock-split-column ceo-stock-split-total ${row.key === "total" ? "js-open-stock-split-modal" : "js-open-stock-split-custody-modal"}" type="button" aria-haspopup="dialog" title="${escapeHtml(row.key === "total" ? "View stock split by product" : `View ${row.label.toLowerCase()} stock`)}" data-stock-split="${escapeHtml(row.key)}">${content}</button>`
+          : `<div class="ceo-stock-split-column" data-stock-split="${escapeHtml(row.key)}" data-search-index="${escapeHtml(row.label.toLowerCase())}">${content}</div>`;
+      }).join("")}
     </div>
 
     <div id="ceo-stock-split-modal" class="stock-modal-backdrop" hidden>
@@ -1021,36 +1129,44 @@ function renderCeoStockSplit(productRows) {
         </header>
 
         <div class="stock-split-product-list" data-stock-split-product-list>
-          ${families.size ? [...families.entries()].map(([family, familyRows]) => {
-            const metrics = stockSplitMetrics(familyRows);
+          ${families.size ? familyEntries.map(({ family, familyRows, metrics }) => {
             return `
               <button class="stock-split-product-card js-open-stock-split-product" type="button" data-stock-split-family="${escapeHtml(family)}">
                 <span class="stock-split-product-heading"><span><small>Product</small><strong>${escapeHtml(family)}</strong></span><span>${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"} ${icon("arrowRight")}</span></span>
-                ${renderStockSplitBars(metrics, { compact: true })}
+                ${renderStockSplitProductTrendBar(metrics, largestProductStock)}
               </button>
             `;
           }).join("") : '<div class="empty-state">No finished products available</div>'}
         </div>
 
-        ${[...families.entries()].map(([family, familyRows]) => `
-          <section class="stock-split-size-view" data-stock-split-size-view="${escapeHtml(family)}" hidden>
-            <button class="button subtle js-back-stock-split-products" type="button">${icon("arrowLeft")}<span>Products</span></button>
-            <div class="stock-split-size-heading"><span class="eyebrow">Product sizes</span><h3>${escapeHtml(family)}</h3></div>
-            <div class="stock-split-size-grid">
-              ${familyRows
-                .sort((a, b) => productTypeLabel(a.product).localeCompare(productTypeLabel(b.product)) || productSizeLabel(a.product).localeCompare(productSizeLabel(b.product)))
-                .map((row) => `
-                  <article class="stock-split-size-card">
-                    <header>
-                      <span class="ceo-size-picture">${renderCeoSizePicture(row.product)}</span>
-                      <span><small>${escapeHtml(productTypeLabel(row.product))}</small><strong>${escapeHtml(productSizeLabel(row.product))}</strong><small>${escapeHtml(row.product.id)}</small></span>
-                    </header>
-                    ${renderStockSplitBars(stockSplitMetrics([row]), { compact: true })}
-                  </article>
-                `).join("")}
-            </div>
-          </section>
-        `).join("")}
+        ${renderStockSplitCustodyList(state, "representatives")}
+        ${renderStockSplitCustodyList(state, "supermarkets")}
+
+        ${familyEntries.map(({ family, familyRows }) => {
+          const largestSizeStock = Math.max(...familyRows.map((row) => stockSplitMetrics([row]).total), 1);
+          return `
+            <section class="stock-split-size-view" data-stock-split-size-view="${escapeHtml(family)}" hidden>
+              <button class="button subtle js-back-stock-split-products" type="button">${icon("arrowLeft")}<span>Return to products</span></button>
+              <div class="stock-split-size-heading"><span class="eyebrow">Product sizes</span><h3>${escapeHtml(family)}</h3></div>
+              <div class="stock-split-size-grid">
+                ${familyRows
+                  .sort((a, b) => productTypeLabel(a.product).localeCompare(productTypeLabel(b.product)) || productSizeLabel(a.product).localeCompare(productSizeLabel(b.product)))
+                  .map((row) => {
+                    const metrics = stockSplitMetrics([row]);
+                    return `
+                      <article class="stock-split-size-card">
+                        <header>
+                          <span class="ceo-size-picture">${renderCeoSizePicture(row.product)}</span>
+                          <span><small>${escapeHtml(productTypeLabel(row.product))}</small><strong>${escapeHtml(productSizeLabel(row.product))}</strong><small>${escapeHtml(row.product.id)}</small></span>
+                        </header>
+                        ${renderStockSplitProductTrendBar(metrics, largestSizeStock)}
+                      </article>
+                    `;
+                  }).join("")}
+              </div>
+            </section>
+          `;
+        }).join("")}
       </section>
     </div>
   `;
@@ -1418,6 +1534,7 @@ function renderCeoProductStock(state) {
               <span>${formatNumber(types.length)} type${types.length === 1 ? "" : "s"} · ${formatNumber(familyRows.length)} size${familyRows.length === 1 ? "" : "s"}</span>
               <b>${formatNumber(familyStock)} pieces available</b>
               <small class="ceo-family-package-total">${escapeHtml(familyPackages === "Package conversion not set" ? familyPackages : `${familyPackages} across variants`)}</small>
+              <span class="ceo-product-family-open" aria-hidden="true">${icon("arrowRight")}</span>
             </button>
             <div class="ceo-product-type-dropdown" data-product-type-dropdown="${escapeHtml(family)}" hidden>
               ${types.map((type) => `
@@ -1547,7 +1664,7 @@ function renderCeoDashboard(state) {
 
       <section class="panel">
         ${panelHeader("Stock split", "Where finished stock currently sits")}
-        ${renderCeoStockSplit(productRows)}
+        ${renderCeoStockSplit(state, productRows)}
       </section>
 
       <div class="ceo-dashboard-layout">
@@ -3225,7 +3342,7 @@ function renderAdminDashboard(state) {
 
       <section class="panel">
         ${panelHeader("Stock split", "Where finished stock currently sits")}
-        ${renderCeoStockSplit(productRows)}
+        ${renderCeoStockSplit(state, productRows)}
       </section>
 
       <div class="admin-dashboard-insight-row">
@@ -3813,16 +3930,28 @@ function bindCeoDashboard({ root, store, signal }) {
   const stockSplitModal = qs("#ceo-stock-split-modal", root);
   const stockSplitTitle = qs("#ceo-stock-split-title", root);
   const stockSplitProductList = qs("[data-stock-split-product-list]", root);
+  const stockSplitCustodyLists = qsa("[data-stock-split-custody-list]", stockSplitModal || root);
 
   function showStockSplitProducts() {
     if (stockSplitProductList) stockSplitProductList.hidden = false;
     qsa("[data-stock-split-size-view]", stockSplitModal || root).forEach((view) => { view.hidden = true; });
+    stockSplitCustodyLists.forEach((view) => { view.hidden = true; });
     if (stockSplitTitle) stockSplitTitle.textContent = "Products";
+  }
+
+  function showStockSplitCustody(custodyType) {
+    if (stockSplitProductList) stockSplitProductList.hidden = true;
+    qsa("[data-stock-split-size-view]", stockSplitModal || root).forEach((view) => { view.hidden = true; });
+    stockSplitCustodyLists.forEach((view) => {
+      view.hidden = view.dataset.stockSplitCustodyList !== custodyType;
+    });
+    if (stockSplitTitle) stockSplitTitle.textContent = custodyType === "representatives" ? "Sales representative stock" : "Supermarket stock";
   }
 
   function closeStockSplitModal() {
     if (!stockSplitModal) return;
     stockSplitModal.hidden = true;
+    qsa(".js-open-stock-split-modal, .js-open-stock-split-custody-modal", root).forEach((button) => button.classList.remove("is-active"));
     showStockSplitProducts();
   }
 
@@ -3830,6 +3959,19 @@ function bindCeoDashboard({ root, store, signal }) {
     if (!stockSplitModal) return;
     showStockSplitProducts();
     stockSplitModal.hidden = false;
+    qs(".js-open-stock-split-modal", root)?.classList.add("is-active");
+  });
+
+  qsa(".js-open-stock-split-custody-modal", root).forEach((button) => {
+    button.addEventListener("click", () => {
+      if (!stockSplitModal) return;
+      const custodyType = button.dataset.stockSplit || "representatives";
+      showStockSplitCustody(custodyType);
+      stockSplitModal.hidden = false;
+      qsa(".js-open-stock-split-modal, .js-open-stock-split-custody-modal", root).forEach((item) => {
+        item.classList.toggle("is-active", item === button);
+      });
+    });
   });
 
   qsa(".js-open-stock-split-product", stockSplitModal || root).forEach((button) => {
